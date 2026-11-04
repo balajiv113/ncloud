@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -20,7 +19,9 @@ abstract interface class SessionStore {
 class SecureSessionStore implements SessionStore {
   static const _storage = FlutterSecureStorage(
     aOptions: AndroidOptions(encryptedSharedPreferences: true),
-    iOptions: IOSOptions(accessibility: KeychainAccessibility.first_unlock_this_device),
+    iOptions: IOSOptions(
+      accessibility: KeychainAccessibility.first_unlock_this_device,
+    ),
   );
   static const _key = 'ncloud.account.v1';
 
@@ -33,18 +34,22 @@ class SecureSessionStore implements SessionStore {
 }
 
 String errorMessage(Object error) => switch (error) {
-      CloudException() => error.message,
-      FormatException() => 'Invalid address, name, or server response. ${error.message}',
-      SocketException() => 'No connection to the server. Check your network.',
-      FileSystemException() => 'Cannot access this file. Check free space and permissions.',
-      TimeoutException() => 'The operation timed out. Please try again.',
-      PlatformException() => 'A device service failed. Please retry or restart the app.',
-      _ => 'The operation failed unexpectedly. Please retry and check server compatibility.',
-    };
+  CloudException() => error.message,
+  FormatException() =>
+    'Invalid address, name, or server response. ${error.message}',
+  SocketException() => 'No connection to the server. Check your network.',
+  FileSystemException() =>
+    'Cannot access this file. Check free space and permissions.',
+  TimeoutException() => 'The operation timed out. Please try again.',
+  PlatformException() =>
+    'A device service failed. Please retry or restart the app.',
+  _ =>
+    'The operation failed unexpectedly. Please retry and check server compatibility.',
+};
 
 class AppController extends ChangeNotifier {
   AppController({required this.store, NextcloudClient? client})
-      : client = client ?? NextcloudClient();
+    : client = client ?? NextcloudClient();
 
   final SessionStore store;
   final NextcloudClient client;
@@ -61,6 +66,7 @@ class AppController extends ChangeNotifier {
   String? notice;
   int _loadVersion = 0;
   int _loginVersion = 0;
+  bool _disposed = false;
   List<CloudFile> _demo = [];
   final Map<String, Future<Uint8List>> _previews = {};
 
@@ -90,13 +96,21 @@ class AppController extends ChangeNotifier {
     unawaited(load());
   }
 
-  Future<void> passwordLogin(String server, String user, String password) async {
+  Future<void> passwordLogin(
+    String server,
+    String user,
+    String password,
+  ) async {
     final version = ++_loginVersion;
     signingIn = true;
     error = null;
     notifyListeners();
     try {
-      final result = await client.authenticate(normalizeServer(server), user, password);
+      final result = await client.authenticate(
+        normalizeServer(server),
+        user,
+        password,
+      );
       if (version != _loginVersion) return;
       await _saveAccount(result);
     } catch (e) {
@@ -122,7 +136,9 @@ class AppController extends ChangeNotifier {
       final flow = await client.startLogin(uri);
       if (version != _loginVersion) return;
       if (!await openBrowser(flow.login)) {
-        throw const CloudException('Could not open your browser. Try an app password instead.');
+        throw const CloudException(
+          'Could not open your browser. Try an app password instead.',
+        );
       }
       final deadline = DateTime.now().add(const Duration(minutes: 20));
       while (version == _loginVersion && DateTime.now().isBefore(deadline)) {
@@ -135,7 +151,9 @@ class AppController extends ChangeNotifier {
         await Future<void>.delayed(const Duration(seconds: 2));
       }
       if (version == _loginVersion) {
-        throw const CloudException('Sign-in timed out. Start again to get a new login link.');
+        throw const CloudException(
+          'Sign-in timed out. Start again to get a new login link.',
+        );
       }
     } catch (e) {
       if (version == _loginVersion) error = errorMessage(e);
@@ -170,7 +188,9 @@ class AppController extends ChangeNotifier {
     try {
       if (!demo) {
         await store.clear();
-        final cache = Directory('${(await getTemporaryDirectory()).path}/ncloud-downloads');
+        final cache = Directory(
+          '${(await getTemporaryDirectory()).path}/ncloud-downloads',
+        );
         if (await cache.exists()) await cache.delete(recursive: true);
       }
       _loadVersion++;
@@ -184,7 +204,8 @@ class AppController extends ChangeNotifier {
       notice = null;
       loading = false;
     } catch (e) {
-      error = 'Could not completely clear local session data. ${errorMessage(e)}';
+      error =
+          'Could not completely clear local session data. ${errorMessage(e)}';
     } finally {
       busy = false;
       notifyListeners();
@@ -219,16 +240,28 @@ class AppController extends ChangeNotifier {
       if (tab == 3) {
         result = [];
       } else if (demo) {
-        result = _demo.where((file) => switch (tab) {
-              0 => file.isMedia,
-              2 => file.favorite,
-              _ => file.path.length == directory.length + 1 &&
-                  listEquals(file.path.take(directory.length).toList(), directory),
-            }).toList();
+        result = _demo
+            .where(
+              (file) => switch (tab) {
+                0 => file.isMedia,
+                2 => file.favorite,
+                _ =>
+                  file.path.length == directory.length + 1 &&
+                      listEquals(
+                        file.path.take(directory.length).toList(),
+                        directory,
+                      ),
+              },
+            )
+            .toList();
         if (tab == 1) {
-          result.sort((a, b) => a.isDirectory == b.isDirectory
-              ? a.name.compareTo(b.name)
-              : a.isDirectory ? -1 : 1);
+          result.sort(
+            (a, b) => a.isDirectory == b.isDirectory
+                ? a.name.compareTo(b.name)
+                : a.isDirectory
+                ? -1
+                : 1,
+          );
         }
       } else if (account case final account?) {
         result = tab == 1
@@ -267,30 +300,35 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> favorite(CloudFile file) => _action(() async {
-        if (demo) {
-          _demo = _demo.map((f) => f.key == file.key
-              ? f.withFavorite(!file.favorite) : f).toList();
-        } else {
-          await client.setFavorite(account!, file, !file.favorite);
-        }
-      }, file.favorite ? 'Removed from favorites' : 'Added to favorites');
+    if (demo) {
+      _demo = _demo
+          .map((f) => f.key == file.key ? f.withFavorite(!file.favorite) : f)
+          .toList();
+    } else {
+      await client.setFavorite(account!, file, !file.favorite);
+    }
+  }, file.favorite ? 'Removed from favorites' : 'Added to favorites');
 
   Future<void> createFolder(String name) => _action(() async {
-        validateName(name);
-        if (demo) {
-          final path = [...directory, name];
-          if (_demo.any((f) => listEquals(f.path, path))) {
-            throw const CloudException('An item with that name already exists.');
-          }
-          _demo.add(CloudFile(path: path, name: name, isDirectory: true));
-        } else {
-          await client.createFolder(account!, [...directory, name]);
-        }
-      }, 'Folder created');
+    validateName(name);
+    if (demo) {
+      final path = [...directory, name];
+      if (_demo.any((f) => listEquals(f.path, path))) {
+        throw const CloudException('An item with that name already exists.');
+      }
+      _demo.add(CloudFile(path: path, name: name, isDirectory: true));
+    } else {
+      await client.createFolder(account!, [...directory, name]);
+    }
+  }, 'Folder created');
 
   Future<void> upload(String name, Stream<List<int>> bytes, int size) =>
       _action(() async {
-        if (demo) throw const CloudException('Connect a Nextcloud server to upload files.');
+        if (demo) {
+          throw const CloudException(
+            'Connect a Nextcloud server to upload files.',
+          );
+        }
         await client.upload(account!, [...directory, name], bytes, size);
       }, 'Upload complete');
 
@@ -300,17 +338,28 @@ class AppController extends ChangeNotifier {
     if (_previews.length >= 40 && !_previews.containsKey(file.key)) {
       _previews.remove(_previews.keys.first);
     }
-    return _previews.putIfAbsent(file.key, () => client.preview(account!, file));
+    return _previews.putIfAbsent(
+      file.key,
+      () => client.preview(account!, file),
+    );
   }
 
   Future<File> download(CloudFile file) async {
-    if (demo) throw const CloudException('Demo files are illustrations. Connect a server to download.');
-    if (busy) throw const CloudException('Wait for the current transfer to finish.');
+    if (demo) {
+      throw const CloudException(
+        'Demo files are illustrations. Connect a server to download.',
+      );
+    }
+    if (busy) {
+      throw const CloudException('Wait for the current transfer to finish.');
+    }
     busy = true;
     notifyListeners();
     File? output;
     try {
-      final folder = Directory('${(await getTemporaryDirectory()).path}/ncloud-downloads');
+      final folder = Directory(
+        '${(await getTemporaryDirectory()).path}/ncloud-downloads',
+      );
       await folder.create(recursive: true);
       validateName(file.name);
       final response = await client.download(account!, file);
@@ -319,7 +368,9 @@ class AppController extends ChangeNotifier {
       output = File('${transfer.path}/${file.name}');
       final sink = output.openWrite();
       try {
-        await sink.addStream(response.stream.timeout(const Duration(seconds: 45)));
+        await sink.addStream(
+          response.stream.timeout(const Duration(seconds: 45)),
+        );
         await sink.flush();
       } finally {
         await sink.close();
@@ -335,7 +386,14 @@ class AppController extends ChangeNotifier {
   }
 
   @override
+  void notifyListeners() {
+    if (!_disposed) super.notifyListeners();
+  }
+
+  @override
   void dispose() {
+    _disposed = true;
+    _loadVersion++;
     _loginVersion++;
     client.close();
     super.dispose();

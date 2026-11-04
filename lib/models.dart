@@ -19,15 +19,17 @@ Uri normalizeServer(String input) {
   return uri.replace(pathSegments: segments);
 }
 
-Uri serverEndpoint(Uri server, List<String> segments,
-        [Map<String, String>? query]) =>
-    server.replace(
-      pathSegments: [
-        ...server.pathSegments.where((s) => s.isNotEmpty),
-        ...segments,
-      ],
-      queryParameters: query,
-    );
+Uri serverEndpoint(
+  Uri server,
+  List<String> segments, [
+  Map<String, String>? query,
+]) => server.replace(
+  pathSegments: [
+    ...server.pathSegments.where((s) => s.isNotEmpty),
+    ...segments,
+  ],
+  queryParameters: query,
+);
 
 class Account {
   const Account({
@@ -48,12 +50,12 @@ class Account {
       'Basic ${base64Encode(utf8.encode('$loginName:$appPassword'))}';
 
   String encode() => jsonEncode({
-        'server': server.toString(),
-        'loginName': loginName,
-        'appPassword': appPassword,
-        'userId': userId,
-        'displayName': displayName,
-      });
+    'server': server.toString(),
+    'loginName': loginName,
+    'appPassword': appPassword,
+    'userId': userId,
+    'displayName': displayName,
+  });
 
   factory Account.decode(String value) {
     final json = jsonDecode(value) as Map<String, dynamic>;
@@ -96,16 +98,16 @@ class CloudFile {
   bool get isMedia => isImage || isVideo;
 
   CloudFile withFavorite(bool value) => CloudFile(
-        path: path,
-        name: name,
-        isDirectory: isDirectory,
-        contentType: contentType,
-        size: size,
-        modified: modified,
-        id: id,
-        favorite: value,
-        demoColor: demoColor,
-      );
+    path: path,
+    name: name,
+    isDirectory: isDirectory,
+    contentType: contentType,
+    size: size,
+    modified: modified,
+    id: id,
+    favorite: value,
+    demoColor: demoColor,
+  );
 }
 
 String formatBytes(int bytes) {

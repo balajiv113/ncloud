@@ -64,7 +64,8 @@ class _MediaTileState extends State<MediaTile> {
             bytes,
             fit: widget.fit,
             gaplessPlayback: true,
-            errorBuilder: (_, _, _) => _fallback(context, 'Unsupported preview'),
+            errorBuilder: (_, _, _) =>
+                _fallback(context, 'Unsupported preview'),
           );
         }
         return ColoredBox(
@@ -76,21 +77,29 @@ class _MediaTileState extends State<MediaTile> {
   }
 
   Widget _fallback(BuildContext context, String label) => ColoredBox(
-        color: Theme.of(context).colorScheme.surfaceContainerHighest,
-        child: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(8),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(widget.file.isVideo ? Icons.videocam_outlined : Icons.image_outlined),
-                const SizedBox(height: 4),
-                Text(label, textAlign: TextAlign.center, style: const TextStyle(fontSize: 11)),
-              ],
+    color: Theme.of(context).colorScheme.surfaceContainerHighest,
+    child: Center(
+      child: Padding(
+        padding: const EdgeInsets.all(8),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              widget.file.isVideo
+                  ? Icons.videocam_outlined
+                  : Icons.image_outlined,
             ),
-          ),
+            const SizedBox(height: 4),
+            Text(
+              label,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 11),
+            ),
+          ],
         ),
-      );
+      ),
+    ),
+  );
 }
 
 class LandscapePainter extends CustomPainter {
@@ -101,22 +110,35 @@ class LandscapePainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final rect = Offset.zero & size;
-    canvas.drawRect(rect, Paint()..shader = LinearGradient(
-      begin: Alignment.topCenter,
-      end: Alignment.bottomCenter,
-      colors: [Color.lerp(color, Colors.white, .55)!, color],
-    ).createShader(rect));
+    canvas.drawRect(
+      rect,
+      Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color.lerp(color, Colors.white, .55)!, color],
+        ).createShader(rect),
+    );
     final sunX = size.width * (.25 + (seed.abs() % 40) / 100);
-    canvas.drawCircle(Offset(sunX, size.height * .25), size.shortestSide * .12,
-        Paint()..color = const Color(0xFFFFE6B8));
+    canvas.drawCircle(
+      Offset(sunX, size.height * .25),
+      size.shortestSide * .12,
+      Paint()..color = const Color(0xFFFFE6B8),
+    );
     for (var layer = 0; layer < 3; layer++) {
       final path = Path()..moveTo(0, size.height);
       for (var i = 0; i <= 6; i++) {
         final height = .45 + layer * .14 + ((seed.abs() + i * 7) % 17) / 100;
         path.lineTo(size.width * i / 6, size.height * height);
       }
-      path..lineTo(size.width, size.height)..close();
-      canvas.drawPath(path, Paint()..color = Color.lerp(color, const Color(0xFF102E30), layer * .23)!);
+      path
+        ..lineTo(size.width, size.height)
+        ..close();
+      canvas.drawPath(
+        path,
+        Paint()
+          ..color = Color.lerp(color, const Color(0xFF102E30), layer * .23)!,
+      );
     }
   }
 
