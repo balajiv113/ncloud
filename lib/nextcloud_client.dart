@@ -216,9 +216,9 @@ class NextcloudClient {
     int offset = 0,
     int limit = photoLimit,
   }) async {
-    // SEARCH scopes are relative to the DAV root, not the installation path.
+    // Relative SEARCH scopes are literal DAV paths, not URI-encoded URLs.
     final scope = XmlText(
-      Uri(pathSegments: ['', 'files', account.userId, ...path]).path,
+      ['', 'files', account.userId, ...path].join('/'),
     ).toXmlString();
     final where = favorites
         ? '<d:eq><d:prop><oc:favorite/></d:prop><d:literal>1</d:literal></d:eq>'
@@ -233,13 +233,13 @@ class NextcloudClient {
       headers: {'Content-Type': 'application/xml; charset=utf-8'},
       body:
           '''
-        <d:searchrequest xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns" xmlns:nc="http://nextcloud.org/ns">
+        <d:searchrequest xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns" xmlns:sd="https://github.com/icewind1991/SearchDAV/ns">
           <d:basicsearch>
             <d:select><d:prop>$_properties</d:prop></d:select>
             <d:from><d:scope><d:href>$scope</d:href><d:depth>infinity</d:depth></d:scope></d:from>
             <d:where>$where</d:where>
             <d:orderby><d:order><d:prop><d:getlastmodified/></d:prop><d:descending/></d:order></d:orderby>
-            <d:limit><d:nresults>$limit</d:nresults><nc:offset>$offset</nc:offset></d:limit>
+            <d:limit><d:nresults>$limit</d:nresults><sd:firstresult>$offset</sd:firstresult></d:limit>
           </d:basicsearch>
         </d:searchrequest>
       ''',

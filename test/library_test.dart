@@ -75,7 +75,7 @@ void main() {
       final transport = MockClient((request) async {
         final offset = int.parse(
           RegExp(
-            r'<nc:offset>(\d+)</nc:offset>',
+            r'<sd:firstresult>(\d+)</sd:firstresult>',
           ).firstMatch(request.body)!.group(1)!,
         );
         offsets.add(offset);

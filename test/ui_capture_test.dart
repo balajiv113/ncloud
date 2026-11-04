@@ -16,6 +16,8 @@ void main() {
     (tester) async {
       final root = Platform.environment['FLUTTER_ROOT'];
       await tester.runAsync(() async {
+        await (FontLoader('MaterialIcons')
+          ..addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf'))).load();
         if (root != null) {
           final font = File(
             '$root/bin/cache/artifacts/material_fonts/Roboto-Regular.ttf',
@@ -32,6 +34,9 @@ void main() {
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
+      final oldShadows = debugDisableShadows;
+      debugDisableShadows = false;
+      addTearDown(() => debugDisableShadows = oldShadows);
       final key = GlobalKey();
       await tester.pumpWidget(
         RepaintBoundary(
