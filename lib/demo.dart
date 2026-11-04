@@ -4,8 +4,16 @@ List<CloudFile> demoFiles() {
   final now = DateTime.now();
   return [
     const CloudFile(path: ['Photos'], name: 'Photos', isDirectory: true),
-    const CloudFile(path: ['Weekend escapes'], name: 'Weekend escapes', isDirectory: true),
-    const CloudFile(path: ['Coast & country'], name: 'Coast & country', isDirectory: true),
+    const CloudFile(
+      path: ['Weekend escapes'],
+      name: 'Weekend escapes',
+      isDirectory: true,
+    ),
+    const CloudFile(
+      path: ['Coast & country'],
+      name: 'Coast & country',
+      isDirectory: true,
+    ),
     const CloudFile(path: ['Documents'], name: 'Documents', isDirectory: true),
     CloudFile(
       path: const ['Welcome to ncloud.txt'],
@@ -39,13 +47,21 @@ List<CloudFile> demoFiles() {
       'Wild coast',
     ].indexed)
       CloudFile(
-        path: [index < 4 ? 'Photos' : index < 8 ? 'Weekend escapes' : 'Coast & country',
-          '$name.${index == 11 ? 'mp4' : 'jpg'}'],
+        path: [
+          index < 4
+              ? 'Photos'
+              : index < 8
+              ? 'Weekend escapes'
+              : 'Coast & country',
+          '$name.${index == 11 ? 'mp4' : 'jpg'}',
+        ],
         name: '$name.${index == 11 ? 'mp4' : 'jpg'}',
         isDirectory: false,
         contentType: index == 11 ? 'video/mp4' : 'image/jpeg',
         size: 2100000 + index * 190000,
-        modified: now.subtract(Duration(days: index < 4 ? index ~/ 2 : index * 6)),
+        modified: now.subtract(
+          Duration(days: index < 4 ? index ~/ 2 : index * 6),
+        ),
         favorite: index == 0 || index == 4 || index == 8,
         demoColor: [
           0xFF3B7974,

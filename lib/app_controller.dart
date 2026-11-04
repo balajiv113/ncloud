@@ -297,7 +297,9 @@ class AppController extends ChangeNotifier {
       if (version == _loadVersion) {
         items = result;
         _offset = result.length;
-        hasMore = !demo && (tab == 0 || tab == 2) &&
+        hasMore =
+            !demo &&
+            (tab == 0 || tab == 2) &&
             result.length == NextcloudClient.photoLimit;
       }
     } catch (e) {
@@ -307,15 +309,22 @@ class AppController extends ChangeNotifier {
         loading = false;
         notifyListeners();
       }
+    }
+  }
 
       Future<void> loadMore() async {
-        if (!hasMore || loading || loadingMore || busy || account == null) return;
+        if (!hasMore || loading || loadingMore || busy || account == null)
+          return;
         final version = _loadVersion;
         loadingMore = true;
         error = null;
         notifyListeners();
         try {
-          final page = await client.search(account!, favorites: tab == 2, offset: _offset);
+          final page = await client.search(
+            account!,
+            favorites: tab == 2,
+            offset: _offset,
+          );
           if (version != _loadVersion) return;
           _offset += page.length;
           final existing = items.map((f) => f.key).toSet();
@@ -333,20 +342,39 @@ class AppController extends ChangeNotifier {
 
       Future<List<CloudFile>> folderContents(List<String> path) async {
         if (demo) {
-          return _demo.where((f) => f.path.length == path.length + 1 &&
-              pathStartsWith(f.path, path)).toList();
+          return _demo
+              .where(
+                (f) =>
+                    f.path.length == path.length + 1 &&
+                    pathStartsWith(f.path, path),
+              )
+              .toList();
         }
         return client.listFiles(account!, path);
       }
 
-      Future<CloudFile?> albumCover(CloudFile folder) => _covers.putIfAbsent(folder.key, () async {
-        if (demo) return _demo.where((f) => f.isMedia && pathStartsWith(f.path, folder.path)).firstOrNull;
-        final found = await client.search(account!, path: folder.path, limit: 1);
-        return found.firstOrNull;
-      });
+      Future<CloudFile?> albumCover(CloudFile folder) => _covers.putIfAbsent(
+        folder.key,
+        () async {
+          if (demo)
+            return _demo
+                .where((f) => f.isMedia && pathStartsWith(f.path, folder.path))
+                .firstOrNull;
+          final found = await client.search(
+            account!,
+            path: folder.path,
+            limit: 1,
+          );
+          return found.firstOrNull;
+        },
+      );
 
-      Future<bool> organize(List<CloudFile> files, String operation, {
-        List<String>? destination, String? newName, bool favorite = true,
+      Future<bool> organize(
+        List<CloudFile> files,
+        String operation, {
+        List<String>? destination,
+        String? newName,
+        bool favorite = true,
       }) async {
         if (busy || files.isEmpty) return false;
         busy = true;
@@ -359,37 +387,67 @@ class AppController extends ChangeNotifier {
         try {
           for (final file in files) {
             final target = [...?destination, newName ?? file.name];
-            if (operation == 'move' || operation == 'copy' || operation == 'rename') {
+            if (operation == 'move' ||
+                operation == 'copy' ||
+                operation == 'rename') {
               if (operation == 'rename') {
                 target.clear();
-                target.addAll([...file.path.take(file.path.length - 1), newName!]);
+                target.addAll([
+                  ...file.path.take(file.path.length - 1),
+                  newName!,
+                ]);
               }
               validateName(target.last);
               if (file.isDirectory && pathStartsWith(target, file.path)) {
-                throw const CloudException('A folder cannot be placed inside itself.');
+                throw const CloudException(
+                  'A folder cannot be placed inside itself.',
+                );
               }
               if (demo) {
                 if (_demo.any((f) => listEquals(f.path, target))) {
-                  throw const CloudException('An item with that name already exists.');
+                  throw const CloudException(
+                    'An item with that name already exists.',
+                  );
                 }
-                final affected = _demo.where((f) => pathStartsWith(f.path, file.path)).toList();
-                final moved = affected.map((f) => f.atPath([...target, ...f.path.skip(file.path.length)])).toList();
-                if (operation != 'copy') _demo.removeWhere((f) => pathStartsWith(f.path, file.path));
+                final affected = _demo
+                    .where((f) => pathStartsWith(f.path, file.path))
+                    .toList();
+                final moved = affected
+                    .map(
+                      (f) => f.atPath([
+                        ...target,
+                        ...f.path.skip(file.path.length),
+                      ]),
+                    )
+                    .toList();
+                if (operation != 'copy')
+                  _demo.removeWhere((f) => pathStartsWith(f.path, file.path));
                 _demo.addAll(moved);
               } else {
-                await client.transfer(account!, file, target, copy: operation == 'copy');
+                await client.transfer(
+                  account!,
+                  file,
+                  target,
+                  copy: operation == 'copy',
+                );
               }
             } else if (operation == 'delete') {
               if (demo) {
                 _demoTrash['${file.key}:${DateTime.now().microsecondsSinceEpoch}'] =
-                    _demo.where((f) => pathStartsWith(f.path, file.path)).toList();
+                    _demo
+                        .where((f) => pathStartsWith(f.path, file.path))
+                        .toList();
                 _demo.removeWhere((f) => pathStartsWith(f.path, file.path));
               } else {
                 await client.delete(account!, file);
               }
             } else if (operation == 'favorite') {
               if (demo) {
-                _demo = _demo.map((f) => f.key == file.key ? f.withFavorite(favorite) : f).toList();
+                _demo = _demo
+                    .map(
+                      (f) => f.key == file.key ? f.withFavorite(favorite) : f,
+                    )
+                    .toList();
               } else {
                 await client.setFavorite(account!, file, favorite);
               }
@@ -417,10 +475,16 @@ class AppController extends ChangeNotifier {
 
       Future<List<TrashEntry>> trash() async {
         if (!demo) return client.trash(account!);
-        return _demoTrash.entries.map((entry) => TrashEntry(
-          key: entry.key, name: entry.value.first.name,
-          originalPath: entry.value.first.path.join('/'), deleted: DateTime.now(),
-        )).toList();
+        return _demoTrash.entries
+            .map(
+              (entry) => TrashEntry(
+                key: entry.key,
+                name: entry.value.first.name,
+                originalPath: entry.value.first.path.join('/'),
+                deleted: DateTime.now(),
+              ),
+            )
+            .toList();
       }
 
       Future<void> restore(TrashEntry entry) async {
@@ -431,7 +495,9 @@ class AppController extends ChangeNotifier {
           if (demo) {
             final files = _demoTrash[entry.key]!;
             if (_demo.any((f) => f.key == files.first.key)) {
-              throw const CloudException('An item already exists at the original location.');
+              throw const CloudException(
+                'An item already exists at the original location.',
+              );
             }
             _demo.addAll(files);
             _demoTrash.remove(entry.key);
@@ -445,9 +511,6 @@ class AppController extends ChangeNotifier {
           notifyListeners();
         }
       }
-    }
-  }
-
   Future<void> _action(Future<void> Function() action, String success) async {
     if (busy) return;
     busy = true;

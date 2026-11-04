@@ -64,20 +64,25 @@ ThemeData _theme(Brightness brightness) {
         ? const Color(0xFFFAFAFD)
         : const Color(0xFF101116),
     appBarTheme: const AppBarTheme(
-      centerTitle: false, elevation: 0, scrolledUnderElevation: 0,
+      centerTitle: false,
+      elevation: 0,
+      scrolledUnderElevation: 0,
     ),
     navigationBarTheme: NavigationBarThemeData(
       height: 72,
       backgroundColor: scheme.surface,
       indicatorColor: scheme.primaryContainer,
       labelTextStyle: WidgetStateProperty.all(
-        const TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
+        const TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
+      ),
     ),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
       fillColor: scheme.surfaceContainerLow,
       border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(18), borderSide: BorderSide.none),
+        borderRadius: BorderRadius.circular(18),
+        borderSide: BorderSide.none,
+      ),
     ),
     cardTheme: CardThemeData(
       elevation: 0,

@@ -66,7 +66,10 @@ void main() {
       );
       final page1 = await client.search(account, path: folder, limit: 1);
       expect(page1.single.key, photo.key);
-      expect(await client.search(account, path: folder, offset: 1, limit: 1), isEmpty);
+      expect(
+        await client.search(account, path: folder, offset: 1, limit: 1),
+        isEmpty,
+      );
 
       final renamedPath = [...folder, 'Renamed #photo.png'];
       await client.transfer(account, photo, renamedPath);
@@ -74,18 +77,33 @@ void main() {
       expect(renamed.path, renamedPath);
       final album = [...folder, 'Album & family'];
       await client.createFolder(account, album);
-      await client.transfer(account, renamed, [...album, renamed.name], copy: true);
+      await client.transfer(account, renamed, [
+        ...album,
+        renamed.name,
+      ], copy: true);
       final copied = (await client.listFiles(account, album)).single;
       expect(copied.name, renamed.name);
-      final share = await client.createShare(account, copied,
-        password: 'disposable-fixture-link', expires: DateTime.now().add(const Duration(days: 7)));
+      final share = await client.createShare(
+        account,
+        copied,
+        password: 'disposable-fixture-link',
+        expires: DateTime.now().add(const Duration(days: 7)),
+      );
       expect(share.url.path, contains('/s/'));
-      expect((await client.shares(account, copied)).any((s) => s.id == share.id), isTrue);
+      expect(
+        (await client.shares(account, copied)).any((s) => s.id == share.id),
+        isTrue,
+      );
       await client.revokeShare(account, share);
       expect(await client.shares(account, copied), isEmpty);
       await client.delete(account, copied);
       expect(await client.listFiles(account, album), isEmpty);
-      final trashed = (await client.trash(account)).where((e) => e.originalPath.contains(folder.single) && e.name == copied.name).single;
+      final trashed = (await client.trash(account))
+          .where(
+            (e) =>
+                e.originalPath.contains(folder.single) && e.name == copied.name,
+          )
+          .single;
       await client.restore(account, trashed);
       expect((await client.listFiles(account, album)).single.name, copied.name);
     },
