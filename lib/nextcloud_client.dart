@@ -309,12 +309,14 @@ class NextcloudClient {
         item.getElement('href', namespace: 'DAV:')?.innerText ?? '',
       );
       if (href == null ||
-          (href.hasAuthority && href.origin != account.server.origin))
+          (href.hasAuthority && href.origin != account.server.origin)) {
         continue;
+      }
       final segments = href.pathSegments.where((s) => s.isNotEmpty).toList();
       if (!pathStartsWith(segments, root.pathSegments) ||
-          segments.length != root.pathSegments.length + 1)
+          segments.length != root.pathSegments.length + 1) {
         continue;
+      }
       final key = segments.last;
       validateName(key);
       final props = item
@@ -379,16 +381,7 @@ class NextcloudClient {
       method,
       serverEndpoint(
         account.server,
-        [
-          'ocs',
-          'v2.php',
-          'apps',
-          'files_sharing',
-          'api',
-          'v1',
-          'shares',
-          if (id != null) id,
-        ],
+        ['ocs', 'v2.php', 'apps', 'files_sharing', 'api', 'v1', 'shares', ?id],
         {'format': 'json', if (method == 'GET') ...parameters},
       ),
       account: account,

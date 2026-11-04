@@ -54,16 +54,18 @@ class _LibraryScreenState extends State<LibraryScreen> {
   List<CloudFile> get _visible {
     final files = c.items.where((f) {
       if (_query.isNotEmpty &&
-          !f.name.toLowerCase().contains(_query.toLowerCase()))
+          !f.name.toLowerCase().contains(_query.toLowerCase())) {
         return false;
+      }
       if (f.isDirectory) return _album || _drive || _library;
       if (_album && !f.isMedia) return false;
       final date = f.modified?.toLocal();
       if (_month != null &&
           (date == null ||
               date.year != _month!.year ||
-              date.month != _month!.month))
+              date.month != _month!.month)) {
         return false;
+      }
       return switch (_filter) {
         MediaFilter.all => true,
         MediaFilter.photos => f.isImage,
@@ -1282,8 +1284,9 @@ class _AlbumCoverState extends State<AlbumCover> {
   Widget build(BuildContext context) => FutureBuilder<CloudFile?>(
     future: _cover,
     builder: (context, snapshot) {
-      if (snapshot.data case final photo?)
+      if (snapshot.data case final photo?) {
         return MediaTile(file: photo, controller: widget.controller);
+      }
       final colors = Theme.of(context).colorScheme;
       return Container(
         decoration: BoxDecoration(
@@ -1339,7 +1342,9 @@ class _DateHeader extends SliverPersistentHeaderDelegate {
     BuildContext context,
     double shrinkOffset,
     bool overlapsContent,
-  ) => ColoredBox(
+  ) => SizedBox(
+    height: maxExtent,
+    child: ColoredBox(
     color: color,
     child: Padding(
       padding: const EdgeInsets.only(left: 20, right: 8),
@@ -1364,6 +1369,7 @@ class _DateHeader extends SliverPersistentHeaderDelegate {
           ),
         ],
       ),
+    ),
     ),
   );
   @override

@@ -254,6 +254,7 @@ void main() {
     final c = AppController(store: MemoryStore());
     await tester.pumpWidget(NcloudApp(controller: c));
     await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Try demo'));
     await tester.tap(find.text('Try demo'));
     await tester.pumpAndSettle();
     for (final label in ['Albums', 'Drive', 'Library', 'Timeline']) {

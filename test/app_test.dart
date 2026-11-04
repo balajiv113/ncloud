@@ -114,6 +114,8 @@ void main() {
       expect(find.text('Travel notes.pdf'), findsOneWidget);
       await tester.tap(find.text('All files'));
       await tester.pumpAndSettle();
+      await tester.drag(find.byType(CustomScrollView), const Offset(0, -300));
+      await tester.pumpAndSettle();
       expect(find.text('Welcome to ncloud.txt'), findsOneWidget);
       await tester.tap(find.byTooltip('Settings'));
       await tester.pumpAndSettle();
@@ -149,6 +151,8 @@ void main() {
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextFormField), 'Test folder');
     await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+    await tester.drag(find.byType(CustomScrollView), const Offset(0, -250));
     await tester.pumpAndSettle();
     expect(find.text('Test folder'), findsOneWidget);
     expect(tester.takeException(), isNull);

@@ -197,8 +197,9 @@ class _NameDialogState extends State<NameDialog> {
   }
 
   void _submit() {
-    if (_form.currentState!.validate())
+    if (_form.currentState!.validate()) {
       Navigator.pop(context, _name.text.trim());
+    }
   }
 
   @override

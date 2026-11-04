@@ -92,15 +92,18 @@ Future<void> fileActions(
         context: context,
         builder: (_) => NameDialog(title: 'Rename', initial: file.name),
       );
-      if (name != null && name != file.name)
+      if (name != null && name != file.name) {
         await c.organize([file], 'rename', newName: name);
+      }
     case 'move' || 'copy':
       final destination = await chooseFolder(context, c, [file]);
-      if (destination != null)
+      if (destination != null) {
         await c.organize([file], action, destination: destination);
+      }
     case 'delete':
-      if (await confirmDelete(context, [file]))
+      if (await confirmDelete(context, [file])) {
         await c.organize([file], 'delete');
+      }
     case 'details':
       await showModalBottomSheet<void>(
         context: context,
@@ -193,7 +196,7 @@ class _FolderPickerState extends State<FolderPicker> {
             child: FutureBuilder<List<CloudFile>>(
               future: _folders,
               builder: (context, snapshot) {
-                if (snapshot.hasError)
+                if (snapshot.hasError) {
                   return Center(
                     child: MessageCard(
                       message: errorMessage(snapshot.error!),
@@ -201,8 +204,10 @@ class _FolderPickerState extends State<FolderPicker> {
                       onRetry: () => _open(_path),
                     ),
                   );
-                if (!snapshot.hasData)
+                }
+                if (!snapshot.hasData) {
                   return const Center(child: CircularProgressIndicator());
+                }
                 final folders = snapshot.data!
                     .where((f) => f.isDirectory)
                     .toList();
@@ -356,10 +361,11 @@ class _SharePanelState extends State<SharePanel> {
                             await Clipboard.setData(
                               ClipboardData(text: link.url.toString()),
                             );
-                            if (context.mounted)
+                            if (context.mounted) {
                               ScaffoldMessenger.of(context).showSnackBar(
                                 const SnackBar(content: Text('Link copied')),
                               );
+                            }
                           },
                         ),
                         TextButton.icon(
@@ -391,12 +397,13 @@ class _SharePanelState extends State<SharePanel> {
                                     widget.controller.account!,
                                     link,
                                   );
-                                  if (mounted)
+                                  if (mounted) {
                                     setState(
                                       () => _links.removeWhere(
                                         (s) => s.id == link.id,
                                       ),
                                     );
+                                  }
                                 }),
                           child: const Text('Revoke'),
                         ),
@@ -427,8 +434,9 @@ class _SharePanelState extends State<SharePanel> {
                       lastDate: now.add(const Duration(days: 365 * 5)),
                       initialDate: _expires ?? now.add(const Duration(days: 7)),
                     );
-                    if (mounted && date != null)
+                    if (mounted && date != null) {
                       setState(() => _expires = date);
+                    }
                   },
             icon: const Icon(Icons.schedule),
             label: Text(
@@ -452,11 +460,12 @@ class _SharePanelState extends State<SharePanel> {
                       password: _password.text,
                       expires: _expires,
                     );
-                    if (mounted)
+                    if (mounted) {
                       setState(() {
                         _links.add(result);
                         _password.clear();
                       });
+                    }
                   }),
             icon: const Icon(Icons.add_link),
             label: const Text('Create read-only link'),
@@ -503,7 +512,7 @@ class _TrashScreenState extends State<TrashScreen> {
           child: FutureBuilder<List<TrashEntry>>(
             future: _items,
             builder: (context, snapshot) {
-              if (snapshot.hasError)
+              if (snapshot.hasError) {
                 return Center(
                   child: MessageCard(
                     message: errorMessage(snapshot.error!),
@@ -511,12 +520,15 @@ class _TrashScreenState extends State<TrashScreen> {
                     onRetry: _reload,
                   ),
                 );
-              if (!snapshot.hasData)
+              }
+              if (!snapshot.hasData) {
                 return const Center(child: CircularProgressIndicator());
-              if (snapshot.data!.isEmpty)
+              }
+              if (snapshot.data!.isEmpty) {
                 return const Center(
                   child: Text('A clean slate. Nothing in trash.'),
                 );
+              }
               return ListView(
                 children: [
                   for (final entry in snapshot.data!)
@@ -648,8 +660,9 @@ class SettingsScreen extends StatelessWidget {
                     );
                     if (yes == true) {
                       await controller.signOut();
-                      if (context.mounted && !controller.connected)
+                      if (context.mounted && !controller.connected) {
                         Navigator.pop(context);
+                      }
                     }
                   },
           ),

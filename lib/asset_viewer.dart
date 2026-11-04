@@ -63,12 +63,13 @@ class _AssetViewerState extends State<AssetViewer> with WidgetsBindingObserver {
     setState(() {
       _chrome = false;
       _slideshow = Timer.periodic(const Duration(seconds: 5), (_) {
-        if (mounted)
+        if (mounted) {
           _pages.animateToPage(
             (_index + 1) % _files.length,
             duration: const Duration(milliseconds: 450),
             curve: Curves.easeInOutCubic,
           );
+        }
       });
     });
   }
@@ -362,8 +363,11 @@ class _ZoomAssetState extends State<ZoomAsset> {
     onDoubleTap: () => setState(() {
       _zoomed = !_zoomed;
       _transform.value = _zoomed
-          ? (Matrix4.translationValues(-_doubleTapPosition.dx, -_doubleTapPosition.dy, 0)
-            ..multiply(Matrix4.diagonal3Values(2, 2, 1)))
+          ? (Matrix4.translationValues(
+              -_doubleTapPosition.dx,
+              -_doubleTapPosition.dy,
+              0,
+            )..multiply(Matrix4.diagonal3Values(2, 2, 1)))
           : Matrix4.identity();
     }),
     child: InteractiveViewer(

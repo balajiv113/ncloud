@@ -48,11 +48,14 @@ jobs:
       - run: flutter analyze
       - run: flutter test
       - run: flutter test test/ui_capture_test.dart --dart-define=CAPTURE_UI=true
+        if: success() || failure()
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: mobile-ui-previews
           path: build/ui/
       - name: Start isolated Nextcloud integration fixture
+        if: success() || failure()
         run: |
           docker info >/dev/null
           password=$(openssl rand -hex 24)
@@ -74,6 +77,7 @@ jobs:
           echo "Nextcloud did not become ready"
           exit 1
       - name: Verify real Nextcloud APIs
+        if: success() || failure()
         run: |
           flutter test test/live_nextcloud_test.dart \
             --dart-define=LIVE_NEXTCLOUD=true \

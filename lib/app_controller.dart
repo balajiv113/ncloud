@@ -312,205 +312,196 @@ class AppController extends ChangeNotifier {
     }
   }
 
-      Future<void> loadMore() async {
-        if (!hasMore || loading || loadingMore || busy || account == null)
-          return;
-        final version = _loadVersion;
-        loadingMore = true;
-        error = null;
-        notifyListeners();
-        try {
-          final page = await client.search(
-            account!,
-            favorites: tab == 2,
-            offset: _offset,
-          );
-          if (version != _loadVersion) return;
-          _offset += page.length;
-          final existing = items.map((f) => f.key).toSet();
-          items = [...items, ...page.where((f) => existing.add(f.key))];
-          hasMore = page.length == NextcloudClient.photoLimit;
-        } catch (e) {
-          if (version == _loadVersion) error = errorMessage(e);
-        } finally {
-          if (version == _loadVersion) {
-            loadingMore = false;
-            notifyListeners();
-          }
-        }
-      }
-
-      Future<List<CloudFile>> folderContents(List<String> path) async {
-        if (demo) {
-          return _demo
-              .where(
-                (f) =>
-                    f.path.length == path.length + 1 &&
-                    pathStartsWith(f.path, path),
-              )
-              .toList();
-        }
-        return client.listFiles(account!, path);
-      }
-
-      Future<CloudFile?> albumCover(CloudFile folder) => _covers.putIfAbsent(
-        folder.key,
-        () async {
-          if (demo)
-            return _demo
-                .where((f) => f.isMedia && pathStartsWith(f.path, folder.path))
-                .firstOrNull;
-          final found = await client.search(
-            account!,
-            path: folder.path,
-            limit: 1,
-          );
-          return found.firstOrNull;
-        },
+  Future<void> loadMore() async {
+    if (!hasMore || loading || loadingMore || busy || account == null) {
+      return;
+    }
+    final version = _loadVersion;
+    loadingMore = true;
+    error = null;
+    notifyListeners();
+    try {
+      final page = await client.search(
+        account!,
+        favorites: tab == 2,
+        offset: _offset,
       );
-
-      Future<bool> organize(
-        List<CloudFile> files,
-        String operation, {
-        List<String>? destination,
-        String? newName,
-        bool favorite = true,
-      }) async {
-        if (busy || files.isEmpty) return false;
-        busy = true;
-        error = null;
-        notice = null;
-        completed = 0;
-        total = files.length;
+      if (version != _loadVersion) return;
+      _offset += page.length;
+      final existing = items.map((f) => f.key).toSet();
+      items = [...items, ...page.where((f) => existing.add(f.key))];
+      hasMore = page.length == NextcloudClient.photoLimit;
+    } catch (e) {
+      if (version == _loadVersion) error = errorMessage(e);
+    } finally {
+      if (version == _loadVersion) {
+        loadingMore = false;
         notifyListeners();
-        Object? failure;
-        try {
-          for (final file in files) {
-            final target = [...?destination, newName ?? file.name];
-            if (operation == 'move' ||
-                operation == 'copy' ||
-                operation == 'rename') {
-              if (operation == 'rename') {
-                target.clear();
-                target.addAll([
-                  ...file.path.take(file.path.length - 1),
-                  newName!,
-                ]);
-              }
-              validateName(target.last);
-              if (file.isDirectory && pathStartsWith(target, file.path)) {
-                throw const CloudException(
-                  'A folder cannot be placed inside itself.',
-                );
-              }
-              if (demo) {
-                if (_demo.any((f) => listEquals(f.path, target))) {
-                  throw const CloudException(
-                    'An item with that name already exists.',
-                  );
-                }
-                final affected = _demo
-                    .where((f) => pathStartsWith(f.path, file.path))
-                    .toList();
-                final moved = affected
-                    .map(
-                      (f) => f.atPath([
-                        ...target,
-                        ...f.path.skip(file.path.length),
-                      ]),
-                    )
-                    .toList();
-                if (operation != 'copy')
-                  _demo.removeWhere((f) => pathStartsWith(f.path, file.path));
-                _demo.addAll(moved);
-              } else {
-                await client.transfer(
-                  account!,
-                  file,
-                  target,
-                  copy: operation == 'copy',
-                );
-              }
-            } else if (operation == 'delete') {
-              if (demo) {
-                _demoTrash['${file.key}:${DateTime.now().microsecondsSinceEpoch}'] =
-                    _demo
-                        .where((f) => pathStartsWith(f.path, file.path))
-                        .toList();
-                _demo.removeWhere((f) => pathStartsWith(f.path, file.path));
-              } else {
-                await client.delete(account!, file);
-              }
-            } else if (operation == 'favorite') {
-              if (demo) {
-                _demo = _demo
-                    .map(
-                      (f) => f.key == file.key ? f.withFavorite(favorite) : f,
-                    )
-                    .toList();
-              } else {
-                await client.setFavorite(account!, file, favorite);
-              }
-            } else {
-              throw const CloudException('This action is not supported.');
-            }
-            completed++;
-            notifyListeners();
+      }
+    }
+  }
+
+  Future<List<CloudFile>> folderContents(List<String> path) async {
+    if (demo) {
+      return _demo
+          .where(
+            (f) =>
+                f.path.length == path.length + 1 &&
+                pathStartsWith(f.path, path),
+          )
+          .toList();
+    }
+    return client.listFiles(account!, path);
+  }
+
+  Future<CloudFile?> albumCover(CloudFile folder) => _covers.putIfAbsent(
+    folder.key,
+    () async {
+      if (demo) {
+        return _demo
+            .where((f) => f.isMedia && pathStartsWith(f.path, folder.path))
+            .firstOrNull;
+      }
+      final found = await client.search(account!, path: folder.path, limit: 1);
+      return found.firstOrNull;
+    },
+  );
+
+  Future<bool> organize(
+    List<CloudFile> files,
+    String operation, {
+    List<String>? destination,
+    String? newName,
+    bool favorite = true,
+  }) async {
+    if (busy || files.isEmpty) return false;
+    busy = true;
+    error = null;
+    notice = null;
+    completed = 0;
+    total = files.length;
+    notifyListeners();
+    Object? failure;
+    try {
+      for (final file in files) {
+        final target = [...?destination, newName ?? file.name];
+        if (operation == 'move' ||
+            operation == 'copy' ||
+            operation == 'rename') {
+          if (operation == 'rename') {
+            target.clear();
+            target.addAll([...file.path.take(file.path.length - 1), newName!]);
           }
-        } catch (e) {
-          failure = e;
-        }
-        _covers.clear();
-        _previews.clear();
-        await load();
-        if (failure != null) {
-          error = '$completed of $total completed. ${errorMessage(failure)}';
-        } else {
-          notice = '$completed ${completed == 1 ? 'item' : 'items'} updated';
-        }
-        busy = false;
-        notifyListeners();
-        return failure == null;
-      }
-
-      Future<List<TrashEntry>> trash() async {
-        if (!demo) return client.trash(account!);
-        return _demoTrash.entries
-            .map(
-              (entry) => TrashEntry(
-                key: entry.key,
-                name: entry.value.first.name,
-                originalPath: entry.value.first.path.join('/'),
-                deleted: DateTime.now(),
-              ),
-            )
-            .toList();
-      }
-
-      Future<void> restore(TrashEntry entry) async {
-        if (busy) throw const CloudException('Wait for the current operation.');
-        busy = true;
-        notifyListeners();
-        try {
+          validateName(target.last);
+          if (file.isDirectory && pathStartsWith(target, file.path)) {
+            throw const CloudException(
+              'A folder cannot be placed inside itself.',
+            );
+          }
           if (demo) {
-            final files = _demoTrash[entry.key]!;
-            if (_demo.any((f) => f.key == files.first.key)) {
+            if (_demo.any((f) => listEquals(f.path, target))) {
               throw const CloudException(
-                'An item already exists at the original location.',
+                'An item with that name already exists.',
               );
             }
-            _demo.addAll(files);
-            _demoTrash.remove(entry.key);
+            final affected = _demo
+                .where((f) => pathStartsWith(f.path, file.path))
+                .toList();
+            final moved = affected
+                .map(
+                  (f) =>
+                      f.atPath([...target, ...f.path.skip(file.path.length)]),
+                )
+                .toList();
+            if (operation != 'copy') {
+              _demo.removeWhere((f) => pathStartsWith(f.path, file.path));
+            }
+            _demo.addAll(moved);
           } else {
-            await client.restore(account!, entry);
+            await client.transfer(
+              account!,
+              file,
+              target,
+              copy: operation == 'copy',
+            );
           }
-          _covers.clear();
-          await load();
-        } finally {
-          busy = false;
-          notifyListeners();
+        } else if (operation == 'delete') {
+          if (demo) {
+            _demoTrash['${file.key}:${DateTime.now().microsecondsSinceEpoch}'] =
+                _demo.where((f) => pathStartsWith(f.path, file.path)).toList();
+            _demo.removeWhere((f) => pathStartsWith(f.path, file.path));
+          } else {
+            await client.delete(account!, file);
+          }
+        } else if (operation == 'favorite') {
+          if (demo) {
+            _demo = _demo
+                .map((f) => f.key == file.key ? f.withFavorite(favorite) : f)
+                .toList();
+          } else {
+            await client.setFavorite(account!, file, favorite);
+          }
+        } else {
+          throw const CloudException('This action is not supported.');
         }
+        completed++;
+        notifyListeners();
       }
+    } catch (e) {
+      failure = e;
+    }
+    _covers.clear();
+    _previews.clear();
+    await load();
+    if (failure != null) {
+      error = '$completed of $total completed. ${errorMessage(failure)}';
+    } else {
+      notice = '$completed ${completed == 1 ? 'item' : 'items'} updated';
+    }
+    busy = false;
+    notifyListeners();
+    return failure == null;
+  }
+
+  Future<List<TrashEntry>> trash() async {
+    if (!demo) return client.trash(account!);
+    return _demoTrash.entries
+        .map(
+          (entry) => TrashEntry(
+            key: entry.key,
+            name: entry.value.first.name,
+            originalPath: entry.value.first.path.join('/'),
+            deleted: DateTime.now(),
+          ),
+        )
+        .toList();
+  }
+
+  Future<void> restore(TrashEntry entry) async {
+    if (busy) throw const CloudException('Wait for the current operation.');
+    busy = true;
+    notifyListeners();
+    try {
+      if (demo) {
+        final files = _demoTrash[entry.key]!;
+        if (_demo.any((f) => f.key == files.first.key)) {
+          throw const CloudException(
+            'An item already exists at the original location.',
+          );
+        }
+        _demo.addAll(files);
+        _demoTrash.remove(entry.key);
+      } else {
+        await client.restore(account!, entry);
+      }
+      _covers.clear();
+      await load();
+    } finally {
+      busy = false;
+      notifyListeners();
+    }
+  }
+
   Future<void> _action(Future<void> Function() action, String success) async {
     if (busy) return;
     busy = true;
