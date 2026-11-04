@@ -57,6 +57,7 @@ class AppController extends ChangeNotifier {
   bool demo = false;
   bool starting = true;
   bool signingIn = false;
+  bool _savingAccount = false;
   bool loading = false;
   bool busy = false;
   int tab = 0;
@@ -71,6 +72,7 @@ class AppController extends ChangeNotifier {
   final Map<String, Future<Uint8List>> _previews = {};
 
   bool get connected => account != null || demo;
+  bool get canCancelLogin => signingIn && !_savingAccount;
 
   Future<void> initialize() async {
     try {
@@ -86,6 +88,7 @@ class AppController extends ChangeNotifier {
   }
 
   void enterDemo() {
+    if (_savingAccount) return;
     cancelLogin();
     demo = true;
     _demo = demoFiles();
@@ -166,18 +169,25 @@ class AppController extends ChangeNotifier {
   }
 
   void cancelLogin() {
+    if (_savingAccount) return;
     _loginVersion++;
     signingIn = false;
     notifyListeners();
   }
 
   Future<void> _saveAccount(Account result) async {
-    await store.write(result.encode());
-    account = result;
-    demo = false;
-    tab = 0;
-    directory = [];
-    await load();
+    _savingAccount = true;
+    notifyListeners();
+    try {
+      await store.write(result.encode());
+      account = result;
+      demo = false;
+      tab = 0;
+      directory = [];
+      await load();
+    } finally {
+      _savingAccount = false;
+    }
   }
 
   Future<void> signOut() async {

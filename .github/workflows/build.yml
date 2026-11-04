@@ -61,6 +61,37 @@ jobs:
             test/
       - run: flutter analyze
       - run: flutter test
+      - name: Start isolated Nextcloud integration fixture
+        run: |
+          docker info >/dev/null
+          password=$(openssl rand -hex 24)
+          echo "::add-mask::$password"
+          echo "NEXTCLOUD_TEST_PASSWORD=$password" >> "$GITHUB_ENV"
+          docker run --detach --name ncloud-nextcloud \
+            --publish 127.0.0.1:8080:80 \
+            --env NEXTCLOUD_ADMIN_USER=ncloud-ci \
+            --env NEXTCLOUD_ADMIN_PASSWORD="$password" \
+            --env SQLITE_DATABASE=ncloud \
+            --env 'NEXTCLOUD_TRUSTED_DOMAINS=127.0.0.1 localhost' \
+            nextcloud:32-apache
+          for attempt in $(seq 1 90); do
+            if curl -fsS http://127.0.0.1:8080/status.php | grep -q '"installed":true'; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Nextcloud did not become ready"
+          exit 1
+      - name: Verify real Nextcloud APIs
+        run: |
+          flutter test test/live_nextcloud_test.dart \
+            --dart-define=LIVE_NEXTCLOUD=true \
+            --dart-define=NEXTCLOUD_TEST_PASSWORD="$NEXTCLOUD_TEST_PASSWORD"
+      - name: Reuse development preview signer when available
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: ncloud-android-preview-signer-v1
       - name: Build installable preview
         run: flutter build apk --release --build-number=${{ github.run_number }}
       - uses: actions/upload-artifact@v4

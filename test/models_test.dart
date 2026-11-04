@@ -25,6 +25,7 @@ void main() {
       'https://example.com?token=secret',
       'https://example.com/#fragment',
       'https://example.com/../private',
+      'https://example.com/%2e%2e/private',
     ]) {
       expect(() => normalizeServer(url), throwsFormatException, reason: url);
     }

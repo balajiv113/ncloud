@@ -112,7 +112,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       'Complete sign-in in your browser, then return here. Your Nextcloud password never enters ncloud.',
                     ),
                     TextButton(
-                      onPressed: controller.cancelLogin,
+                      onPressed: controller.canCancelLogin ? controller.cancelLogin : null,
                       child: const Text('Cancel sign-in'),
                     ),
                   ] else ...[

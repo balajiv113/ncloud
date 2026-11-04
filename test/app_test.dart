@@ -1,7 +1,12 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:ncloud/app_controller.dart';
 import 'package:ncloud/main.dart';
+import 'package:ncloud/nextcloud_client.dart';
 
 class MemoryStore implements SessionStore {
   String? value;
@@ -14,6 +19,36 @@ class MemoryStore implements SessionStore {
 }
 
 void main() {
+  test('app-password sign-in persists credentials and restores the session', () async {
+    final store = MemoryStore();
+    NextcloudClient client() => NextcloudClient(transport: MockClient((request) async {
+      if (request.url.path.endsWith('/cloud/user')) {
+        return http.Response(jsonEncode({
+          'ocs': {
+            'meta': {'status': 'ok'},
+            'data': {'id': 'alice', 'display-name': 'Alice'},
+          },
+        }), 200);
+      }
+      return http.Response('<d:multistatus xmlns:d="DAV:"/>', 207);
+    }));
+    final controller = AppController(store: store, client: client());
+    addTearDown(controller.dispose);
+    await controller.initialize();
+    await controller.passwordLogin('https://cloud.example', 'alice@example.com', 'app-password');
+    expect(controller.connected, isTrue);
+    expect(controller.account!.userId, 'alice');
+    expect(controller.signingIn, isFalse);
+    expect(controller.error, isNull);
+    expect(store.value, isNotNull);
+    final restored = AppController(store: store, client: client());
+    addTearDown(restored.dispose);
+    await restored.initialize();
+    expect(restored.account!.loginName, 'alice@example.com');
+    expect(restored.account!.userId, 'alice');
+    expect(restored.error, isNull);
+  });
+
   test(
     'demo supports folder creation, browsing, and favorites without a server',
     () async {
@@ -58,9 +93,9 @@ void main() {
       await tester.pumpAndSettle();
       await tester.enterText(find.byType(TextField), 'Documents');
       await tester.pumpAndSettle();
-      expect(find.text('Documents'), findsOneWidget);
+      expect(find.widgetWithText(ListTile, 'Documents'), findsOneWidget);
       expect(find.text('Photos'), findsOneWidget); // Navigation label only.
-      await tester.tap(find.text('Documents'));
+      await tester.tap(find.widgetWithText(ListTile, 'Documents'));
       await tester.pumpAndSettle();
       expect(find.text('Travel notes.pdf'), findsOneWidget);
       await tester.tap(find.text('All files'));

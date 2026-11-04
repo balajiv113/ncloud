@@ -11,7 +11,7 @@ A single Flutter app for Android and iOS, bringing Nextcloud photos and files in
 
 If browser login is unavailable, create an **app password** in Nextcloud → Personal settings → Security and use the alternative sign-in form. Do not enter your main password. Self-signed/untrusted certificates and plain HTTP are intentionally not supported; install a valid certificate.
 
-Every successful `main` build publishes an APK to a private prerelease and retains an Actions artifact for 30 days. Preview APKs use a **development signing key, not production signing**. If Android rejects an update because its signer changed, uninstall the old preview first (this clears its saved account), then install the new one. Do not distribute these builds as production releases.
+Every successful `main` build publishes an APK to a private prerelease and retains an Actions artifact for 30 days. Preview APKs use a **cached development signing key, not production signing**. If the cache expires and Android rejects an update because its signer changed, uninstall the old preview first (this clears its saved account), then install the new one. Do not distribute these builds as production releases.
 
 ## iPhone / iPad testing
 
@@ -77,4 +77,4 @@ This is the foundation, not a claim that core Nextcloud supplies all Immich and 
 4. Intelligence: evaluate Nextcloud Photos/Memories/Recognize/Face Recognition APIs and compatibility. Face grouping, semantic search, memories and transcoding require suitable server apps or a separately designed indexing service; they cannot be promised from core WebDAV alone.
 5. Distribution: production signing, TestFlight, app-store privacy disclosures, accessibility/device testing, and release hardening.
 
-Before enabling automatic backup or destructive file operations, add integration coverage against real supported Nextcloud versions and device background-lifecycle tests. Current automated checks cover API contracts with mocked HTTP responses and demo/widget flows; they do not prove compatibility with every Nextcloud deployment.
+CI checks API contracts with mocked HTTP responses, demo/widget flows, and a real isolated Nextcloud 32 instance (profile lookup, create folder, streamed upload, overwrite protection, favorites, recursive media search, thumbnails, and original download). The live test is skipped by default locally; it uses only a disposable loopback HTTP fixture, while app sign-in requires HTTPS. This does not prove compatibility with every Nextcloud deployment. Before enabling automatic backup or destructive file operations, expand the server-version matrix and add real-device background-lifecycle tests.
