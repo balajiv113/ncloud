@@ -2,7 +2,6 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
-import 'package:ncloud/models.dart';
 import 'package:ncloud/nextcloud_client.dart';
 
 void main() {
@@ -61,7 +60,10 @@ void main() {
       final download = await client.download(account, photo);
       expect(await download.stream.toBytes(), bytes);
       await client.setFavorite(account, photo, false);
-      expect((await client.listFiles(account, folder)).single.favorite, isFalse);
+      expect(
+        (await client.listFiles(account, folder)).single.favorite,
+        isFalse,
+      );
     },
     skip: !enabled,
     timeout: const Timeout(Duration(minutes: 3)),

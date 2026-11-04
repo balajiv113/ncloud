@@ -21,6 +21,7 @@ iOS does **not** allow an arbitrary unsigned download to be installed like an AP
 git clone https://github.com/balajiv113/ncloud.git
 cd ncloud
 flutter pub get
+(cd ios && pod install)
 open ios/Runner.xcworkspace
 ```
 

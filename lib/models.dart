@@ -1,8 +1,10 @@
 import 'dart:convert';
 
 Uri normalizeServer(String input) {
-  if (RegExp(r'/(?:\.|%2e){1,2}(?:/|$)', caseSensitive: false)
-      .hasMatch(input.trim())) {
+  if (RegExp(
+    r'/(?:\.|%2e){1,2}(?:/|$)',
+    caseSensitive: false,
+  ).hasMatch(input.trim())) {
     throw const FormatException('The server address contains an invalid path.');
   }
   final uri = Uri.tryParse(input.trim());
