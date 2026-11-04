@@ -114,7 +114,33 @@ class CloudFile {
     favorite: value,
     demoColor: demoColor,
   );
+
+  CloudFile atPath(List<String> value) => CloudFile(
+    path: value, name: value.last, isDirectory: isDirectory,
+    contentType: contentType, size: size, modified: modified, id: id,
+    favorite: favorite, demoColor: demoColor,
+  );
 }
+
+class TrashEntry {
+  const TrashEntry({required this.key, required this.name, required this.originalPath, this.deleted});
+  final String key;
+  final String name;
+  final String originalPath;
+  final DateTime? deleted;
+}
+
+class PublicShare {
+  const PublicShare({required this.id, required this.url, this.passwordProtected = false, this.expiration});
+  final String id;
+  final Uri url;
+  final bool passwordProtected;
+  final String? expiration;
+}
+
+bool pathStartsWith(List<String> path, List<String> prefix) =>
+    path.length >= prefix.length &&
+    List.generate(prefix.length, (i) => path[i] == prefix[i]).every((v) => v);
 
 String formatBytes(int bytes) {
   if (bytes < 1024) return '$bytes B';

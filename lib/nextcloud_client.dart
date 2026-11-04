@@ -45,7 +45,7 @@ class NextcloudClient {
     final request = http.Request(method, uri)
       ..followRedirects = false
       ..headers.addAll({
-        'User-Agent': 'ncloud/0.1.0',
+        'User-Agent': 'ncloud/0.2.0',
         if (account != null) 'Authorization': account.authorization,
         ...headers,
       });
@@ -212,10 +212,13 @@ class NextcloudClient {
   Future<List<CloudFile>> search(
     Account account, {
     bool favorites = false,
+    List<String> path = const [],
+    int offset = 0,
+    int limit = photoLimit,
   }) async {
     // SEARCH scopes are relative to the DAV root, not the installation path.
     final scope = XmlText(
-      Uri(pathSegments: ['', 'files', account.userId]).path,
+      Uri(pathSegments: ['', 'files', account.userId, ...path]).path,
     ).toXmlString();
     final where = favorites
         ? '<d:eq><d:prop><oc:favorite/></d:prop><d:literal>1</d:literal></d:eq>'
@@ -230,13 +233,13 @@ class NextcloudClient {
       headers: {'Content-Type': 'application/xml; charset=utf-8'},
       body:
           '''
-        <d:searchrequest xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns">
+        <d:searchrequest xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns" xmlns:nc="http://nextcloud.org/ns">
           <d:basicsearch>
             <d:select><d:prop>$_properties</d:prop></d:select>
             <d:from><d:scope><d:href>$scope</d:href><d:depth>infinity</d:depth></d:scope></d:from>
             <d:where>$where</d:where>
             <d:orderby><d:order><d:prop><d:getlastmodified/></d:prop><d:descending/></d:order></d:orderby>
-            <d:limit><d:nresults>$photoLimit</d:nresults></d:limit>
+            <d:limit><d:nresults>$limit</d:nresults><nc:offset>$offset</nc:offset></d:limit>
           </d:basicsearch>
         </d:searchrequest>
       ''',
@@ -244,6 +247,121 @@ class NextcloudClient {
     _expect(response, {207});
     final files = parseFiles(response.body, account);
     return files.where((f) => favorites ? f.favorite : f.isMedia).toList();
+  }
+
+  Future<void> transfer(Account account, CloudFile file, List<String> destination, {bool copy = false}) async {
+    if (destination.isEmpty || destination.any((s) => s == '.' || s == '..')) {
+      throw const CloudException('Choose a valid destination.');
+    }
+    validateName(destination.last);
+    if (file.isDirectory && pathStartsWith(destination, file.path)) {
+      throw const CloudException('A folder cannot be placed inside itself.');
+    }
+    final response = await _request(
+      copy ? 'COPY' : 'MOVE', davUri(account, file.path), account: account,
+      headers: {'Destination': davUri(account, destination).toString(), 'Overwrite': 'F'},
+    );
+    _expect(response, {201, 204});
+  }
+
+  Future<void> delete(Account account, CloudFile file) async {
+    final response = await _request('DELETE', davUri(account, file.path), account: account);
+    _expect(response, {204});
+  }
+
+  Uri _trashUri(Account account, List<String> path) => serverEndpoint(
+    account.server, ['remote.php', 'dav', 'trashbin', account.userId, ...path],
+  );
+
+  Future<List<TrashEntry>> trash(Account account) async {
+    final root = _trashUri(account, ['trash']);
+    final response = await _request('PROPFIND', root, account: account,
+      headers: {'Depth': '1', 'Content-Type': 'application/xml; charset=utf-8'},
+      body: '''
+      <d:propfind xmlns:d="DAV:" xmlns:nc="http://nextcloud.org/ns">
+        <d:prop><nc:trashbin-filename/><nc:trashbin-original-location/><nc:trashbin-deletion-time/></d:prop>
+      </d:propfind>''',
+    );
+    _expect(response, {207});
+    final result = <TrashEntry>[];
+    for (final item in XmlDocument.parse(response.body).findAllElements('response', namespace: 'DAV:')) {
+      final href = Uri.tryParse(item.getElement('href', namespace: 'DAV:')?.innerText ?? '');
+      if (href == null || (href.hasAuthority && href.origin != account.server.origin)) continue;
+      final segments = href.pathSegments.where((s) => s.isNotEmpty).toList();
+      if (!pathStartsWith(segments, root.pathSegments) || segments.length != root.pathSegments.length + 1) continue;
+      final key = segments.last;
+      validateName(key);
+      final props = item.findElements('propstat', namespace: 'DAV:')
+          .where((p) => RegExp(r'\s200(?:\s|$)').hasMatch(p.getElement('status', namespace: 'DAV:')?.innerText ?? ''))
+          .expand((p) => p.findElements('prop', namespace: 'DAV:'));
+      String value(String name) => props
+          .expand((p) => p.findElements(name, namespace: 'http://nextcloud.org/ns'))
+          .map((e) => e.innerText).firstOrNull ?? '';
+      final name = value('trashbin-filename');
+      if (name.isEmpty) continue;
+      final time = int.tryParse(value('trashbin-deletion-time'));
+      result.add(TrashEntry(key: key, name: name,
+          originalPath: value('trashbin-original-location'),
+          deleted: time == null ? null : DateTime.fromMillisecondsSinceEpoch(time * 1000)));
+    }
+    result.sort((a, b) => (b.deleted ?? DateTime(1970)).compareTo(a.deleted ?? DateTime(1970)));
+    return result;
+  }
+
+  Future<void> restore(Account account, TrashEntry entry) async {
+    validateName(entry.key);
+    final response = await _request('MOVE', _trashUri(account, ['trash', entry.key]),
+      account: account, headers: {
+        'Destination': _trashUri(account, ['restore']).toString(), 'Overwrite': 'F',
+      });
+    _expect(response, {201, 204});
+  }
+
+  Future<dynamic> _sharesRequest(Account account, String method, {
+    String? id, Map<String, String> parameters = const {},
+  }) async {
+    final response = await _request(method, serverEndpoint(account.server,
+      ['ocs', 'v2.php', 'apps', 'files_sharing', 'api', 'v1', 'shares', if (id != null) id],
+      {'format': 'json', if (method == 'GET') ...parameters}),
+      account: account, headers: {
+        'OCS-APIRequest': 'true', 'Accept': 'application/json',
+        if (method == 'POST') 'Content-Type': 'application/x-www-form-urlencoded',
+      }, body: method == 'POST' ? Uri(queryParameters: parameters).query : null);
+    _expect(response, {200});
+    final ocs = (jsonDecode(response.body) as Map<String, dynamic>)['ocs'] as Map<String, dynamic>;
+    if ((ocs['meta'] as Map<String, dynamic>)['status'] != 'ok') {
+      throw const CloudException('Nextcloud rejected the sharing request. Check server sharing policies.');
+    }
+    return ocs['data'];
+  }
+
+  PublicShare _share(Map<String, dynamic> data) {
+    final url = Uri.parse(data['url'] as String);
+    if (!url.hasAuthority || !['https', 'http'].contains(url.scheme)) {
+      throw const CloudException('The server returned an invalid share URL.');
+    }
+    return PublicShare(id: data['id'].toString(), url: url,
+      passwordProtected: data['password'] != null && data['password'] != '',
+      expiration: data['expiration'] as String?);
+  }
+
+  Future<List<PublicShare>> shares(Account account, CloudFile file) async {
+    final data = await _sharesRequest(account, 'GET', parameters: {'path': '/${file.path.join('/')}'}) as List<dynamic>;
+    return data.cast<Map<String, dynamic>>()
+      .where((s) => s['share_type'].toString() == '3').map(_share).toList();
+  }
+
+  Future<PublicShare> createShare(Account account, CloudFile file, {String? password, DateTime? expires}) async {
+    final data = await _sharesRequest(account, 'POST', parameters: {
+      'path': '/${file.path.join('/')}', 'shareType': '3', 'permissions': '1',
+      if (password != null && password.isNotEmpty) 'password': password,
+      if (expires != null) 'expireDate': expires.toIso8601String().split('T').first,
+    });
+    return _share(data as Map<String, dynamic>);
+  }
+
+  Future<void> revokeShare(Account account, PublicShare share) async {
+    await _sharesRequest(account, 'DELETE', id: share.id);
   }
 
   static List<CloudFile> parseFiles(String source, Account account) {
@@ -397,7 +515,7 @@ class NextcloudClient {
         'Authorization': account.authorization,
         'Content-Type': 'application/octet-stream',
         'If-None-Match': '*',
-        'User-Agent': 'ncloud/0.1.0',
+        'User-Agent': 'ncloud/0.2.0',
       });
     try {
       final response = await http.Response.fromStream(

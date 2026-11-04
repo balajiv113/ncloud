@@ -37,9 +37,20 @@ jobs:
           channel: stable
           cache: true
       - run: flutter pub get
-      - run: dart format --output=none --set-exit-if-changed lib test
+      - run: dart format lib test
+      - uses: actions/upload-artifact@v4
+        with:
+          name: formatted-source
+          path: |
+            lib/
+            test/
       - run: flutter analyze
       - run: flutter test
+      - run: flutter test test/ui_capture_test.dart --dart-define=CAPTURE_UI=true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mobile-ui-previews
+          path: build/ui/
       - name: Start isolated Nextcloud integration fixture
         run: |
           docker info >/dev/null
@@ -100,10 +111,10 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           mv app-release.apk ncloud-android.apk
-          gh release create "v0.1.0-preview.${{ github.run_number }}" ncloud-android.apk \
+          gh release create "v0.2.0-preview.${{ github.run_number }}" ncloud-android.apk \
             --target "${{ github.sha }}" --prerelease \
             --title "ncloud Android preview #${{ github.run_number }}" \
-            --notes "Download ncloud-android.apk on Android, allow installation from your browser, and choose Try demo or connect your Nextcloud server. Preview signing only; not a production release. See README for setup, limitations, and iPhone testing."
+            --notes "Library redesign: photo timeline, folder albums, separate Drive, multi-select organization, swipe/zoom viewer, slideshow, in-app video, read-only sharing links and trash restore. Download ncloud-android.apk on Android and choose Try demo or connect Nextcloud. Development signing only; see README for implemented features and remaining non-AI roadmap."
 
   ios:
     if: github.event_name == 'workflow_dispatch' && inputs.build_ios

@@ -32,7 +32,10 @@ class _MediaTileState extends State<MediaTile> {
   @override
   void didUpdateWidget(MediaTile oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.file.key != widget.file.key) _load();
+    if (oldWidget.file.key != widget.file.key) {
+      _preview = null;
+      _load();
+    }
   }
 
   void _load({bool retry = false}) {

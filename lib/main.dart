@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'app_controller.dart';
 import 'screens.dart';
+import 'library_screen.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -44,7 +45,7 @@ class _NcloudAppState extends State<NcloudApp> {
           );
         }
         return widget.controller.connected
-            ? HomeScreen(controller: widget.controller)
+            ? LibraryScreen(controller: widget.controller)
             : LoginScreen(controller: widget.controller);
       },
     ),
@@ -53,18 +54,30 @@ class _NcloudAppState extends State<NcloudApp> {
 
 ThemeData _theme(Brightness brightness) {
   final scheme = ColorScheme.fromSeed(
-    seedColor: const Color(0xFF18786B),
+    seedColor: const Color(0xFF5670DF),
     brightness: brightness,
   );
   return ThemeData(
     colorScheme: scheme,
     useMaterial3: true,
     scaffoldBackgroundColor: brightness == Brightness.light
-        ? const Color(0xFFF8FAF9)
-        : const Color(0xFF101715),
+        ? const Color(0xFFFAFAFD)
+        : const Color(0xFF101116),
+    appBarTheme: const AppBarTheme(
+      centerTitle: false, elevation: 0, scrolledUnderElevation: 0,
+    ),
+    navigationBarTheme: NavigationBarThemeData(
+      height: 72,
+      backgroundColor: scheme.surface,
+      indicatorColor: scheme.primaryContainer,
+      labelTextStyle: WidgetStateProperty.all(
+        const TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
+    ),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
-      border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+      fillColor: scheme.surfaceContainerLow,
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(18), borderSide: BorderSide.none),
     ),
     cardTheme: CardThemeData(
       elevation: 0,
