@@ -213,7 +213,10 @@ class NextcloudClient {
     Account account, {
     bool favorites = false,
   }) async {
-    final scope = XmlText(davUri(account, []).path).toXmlString();
+    // SEARCH scopes are relative to the DAV root, not the installation path.
+    final scope = XmlText(
+      Uri(pathSegments: ['', 'files', account.userId]).path,
+    ).toXmlString();
     final where = favorites
         ? '<d:eq><d:prop><oc:favorite/></d:prop><d:literal>1</d:literal></d:eq>'
         : '''<d:or>
@@ -222,7 +225,7 @@ class NextcloudClient {
           </d:or>''';
     final response = await _request(
       'SEARCH',
-      serverEndpoint(account.server, ['remote.php', 'dav']),
+      serverEndpoint(account.server, ['remote.php', 'dav', '']),
       account: account,
       headers: {'Content-Type': 'application/xml; charset=utf-8'},
       body:

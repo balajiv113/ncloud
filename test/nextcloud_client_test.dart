@@ -130,9 +130,10 @@ void main() {
     final client = NextcloudClient(
       transport: MockClient((request) async {
         expect(request.method, 'SEARCH');
+        expect(request.url.path, '/nextcloud/remote.php/dav/');
         expect(request.body, contains('<d:depth>infinity</d:depth>'));
         expect(request.body, contains('<d:nresults>200</d:nresults>'));
-        expect(request.body, contains('/nextcloud/remote.php/dav/files/alice'));
+        expect(request.body, contains('<d:href>/files/alice</d:href>'));
         return http.Response(multistatus(responseEntry()), 207);
       }),
     );
