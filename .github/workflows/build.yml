@@ -1,0 +1,114 @@
+name: Build and test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      build_ios:
+        description: Also build an unsigned iOS app (requires macOS runner)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FLUTTER_VERSION: '3.38.5'
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Generate native projects on first bootstrap
+        run: |
+          if [ ! -f android/app/build.gradle.kts ]; then
+            flutter create --platforms=android,ios --org app.ncloud --project-name ncloud --empty .
+          fi
+      - name: Preserve generated platforms
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-projects
+          include-hidden-files: true
+          path: |
+            android/
+            ios/
+            .metadata
+            pubspec.lock
+      - run: flutter pub get
+      - run: dart format lib test
+      - uses: actions/upload-artifact@v4
+        with:
+          name: formatted-source
+          path: |
+            lib/
+            test/
+      - run: flutter analyze
+      - run: flutter test
+      - name: Build installable preview
+        run: flutter build apk --release --build-number=${{ github.run_number }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ncloud-android
+          path: build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dependency-lock
+          path: pubspec.lock
+
+  publish:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: android
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ncloud-android
+      - name: Publish private Android preview
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          mv app-release.apk ncloud-android.apk
+          gh release create "v0.1.0-preview.${{ github.run_number }}" ncloud-android.apk \
+            --target "${{ github.sha }}" --prerelease \
+            --title "ncloud Android preview #${{ github.run_number }}" \
+            --notes "Download ncloud-android.apk on Android, allow installation from your browser, and choose Try demo or connect your Nextcloud server. Preview signing only; not a production release. See README for setup, limitations, and iPhone testing."
+
+  ios:
+    if: github.event_name == 'workflow_dispatch' && inputs.build_ios
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter build ios --release --no-codesign
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ncloud-ios-unsigned-not-installable
+          path: build/ios/iphoneos/Runner.app

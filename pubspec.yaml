@@ -1,0 +1,26 @@
+name: ncloud
+description: A private, unified Nextcloud photos and files app.
+publish_to: none
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.10.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.6.0
+  xml: ^6.6.1
+  flutter_secure_storage: ^9.2.4
+  file_picker: ^10.3.7
+  url_launcher: ^6.3.2
+  share_plus: ^12.0.1
+  path_provider: ^2.1.5
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true

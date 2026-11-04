@@ -1,0 +1,97 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:ncloud/app_controller.dart';
+import 'package:ncloud/main.dart';
+
+class MemoryStore implements SessionStore {
+  String? value;
+  @override
+  Future<String?> read() async => value;
+  @override
+  Future<void> write(String value) async => this.value = value;
+  @override
+  Future<void> clear() async => value = null;
+}
+
+void main() {
+  test('demo supports folder creation, browsing, and favorites without a server', () async {
+    final store = MemoryStore();
+    final controller = AppController(store: store);
+    addTearDown(controller.dispose);
+    await controller.initialize();
+    controller.enterDemo();
+    await controller.load();
+    expect(controller.items, hasLength(12));
+    expect(controller.items.every((f) => f.isMedia), isTrue);
+    await controller.selectTab(1);
+    expect(controller.items.any((f) => f.name == 'Photos'), isTrue);
+    await controller.createFolder('New folder');
+    expect(controller.items.any((f) => f.name == 'New folder'), isTrue);
+    await controller.createFolder('New folder');
+    expect(controller.error, contains('already exists'));
+    final photos = controller.items.firstWhere((f) => f.name == 'Photos');
+    await controller.openFolder(photos);
+    expect(controller.directory, ['Photos']);
+    final original = controller.items.first;
+    await controller.favorite(original);
+    expect(controller.items.first.favorite, !original.favorite);
+    await controller.signOut();
+    expect(controller.connected, isFalse);
+    expect(store.value, isNull);
+  });
+
+  testWidgets('demo opens on photos, filters, navigates folders and returns to login', (tester) async {
+    await tester.pumpWidget(NcloudApp(controller: AppController(store: MemoryStore())));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Try demo'));
+    await tester.pumpAndSettle();
+    expect(find.text('Your moments'), findsOneWidget);
+    expect(find.text('DEMO'), findsOneWidget);
+    await tester.tap(find.text('Files'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'Documents');
+    await tester.pumpAndSettle();
+    expect(find.text('Documents'), findsOneWidget);
+    expect(find.text('Photos'), findsOneWidget); // Navigation label only.
+    await tester.tap(find.text('Documents'));
+    await tester.pumpAndSettle();
+    expect(find.text('Travel notes.pdf'), findsOneWidget);
+    await tester.tap(find.text('All files'));
+    await tester.pumpAndSettle();
+    expect(find.text('Welcome to ncloud.txt'), findsOneWidget);
+    await tester.tap(find.text('Settings'));
+    await tester.pumpAndSettle();
+    await tester.drag(find.byType(ListView), const Offset(0, -600));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Leave demo & connect server'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Disconnect'));
+    await tester.pumpAndSettle();
+    expect(find.text('Try demo'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('demo gallery works at small phone width without overflows', (tester) async {
+    tester.view.physicalSize = const Size(360, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final controller = AppController(store: MemoryStore());
+    await tester.pumpWidget(NcloudApp(controller: controller));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Try demo'));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    await tester.tap(find.text('Files'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Add'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('New folder'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextFormField), 'Test folder');
+    await tester.tap(find.text('Create'));
+    await tester.pumpAndSettle();
+    expect(find.text('Test folder'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+}
