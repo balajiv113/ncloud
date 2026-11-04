@@ -176,11 +176,15 @@ class _LibraryScreenState extends State<LibraryScreen> {
                               size: 30,
                             ),
                             const SizedBox(width: 8),
-                            const Text(
-                              'ncloud',
-                              style: TextStyle(
-                                fontWeight: FontWeight.w800,
-                                letterSpacing: -1,
+                            const Flexible(
+                              child: Text(
+                                'ncloud',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: -1,
+                                ),
                               ),
                             ),
                           ],
@@ -1345,31 +1349,31 @@ class _DateHeader extends SliverPersistentHeaderDelegate {
   ) => SizedBox(
     height: maxExtent,
     child: ColoredBox(
-    color: color,
-    child: Padding(
-      padding: const EdgeInsets.only(left: 20, right: 8),
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(
-              title,
-              style: Theme.of(
-                context,
-              ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+      color: color,
+      child: Padding(
+        padding: const EdgeInsets.only(left: 20, right: 8),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                title,
+                style: Theme.of(
+                  context,
+                ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+              ),
             ),
-          ),
-          Text('$count', style: Theme.of(context).textTheme.labelSmall),
-          IconButton(
-            tooltip: 'Select $title',
-            onPressed: onSelect,
-            icon: Icon(
-              selected ? Icons.check_circle : Icons.radio_button_unchecked,
-              size: 19,
+            Text('$count', style: Theme.of(context).textTheme.labelSmall),
+            IconButton(
+              tooltip: 'Select $title',
+              onPressed: onSelect,
+              icon: Icon(
+                selected ? Icons.check_circle : Icons.radio_button_unchecked,
+                size: 19,
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
-    ),
     ),
   );
   @override

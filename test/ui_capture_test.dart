@@ -15,17 +15,19 @@ void main() {
     'capture mobile library preview screens',
     (tester) async {
       final root = Platform.environment['FLUTTER_ROOT'];
-      if (root != null) {
-        final font = File(
-          '$root/bin/cache/artifacts/material_fonts/Roboto-Regular.ttf',
-        );
-        if (await font.exists()) {
-          await (FontLoader('Roboto')..addFont(
-                font.readAsBytes().then((b) => ByteData.sublistView(b)),
-              ))
-              .load();
+      await tester.runAsync(() async {
+        if (root != null) {
+          final font = File(
+            '$root/bin/cache/artifacts/material_fonts/Roboto-Regular.ttf',
+          );
+          if (await font.exists()) {
+            await (FontLoader('Roboto')..addFont(
+                  font.readAsBytes().then((b) => ByteData.sublistView(b)),
+                ))
+                .load();
+          }
         }
-      }
+      });
       tester.view.physicalSize = const Size(412, 915);
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.resetPhysicalSize);
@@ -50,15 +52,15 @@ void main() {
         await tester.pumpAndSettle();
         final boundary =
             key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
-        final image = await boundary.toImage();
-        final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
         await tester.runAsync(() async {
+          final image = await boundary.toImage();
+          final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
           await Directory('build/ui').create(recursive: true);
           await File(
             'build/ui/$name.png',
           ).writeAsBytes(bytes!.buffer.asUint8List());
+          image.dispose();
         });
-        image.dispose();
         expect(tester.takeException(), isNull);
       }
     },
