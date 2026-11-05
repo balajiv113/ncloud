@@ -122,12 +122,18 @@ void main() {
           207,
         );
       });
-      final c = AppController(
-        store: MemoryStore(),
-        client: NextcloudClient(transport: transport),
-      )..account = account;
+      final c =
+          AppController(
+              store: MemoryStore(),
+              client: NextcloudClient(transport: transport),
+            )
+            ..account = account
+            ..memoriesAvailable = false;
       addTearDown(c.dispose);
       await c.load();
+      expect(offsets, [0]);
+      expect(c.hasMore, isTrue);
+      await c.loadNextPage();
       expect(offsets, [0, 200]);
       expect(c.items, hasLength(201));
       expect(c.hasMore, isFalse);

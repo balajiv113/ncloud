@@ -103,6 +103,35 @@ class LocalCache {
     }
   }
 
+  Future<Map<String, dynamic>?> readDocument(String key) async {
+    try {
+      final file = await _file('indexes', key, '.json');
+      if (!await file.exists()) return null;
+      return (jsonDecode(await file.readAsString()) as Map)
+          .cast<String, dynamic>();
+    } on Object {
+      return null;
+    }
+  }
+
+  Future<void> writeDocument(String key, Map<String, dynamic> value) async {
+    try {
+      final file = await _file('indexes', key, '.json');
+      final temp = File('${file.path}.part');
+      await temp.writeAsString(jsonEncode(value));
+      await temp.rename(file.path);
+    } on Object {
+      // Optional indexes are rebuilt from the server if storage is unavailable.
+    }
+  }
+
+  Future<void> clearDocuments() async {
+    final folder = await _folder('indexes');
+    await for (final entity in folder.list()) {
+      if (entity is File) await entity.delete();
+    }
+  }
+
   /// Location for a fully downloaded original that can be replayed offline.
   Future<File> original(String key, String name) async {
     final dot = name.lastIndexOf('.');

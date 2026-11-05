@@ -33,7 +33,7 @@ class NextcloudClient {
   static const photoLimit = 200;
   static const _properties = '''
     <d:displayname/><d:resourcetype/><d:getcontenttype/>
-    <d:getcontentlength/><d:getlastmodified/><oc:fileid/><oc:favorite/>
+    <d:getcontentlength/><d:getlastmodified/><d:getetag/><oc:fileid/><oc:favorite/>
   ''';
 
   void close() => _transport.close();
@@ -337,6 +337,7 @@ class NextcloudClient {
           id: id.isEmpty ? null : id,
           size: int.tryParse(value('getcontentlength')) ?? 0,
           modified: _parseModified(value('getlastmodified')),
+          etag: value('getetag').isEmpty ? null : value('getetag'),
           albumDavPath: [...album.davPath, segments.last],
           favorite: value('favorite', 'http://owncloud.org/ns') == '1',
         ),
@@ -374,12 +375,15 @@ class NextcloudClient {
     List<String> path = const [],
     int offset = 0,
     int limit = photoLimit,
+    List<String>? fileIds,
   }) async {
     // Relative SEARCH scopes are literal DAV paths, not URI-encoded URLs.
     final scope = XmlText(
       ['', 'files', account.userId, ...path].join('/'),
     ).toXmlString();
-    final where = favorites
+    final where = fileIds != null
+        ? '<d:or>${fileIds.map((id) => '<d:eq><d:prop><oc:fileid/></d:prop><d:literal>${XmlText(id).toXmlString()}</d:literal></d:eq>').join()}</d:or>'
+        : favorites
         ? '<d:eq><d:prop><oc:favorite/></d:prop><d:literal>1</d:literal></d:eq>'
         : '''<d:or>
             <d:like><d:prop><d:getcontenttype/></d:prop><d:literal>image/%</d:literal></d:like>
@@ -406,6 +410,165 @@ class NextcloudClient {
     _expect(response, {207});
     final files = parseFiles(response.body, account);
     return files.where((f) => favorites ? f.favorite : f.isMedia).toList();
+  }
+
+  Future<List<dynamic>?> _memories(
+    Account account,
+    List<String> endpoint,
+    Map<String, String> query, {
+    bool optional = false,
+  }) async {
+    final response = await _request(
+      'GET',
+      serverEndpoint(account.server, [
+        'index.php',
+        'apps',
+        'memories',
+        'api',
+        ...endpoint,
+      ], query),
+      account: account,
+      headers: {'Accept': 'application/json', 'OCS-APIRequest': 'true'},
+    );
+    if (optional &&
+        (response.statusCode == 404 || response.statusCode == 405)) {
+      return null;
+    }
+    _expect(response, {200});
+    final json = jsonDecode(response.body);
+    if (json is! List) {
+      throw const FormatException('Unsupported Memories API response.');
+    }
+    return json;
+  }
+
+  Future<List<MemoryDay>?> memoryDays(
+    Account account, {
+    List<String> path = const [],
+    bool recursive = true,
+    bool favorites = false,
+    bool optional = false,
+    bool existenceOnly = false,
+  }) async {
+    final rows = await _memories(
+      account,
+      ['days'],
+      {
+        'folder': '/${path.join('/')}',
+        if (recursive) 'recursive': '1',
+        if (favorites) 'fav': '1',
+        'nopreload': '1',
+        if (existenceOnly) 'limit': '1',
+      },
+      optional: optional,
+    );
+    if (rows == null) return null;
+    return rows
+        .map((r) => MemoryDay.fromJson((r as Map).cast<String, dynamic>()))
+        .where((d) => d.count > 0)
+        .toList();
+  }
+
+  Future<List<CloudFile>> memoryDayFiles(
+    Account account,
+    List<int> dayIds, {
+    List<String> path = const [],
+    bool favorites = false,
+  }) async {
+    if (dayIds.isEmpty) return [];
+    final rows = await _memories(
+      account,
+      ['days', dayIds.join(',')],
+      {
+        'folder': '/${path.join('/')}',
+        'recursive': '1',
+        if (favorites) 'fav': '1',
+        'nopreload': '1',
+      },
+    );
+    final metadata = <String, Map<String, dynamic>>{};
+    for (final row in rows!) {
+      final data = (row as Map).cast<String, dynamic>();
+      final id = data['fileid'];
+      if (id is! int || id <= 0 || data['dayid'] is! int) {
+        throw const FormatException('Unsupported Memories photo record.');
+      }
+      metadata[id.toString()] = data;
+    }
+    final ids = metadata.keys.toList();
+    final files = <CloudFile>[];
+    // Resolve real DAV paths in batches, never an info request per photo.
+    for (var start = 0; start < ids.length; start += photoLimit) {
+      final batch = ids.skip(start).take(photoLimit).toList();
+      files.addAll(await search(account, fileIds: batch, limit: batch.length));
+    }
+    return [
+      for (final file in files)
+        if (metadata[file.id] case final data?)
+          file.withCaptureDate(
+            DateTime.fromMillisecondsSinceEpoch(
+              (int.tryParse(data['epoch']?.toString() ?? '') ??
+                      (data['dayid'] as int) * 86400) *
+                  1000,
+              isUtc: true,
+            ),
+            data['etag'] as String?,
+            day: data['dayid'] as int,
+          ),
+    ];
+  }
+
+  Future<List<MemoryFolder>> memoryFolders(
+    Account account,
+    List<String> path,
+  ) async {
+    final rows = await _memories(
+      account,
+      ['folders', 'sub'],
+      {'folder': '/${path.join('/')}'},
+    );
+    return rows!.map((row) {
+      final data = (row as Map).cast<String, dynamic>();
+      final name = data['name'] as String;
+      validateName(name);
+      final folder = [...path, name];
+      final previews = (data['previews'] as List).map((value) {
+        final item = (value as Map).cast<String, dynamic>();
+        final id = item['fileid'].toString();
+        return CloudFile(
+          path: [...folder, 'cover-$id'],
+          name: name,
+          isDirectory: false,
+          contentType: 'image/jpeg',
+          id: id,
+          etag: item['etag'] as String?,
+        );
+      }).toList();
+      return MemoryFolder(folder, previews);
+    }).toList();
+  }
+
+  Future<List<CloudFile>> memoryCover(
+    Account account,
+    List<String> path,
+    int day,
+  ) async {
+    final rows = await _memories(
+      account,
+      ['days', '$day'],
+      {'folder': '/${path.join('/')}', 'limit': '1', 'nopreload': '1'},
+    );
+    return rows!.map((row) {
+      final item = (row as Map).cast<String, dynamic>();
+      return CloudFile(
+        path: [...path, 'cover-${item['fileid']}'],
+        name: path.lastOrNull ?? 'Photos',
+        isDirectory: false,
+        contentType: 'image/jpeg',
+        id: item['fileid'].toString(),
+        etag: item['etag'] as String?,
+      );
+    }).toList();
   }
 
   Future<void> transfer(

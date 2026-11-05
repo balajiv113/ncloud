@@ -8,6 +8,44 @@ import 'package:ncloud/models.dart';
 void main() {
   const enabled = bool.fromEnvironment('LIVE_NEXTCLOUD');
   test(
+    'real Memories: indexed days, folders, capture metadata and batched DAV path resolution',
+    () async {
+      final client = NextcloudClient();
+      addTearDown(client.close);
+      final session = await client.authenticate(
+        Uri.parse('http://127.0.0.1:8080'),
+        'ncloud-ci',
+        const String.fromEnvironment('NEXTCLOUD_TEST_PASSWORD'),
+      );
+      final folders = await client.memoryFolders(session, []);
+      expect(
+        folders.any(
+          (f) => f.path.last == 'ncloud-index' && f.previews.isNotEmpty,
+        ),
+        isTrue,
+      );
+      final days = await client.memoryDays(
+        session,
+        path: ['ncloud-index'],
+        recursive: false,
+      );
+      expect(days, isNotEmpty);
+      final files = await client.memoryDayFiles(
+        session,
+        [days!.first.id],
+        path: ['ncloud-index'],
+      );
+      final seed = files.singleWhere((f) => f.name == 'seed.png');
+      expect(seed.path, ['ncloud-index', 'seed.png']);
+      expect(seed.taken, isNotNull);
+      expect(seed.captureDay, days.first.id);
+      expect(seed.etag, isNotEmpty);
+      expect(await client.preview(session, seed), isNotEmpty);
+    },
+    skip: !enabled,
+    timeout: const Timeout(Duration(minutes: 1)),
+  );
+  test(
     'real Nextcloud: profile, folders, upload, favorites, search, preview, download',
     () async {
       final client = NextcloudClient();

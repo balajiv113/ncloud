@@ -639,7 +639,7 @@ class SettingsScreen extends StatelessWidget {
           ),
           const ListTile(
             leading: Icon(Icons.info_outline),
-            title: Text('ncloud 0.4 · Smart albums & seamless browsing'),
+            title: Text('ncloud 0.5 · Memories & on-scroll browsing'),
             subtitle: Text(
               'Keep the app open during transfers. Public links are read-only. Server permissions and retention rules apply.',
             ),

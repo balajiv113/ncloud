@@ -26,39 +26,49 @@ String page(int offset, int count) => multistatus(
 
 void main() {
   test(
-    'every page is fetched automatically for timeline, favorites and Smart albums',
+    'timeline and favorites fetch only one page until scrolling requests another',
     () async {
-      for (final tab in [0, 2, 4]) {
+      for (final tab in [0, 2]) {
         final offsets = <int>[];
-        final c = AppController(
-          store: MemoryStore(),
-          client: NextcloudClient(
-            transport: MockClient((request) async {
-              if (request.method == 'PROPFIND') return http.Response('', 404);
-              final offset = int.parse(
-                RegExp(
-                  r'<sd:firstresult>(\d+)</sd:firstresult>',
-                ).firstMatch(request.body)!.group(1)!,
-              );
-              offsets.add(offset);
-              return http.Response(page(offset, offset < 400 ? 200 : 1), 207);
-            }),
-          ),
-        )..account = account;
+        final c =
+            AppController(
+                store: MemoryStore(),
+                client: NextcloudClient(
+                  transport: MockClient((request) async {
+                    if (request.method == 'PROPFIND')
+                      return http.Response('', 404);
+                    final offset = int.parse(
+                      RegExp(
+                        r'<sd:firstresult>(\d+)</sd:firstresult>',
+                      ).firstMatch(request.body)!.group(1)!,
+                    );
+                    offsets.add(offset);
+                    return http.Response(
+                      page(offset, offset < 400 ? 200 : 1),
+                      207,
+                    );
+                  }),
+                ),
+              )
+              ..account = account
+              ..memoriesAvailable = false;
         addTearDown(c.dispose);
         var sawFirstPage = false;
         c.addListener(() {
-          if (c.items.length == 200 && c.loadingMore && !c.loading) {
+          if (c.items.length == 200 && !c.loading) {
             sawFirstPage = true;
           }
         });
         await c.selectTab(tab);
+        expect(offsets, [0]);
+        expect(c.hasMore, isTrue);
+        await c.loadNextPage();
+        await c.loadNextPage();
         expect(offsets, [0, 200, 400], reason: 'tab $tab');
         expect(c.items, hasLength(401));
         expect(sawFirstPage, isTrue);
         expect(c.hasMore, isFalse);
         expect(c.loadingMore, isFalse);
-        if (tab == 4) expect(c.smartAlbums.single.files, hasLength(401));
       }
     },
   );
@@ -68,26 +78,30 @@ void main() {
     () async {
       final pending = Completer<http.Response>();
       var startedSecondPage = false;
-      final c = AppController(
-        store: MemoryStore(),
-        client: NextcloudClient(
-          transport: MockClient((request) async {
-            if (request.method == 'PROPFIND') {
-              return http.Response(multistatus(''), 207);
-            }
-            final second = request.body.contains(
-              '<sd:firstresult>200</sd:firstresult>',
-            );
-            if (second) {
-              startedSecondPage = true;
-              return pending.future;
-            }
-            return http.Response(page(0, 200), 207);
-          }),
-        ),
-      )..account = account;
+      final c =
+          AppController(
+              store: MemoryStore(),
+              client: NextcloudClient(
+                transport: MockClient((request) async {
+                  if (request.method == 'PROPFIND') {
+                    return http.Response(multistatus(''), 207);
+                  }
+                  final second = request.body.contains(
+                    '<sd:firstresult>200</sd:firstresult>',
+                  );
+                  if (second) {
+                    startedSecondPage = true;
+                    return pending.future;
+                  }
+                  return http.Response(page(0, 200), 207);
+                }),
+              ),
+            )
+            ..account = account
+            ..memoriesAvailable = false;
       addTearDown(c.dispose);
-      final timeline = c.load();
+      await c.load();
+      final timeline = c.loadNextPage();
       while (!startedSecondPage) {
         await Future<void>.delayed(Duration.zero);
       }
@@ -103,17 +117,21 @@ void main() {
 
   test('repeated server pages stop with an explicit error', () async {
     var calls = 0;
-    final c = AppController(
-      store: MemoryStore(),
-      client: NextcloudClient(
-        transport: MockClient((request) async {
-          calls++;
-          return http.Response(page(0, 200), 207);
-        }),
-      ),
-    )..account = account;
+    final c =
+        AppController(
+            store: MemoryStore(),
+            client: NextcloudClient(
+              transport: MockClient((request) async {
+                calls++;
+                return http.Response(page(0, 200), 207);
+              }),
+            ),
+          )
+          ..account = account
+          ..memoriesAvailable = false;
     addTearDown(c.dispose);
     await c.load();
+    await c.loadNextPage();
     expect(calls, 2);
     expect(c.items, hasLength(200));
     expect(c.error, contains('repeated a page'));
@@ -126,19 +144,23 @@ void main() {
     );
     addTearDown(() => root.delete(recursive: true));
     final cache = LocalCache(() async => root);
-    final first = AppController(
-      store: MemoryStore(),
-      cache: cache,
-      client: NextcloudClient(
-        transport: MockClient(
-          (request) async =>
-              request.body.contains('<sd:firstresult>0</sd:firstresult>')
-              ? http.Response(page(0, 200), 207)
-              : http.Response('', 503),
-        ),
-      ),
-    )..account = account;
+    final first =
+        AppController(
+            store: MemoryStore(),
+            cache: cache,
+            client: NextcloudClient(
+              transport: MockClient(
+                (request) async =>
+                    request.body.contains('<sd:firstresult>0</sd:firstresult>')
+                    ? http.Response(page(0, 200), 207)
+                    : http.Response('', 503),
+              ),
+            ),
+          )
+          ..account = account
+          ..memoriesAvailable = false;
     await first.load();
+    await first.loadNextPage();
     expect(first.error, isNotNull);
     first.dispose();
     final restored = AppController(
@@ -155,7 +177,7 @@ void main() {
   });
 
   test(
-    'full cached library remains visible during refresh; deleted items leave only on completion',
+    'cached cursor resumes; an explicit refresh resets the paging snapshot',
     () async {
       final root = await Directory.systemTemp.createTemp(
         'ncloud-full-listing-',
@@ -163,40 +185,42 @@ void main() {
       addTearDown(() => root.delete(recursive: true));
       final cache = LocalCache(() async => root);
       var refresh = false;
-      final c = AppController(
-        store: MemoryStore(),
-        cache: cache,
-        client: NextcloudClient(
-          transport: MockClient((request) async {
-            final offset = int.parse(
-              RegExp(
-                r'<sd:firstresult>(\d+)</sd:firstresult>',
-              ).firstMatch(request.body)!.group(1)!,
-            );
-            return http.Response(
-              page(
-                offset,
-                offset == 0
-                    ? 200
-                    : refresh
-                    ? 1
-                    : 2,
+      final c =
+          AppController(
+              store: MemoryStore(),
+              cache: cache,
+              client: NextcloudClient(
+                transport: MockClient((request) async {
+                  final offset = int.parse(
+                    RegExp(
+                      r'<sd:firstresult>(\d+)</sd:firstresult>',
+                    ).firstMatch(request.body)!.group(1)!,
+                  );
+                  return http.Response(
+                    page(
+                      offset,
+                      offset == 0
+                          ? 200
+                          : refresh
+                          ? 1
+                          : 2,
+                    ),
+                    207,
+                  );
+                }),
               ),
-              207,
-            );
-          }),
-        ),
-      )..account = account;
+            )
+            ..account = account
+            ..memoriesAvailable = false;
       addTearDown(c.dispose);
       await c.load();
+      await c.loadNextPage();
       await Future<void>.delayed(const Duration(milliseconds: 50));
       refresh = true;
-      var retainedOlderItem = false;
-      c.addListener(() {
-        if (c.loadingMore && c.items.length == 202) retainedOlderItem = true;
-      });
       await c.load();
-      expect(retainedOlderItem, isTrue);
+      expect(c.items, hasLength(200));
+      expect(c.hasMore, isTrue);
+      await c.loadNextPage();
       expect(c.items, hasLength(201));
       expect(c.libraryFiles, hasLength(201));
     },

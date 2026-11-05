@@ -100,6 +100,9 @@ class CloudFile {
     this.favorite = false,
     this.demoColor,
     this.albumDavPath,
+    this.taken,
+    this.captureDay,
+    this.etag,
   });
 
   final List<String> path;
@@ -112,6 +115,20 @@ class CloudFile {
   final bool favorite;
   final int? demoColor;
   final List<String>? albumDavPath;
+  final DateTime? taken;
+  final int? captureDay;
+  final String? etag;
+  DateTime? get timelineDate {
+    if (captureDay case final day?) {
+      final date = DateTime.fromMillisecondsSinceEpoch(
+        day * 86400000,
+        isUtc: true,
+      );
+      return DateTime(date.year, date.month, date.day);
+    }
+    return taken ?? modified;
+  }
+
   bool get readOnly => albumDavPath != null;
 
   Map<String, dynamic> toJson() => {
@@ -125,6 +142,9 @@ class CloudFile {
     'favorite': favorite,
     'color': demoColor,
     'albumDavPath': albumDavPath,
+    'taken': taken?.toIso8601String(),
+    'captureDay': captureDay,
+    'etag': etag,
   };
 
   factory CloudFile.fromJson(Map<String, dynamic> json) => CloudFile(
@@ -140,6 +160,9 @@ class CloudFile {
     favorite: json['favorite'] as bool? ?? false,
     demoColor: json['color'] as int?,
     albumDavPath: (json['albumDavPath'] as List<dynamic>?)?.cast<String>(),
+    taken: DateTime.tryParse(json['taken'] as String? ?? ''),
+    captureDay: json['captureDay'] as int?,
+    etag: json['etag'] as String?,
   );
 
   String get key => path.map(Uri.encodeComponent).join('/');
@@ -158,6 +181,9 @@ class CloudFile {
     favorite: value,
     demoColor: demoColor,
     albumDavPath: albumDavPath,
+    taken: taken,
+    captureDay: captureDay,
+    etag: etag,
   );
 
   CloudFile atPath(List<String> value) => CloudFile(
@@ -170,6 +196,29 @@ class CloudFile {
     id: id,
     favorite: favorite,
     demoColor: demoColor,
+    taken: taken,
+    captureDay: captureDay,
+    etag: etag,
+  );
+
+  CloudFile withCaptureDate(
+    DateTime date,
+    String? revision, {
+    required int day,
+  }) => CloudFile(
+    path: path,
+    name: name,
+    isDirectory: isDirectory,
+    contentType: contentType,
+    size: size,
+    modified: modified,
+    id: id,
+    favorite: favorite,
+    demoColor: demoColor,
+    albumDavPath: albumDavPath,
+    taken: date,
+    captureDay: day,
+    etag: revision,
   );
 }
 
@@ -194,6 +243,27 @@ class SmartAlbum {
   final List<CloudFile> files;
   String get name => path.isEmpty ? 'Photos at root' : path.last;
   String get key => path.map(Uri.encodeComponent).join('/');
+}
+
+class MemoryDay {
+  const MemoryDay(this.id, this.count);
+  final int id;
+  final int count;
+  Map<String, dynamic> toJson() => {'dayid': id, 'count': count};
+  factory MemoryDay.fromJson(Map<String, dynamic> json) {
+    final id = json['dayid'];
+    final count = json['count'];
+    if (id is! int || count is! int || count < 0) {
+      throw const FormatException('Unsupported Memories day index.');
+    }
+    return MemoryDay(id, count);
+  }
+}
+
+class MemoryFolder {
+  const MemoryFolder(this.path, this.previews);
+  final List<String> path;
+  final List<CloudFile> previews;
 }
 
 List<SmartAlbum> buildSmartAlbums(List<CloudFile> files, List<String> root) {

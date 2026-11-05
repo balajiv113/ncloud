@@ -69,20 +69,37 @@ class AppController extends ChangeNotifier {
   bool busy = false;
   bool loadingMore = false;
   bool hasMore = false;
+  final Map<String, _MediaListing> _listings = {};
+  _MediaListing? _activeListing;
+  bool? memoriesAvailable;
+  bool discoveringAlbums = false;
+  int discoveredFolders = 0;
+  final List<SmartAlbum> _catalogue = [];
+  DateTime? _catalogueUpdated;
+  String? _catalogueRoot;
+  List<MemoryDay>? _initialDays;
+  Future<void>? _detectingMemories;
+  int _catalogueVersion = 0;
+  bool get albumHome =>
+      tab == 4 && !smartAlbumOpen && activeNativeAlbum == null;
+  List<MemoryDay> get indexedDays => _activeListing?.days ?? [];
   List<CloudFile> _libraryFiles = [];
   List<NativeAlbum> nativeAlbums = [];
   NativeAlbum? activeNativeAlbum;
   bool smartAlbumOpen = false;
   String? nativeAlbumError;
+  String? catalogueError;
   List<String>? _demoPhotoRoot;
+  List<String>? _autoPhotoRoot;
   List<CloudFile> get libraryFiles => _libraryFiles;
   List<String> get photoRoot =>
       (demo ? _demoPhotoRoot : account?.photoRoot) ??
+      _autoPhotoRoot ??
       (_libraryFiles.any((f) => f.path.firstOrNull == 'Photos')
           ? ['Photos']
           : []);
   List<SmartAlbum> get smartAlbums =>
-      buildSmartAlbums(_libraryFiles, photoRoot);
+      demo ? buildSmartAlbums(_libraryFiles, photoRoot) : _catalogue;
   int completed = 0;
   int total = 0;
   int tab = 0;
@@ -113,7 +130,7 @@ class AppController extends ChangeNotifier {
       starting = false;
       notifyListeners();
     }
-    if (connected) await load();
+    if (connected) await load(refresh: false);
   }
 
   void enterDemo() {
@@ -243,10 +260,21 @@ class AppController extends ChangeNotifier {
       demo = false;
       _demo = [];
       _libraryFiles = [];
+      _listings.clear();
+      _activeListing = null;
+      _catalogue.clear();
+      _catalogueVersion++;
+      _catalogueUpdated = null;
+      _catalogueRoot = null;
+      catalogueError = null;
+      memoriesAvailable = null;
+      _initialDays = null;
+      _detectingMemories = null;
       nativeAlbums = [];
       activeNativeAlbum = null;
       smartAlbumOpen = false;
       _demoPhotoRoot = null;
+      _autoPhotoRoot = null;
       items = [];
       directory = [];
       notice = null;
@@ -265,7 +293,7 @@ class AppController extends ChangeNotifier {
     directory = [];
     activeNativeAlbum = null;
     smartAlbumOpen = false;
-    await load();
+    await load(refresh: false);
   }
 
   Future<void> openFolder(CloudFile folder) async {
@@ -273,14 +301,14 @@ class AppController extends ChangeNotifier {
     activeNativeAlbum = null;
     smartAlbumOpen = false;
     directory = [...folder.path];
-    await load();
+    await load(refresh: false);
   }
 
   Future<void> goTo(List<String> path) async {
     directory = [...path];
     activeNativeAlbum = null;
     smartAlbumOpen = false;
-    await load();
+    await load(refresh: false);
   }
 
   Future<void> openSmartAlbum(List<String> path) async {
@@ -288,7 +316,7 @@ class AppController extends ChangeNotifier {
     directory = [...path];
     activeNativeAlbum = null;
     smartAlbumOpen = true;
-    await load();
+    await load(refresh: false);
   }
 
   Future<void> openNativeAlbum(NativeAlbum album) async {
@@ -296,7 +324,7 @@ class AppController extends ChangeNotifier {
     smartAlbumOpen = false;
     tab = 4;
     directory = [];
-    await load();
+    await load(refresh: false);
   }
 
   Future<void> setPhotoRoot(List<String> path) async {
@@ -316,74 +344,39 @@ class AppController extends ChangeNotifier {
     await selectTab(4);
   }
 
-  Future<void> load() async {
+  Future<void> load({bool refresh = true}) async {
     final version = ++_loadVersion;
     final session = account;
     final currentTab = tab;
     final path = [...directory];
     final native = activeNativeAlbum;
-    final wholeLibrary =
-        (currentTab == 0 || currentTab == 4) && path.isEmpty && native == null;
-    _covers.clear();
     loading = true;
     refreshing = false;
     loadingMore = false;
     hasMore = false;
     error = null;
-    items = wholeLibrary ? _libraryFiles : [];
-    refreshing = items.isNotEmpty;
+    _activeListing = null;
+    items = [];
     notifyListeners();
     final listingKey = _listingKey();
-    if (listingKey != null && cache != null) {
-      final cached = await cache!.readListing(listingKey);
-      if (version != _loadVersion) return;
-      if (cached != null && cached.isNotEmpty) {
-        items = cached;
-        if (wholeLibrary) _libraryFiles = cached;
-        refreshing = true;
-        notifyListeners();
-      }
-    }
     try {
-      final List<CloudFile> result;
-      if (currentTab == 6) {
-        final saved = await cache?.readListing(_offlineListingKey) ?? [];
-        final available = <CloudFile>[];
-        for (final file in saved) {
-          if (await offlineCopy(file) != null) available.add(file);
-        }
-        result = available;
-      } else if (currentTab == 3) {
-        result = [];
-      } else if (demo) {
-        result = native != null
+      if (demo) {
+        items = native != null
             ? _demo.where((f) => f.isMedia && f.favorite).toList()
             : _demo
                   .where(
                     (file) => switch (currentTab) {
-                      0 => file.isMedia,
+                      0 || 4 => file.isMedia && pathStartsWith(file.path, path),
                       2 => file.favorite,
-                      4 => file.isMedia && pathStartsWith(file.path, path),
-                      5 => false,
+                      5 || 6 => false,
                       _ =>
-                        file.path.length == directory.length + 1 &&
-                            listEquals(
-                              file.path.take(directory.length).toList(),
-                              directory,
-                            ),
+                        file.path.length == path.length + 1 &&
+                            pathStartsWith(file.path, path),
                     },
                   )
                   .toList();
-        if (currentTab == 1) {
-          result.sort(
-            (a, b) => a.isDirectory == b.isDirectory
-                ? a.name.compareTo(b.name)
-                : a.isDirectory
-                ? -1
-                : 1,
-          );
-        }
-        if (currentTab == 4 && native == null && path.isEmpty) {
+        if (currentTab == 0 || albumHome) _libraryFiles = items;
+        if (albumHome) {
           nativeAlbums = [
             const NativeAlbum(
               name: 'Best days',
@@ -392,100 +385,72 @@ class AppController extends ChangeNotifier {
             ),
           ];
         }
-      } else if (session != null) {
-        if (native != null) {
-          result = await client.albumFiles(session, native, _libraryFiles);
-        } else if (currentTab == 1) {
-          result = await client.listFiles(session, path);
-        } else {
-          final fetched = <String, CloudFile>{};
-          final cached = [...items];
-          final sharedPaths = currentTab == 5
-              ? await client.sharedPaths(session)
-              : null;
-          if (version != _loadVersion) return;
-          var offset = 0;
-          while (true) {
-            final page = await client.search(
-              session,
-              favorites: currentTab == 2,
-              path: path,
-              offset: offset,
-            );
-            if (version != _loadVersion || _disposed) return;
-            final before = fetched.length;
-            for (final file in page) {
-              fetched[file.key] = file;
-            }
-            if (page.isNotEmpty && fetched.length == before) {
-              throw const CloudException(
-                'The server repeated a page. Refresh to retry loading your library.',
-              );
-            }
-            offset += page.length;
-            hasMore = page.length == NextcloudClient.photoLimit;
-            final accumulated = [
-              ...fetched.values,
-              if (hasMore) ...cached.where((f) => !fetched.containsKey(f.key)),
-            ];
-            items = sharedPaths == null
-                ? accumulated
-                : accumulated
-                      .where(
-                        (f) =>
-                            sharedPaths.any((p) => pathStartsWith(f.path, p)),
-                      )
-                      .toList();
-            if (wholeLibrary) _libraryFiles = items;
-            loading = false;
-            loadingMore = hasMore;
-            notifyListeners();
-            if (before == 0 && cached.isEmpty && listingKey != null) {
-              await cache?.writeListing(listingKey, items);
-              if (version != _loadVersion || _disposed) return;
-            }
-            if (!hasMore) break;
-          }
-          if (currentTab == 5) {
-            result = fetched.values
-                .where(
-                  (f) => sharedPaths!.any((p) => pathStartsWith(f.path, p)),
-                )
-                .toList();
-          } else {
-            result = fetched.values.toList();
-          }
+        return;
+      }
+      if (session == null) return;
+      if (albumHome) {
+        await _loadCatalogue(session, refresh: refresh);
+        return;
+      }
+      _MediaListing? previous = listingKey == null
+          ? null
+          : _listings[listingKey];
+      if (previous == null && listingKey != null) {
+        final document = await cache?.readDocument(listingKey);
+        if (version != _loadVersion) return;
+        if (document != null) previous = _MediaListing.fromJson(document);
+      }
+      if (previous != null) {
+        items = previous.files;
+        refreshing = true;
+        notifyListeners();
+        if (!refresh && previous.fresh && currentTab != 6) {
+          _activeListing = previous;
+          _listings[listingKey!] = previous;
+          hasMore = previous.more;
+          if (currentTab == 0) _libraryFiles = previous.files;
+          return;
         }
+      } else if (listingKey != null) {
+        final cached = await cache?.readListing(listingKey);
+        if (version != _loadVersion) return;
+        if (cached != null) {
+          items = cached;
+          refreshing = items.isNotEmpty;
+          notifyListeners();
+        }
+      }
+      final listing = _MediaListing();
+      if (currentTab == 6) {
+        final saved = await cache?.readListing(_offlineListingKey) ?? [];
+        for (final file in saved) {
+          if (await offlineCopy(file) != null) listing.files.add(file);
+        }
+      } else if (native != null) {
+        listing.files = await client.albumFiles(session, native, _libraryFiles);
+      } else if (currentTab == 1) {
+        listing.files = await client.listFiles(session, path);
       } else {
-        result = [];
-      }
-      if (version == _loadVersion) {
-        items = result;
-        if (wholeLibrary) _libraryFiles = result;
-        if (listingKey != null) {
-          unawaited(cache?.writeListing(listingKey, result));
+        await _ensureMemories(session);
+        if (version != _loadVersion) return;
+        if (currentTab == 5) {
+          listing.sharedPaths = await client.sharedPaths(session);
         }
-        hasMore = false;
-        if (currentTab == 4 &&
-            native == null &&
-            path.isEmpty &&
-            session != null &&
-            !demo) {
-          nativeAlbumError = null;
-          try {
-            final own = await client.albums(session);
-            if (version != _loadVersion) return;
-            final shared = await client.albums(session, shared: true);
-            if (version != _loadVersion) return;
-            nativeAlbums = [...own, ...shared];
-          } catch (e) {
-            if (version == _loadVersion) {
-              nativeAlbumError =
-                  'Could not load Nextcloud albums. ${errorMessage(e)}';
-            }
-          }
+        if (memoriesAvailable == true) {
+          listing.days = currentTab == 0 && _initialDays != null
+              ? _initialDays
+              : await client.memoryDays(
+                  session,
+                  path: path,
+                  favorites: currentTab == 2,
+                );
+          _initialDays = null;
         }
+        listing.more = true;
+        await _fetchPage(listing, session, currentTab, path);
       }
+      if (version != _loadVersion || _disposed) return;
+      await _publishListing(listing, listingKey);
     } catch (e) {
       if (version == _loadVersion) error = errorMessage(e);
     } finally {
@@ -498,11 +463,288 @@ class AppController extends ChangeNotifier {
     }
   }
 
+  Future<void> _ensureMemories(Account session) async {
+    if (memoriesAvailable != null) return;
+    final pending = _detectingMemories;
+    if (pending != null) return pending;
+    final detection = () async {
+      final days = await client.memoryDays(session, optional: true);
+      if (account != session || _disposed) return;
+      memoriesAvailable = days != null;
+      _initialDays = days;
+    }();
+    _detectingMemories = detection;
+    try {
+      await detection;
+    } finally {
+      if (identical(_detectingMemories, detection)) _detectingMemories = null;
+    }
+  }
+
+  Future<void> _fetchPage(
+    _MediaListing listing,
+    Account session,
+    int currentTab,
+    List<String> path,
+  ) async {
+    List<CloudFile> page;
+    if (listing.days case final days?) {
+      final ids = <int>[];
+      var count = 0;
+      var next = listing.dayIndex;
+      while (next < days.length &&
+          ids.length < 5 &&
+          (ids.isEmpty || count + days[next].count <= 200)) {
+        ids.add(days[next].id);
+        count += days[next++].count;
+      }
+      page = await client.memoryDayFiles(
+        session,
+        ids,
+        path: path,
+        favorites: currentTab == 2,
+      );
+      listing.dayIndex = next;
+      listing.more = next < days.length;
+    } else {
+      page = await client.search(
+        session,
+        favorites: currentTab == 2,
+        path: path,
+        offset: listing.offset,
+      );
+      final existing = listing.files.map((f) => f.key).toSet();
+      if (page.isNotEmpty && page.every((f) => existing.contains(f.key))) {
+        throw const CloudException(
+          'The server repeated a page. Pull to refresh your library.',
+        );
+      }
+      listing.offset += page.length;
+      listing.more = page.length == NextcloudClient.photoLimit;
+    }
+    final merged = {for (final file in listing.files) file.key: file};
+    for (final file in page) {
+      if (listing.sharedPaths == null ||
+          listing.sharedPaths!.any((p) => pathStartsWith(file.path, p))) {
+        merged[file.key] = file;
+      }
+    }
+    listing.files = merged.values.toList();
+  }
+
+  Future<void> _publishListing(_MediaListing listing, String? key) async {
+    _activeListing = listing;
+    items = listing.files;
+    hasMore = listing.more;
+    if (tab == 0) _libraryFiles = items;
+    if (key != null) {
+      _listings[key] = listing;
+      if (_listings.length > 20) _listings.remove(_listings.keys.first);
+      await cache?.writeDocument(key, listing.toJson());
+    }
+  }
+
+  Future<void> loadNextPage() async {
+    final listing = _activeListing == null
+        ? null
+        : _MediaListing.fromJson(_activeListing!.toJson());
+    final session = account;
+    if (listing == null ||
+        session == null ||
+        !listing.more ||
+        loading ||
+        loadingMore ||
+        busy ||
+        error != null) {
+      return;
+    }
+    final version = _loadVersion;
+    final currentTab = tab;
+    final path = [...directory];
+    final key = _listingKey();
+    loadingMore = true;
+    notifyListeners();
+    try {
+      await _fetchPage(listing, session, currentTab, path);
+      if (version != _loadVersion || _disposed) return;
+      await _publishListing(listing, key);
+    } catch (e) {
+      if (version == _loadVersion) error = errorMessage(e);
+    } finally {
+      if (version == _loadVersion) {
+        loadingMore = false;
+        notifyListeners();
+      }
+    }
+  }
+
   String? _listingKey() {
     final session = account;
     if (demo || session == null || tab == 3) return null;
-    return 'listing|${session.server}|${session.userId}|$tab|'
+    return 'browse-v2|${session.server}|${session.userId}|$tab|$smartAlbumOpen|'
         '${directory.join('/')}|${activeNativeAlbum?.davPath.join('/') ?? ''}';
+  }
+
+  Future<void> _loadCatalogue(Account session, {required bool refresh}) async {
+    if (session.photoRoot == null && _autoPhotoRoot == null) {
+      final roots = await client.listFiles(session, []);
+      if (account != session || _disposed) return;
+      _autoPhotoRoot = roots.any((f) => f.isDirectory && f.name == 'Photos')
+          ? ['Photos']
+          : [];
+    }
+    final root = [...photoRoot];
+    final rootKey = '${session.server}|${session.userId}|${root.join('/')}';
+    if (!refresh &&
+        _catalogueRoot == rootKey &&
+        _catalogueUpdated != null &&
+        DateTime.now().difference(_catalogueUpdated!) <
+            const Duration(minutes: 15)) {
+      return;
+    }
+    final generation = ++_catalogueVersion;
+    final key = 'album-catalogue|$rootKey';
+    if (_catalogueRoot != rootKey) {
+      _catalogue.clear();
+      _catalogueUpdated = null;
+      _catalogueRoot = rootKey;
+      nativeAlbums = [];
+    }
+    if (_catalogueUpdated == null) {
+      final saved = await cache?.readDocument(key);
+      if (generation != _catalogueVersion || account != session) return;
+      if (saved != null) {
+        _catalogue.clear();
+        _catalogue.addAll(
+          (saved['albums'] as List).map((value) {
+            final item = (value as Map).cast<String, dynamic>();
+            return SmartAlbum(
+              path: (item['path'] as List).cast<String>(),
+              files: (item['covers'] as List)
+                  .map(
+                    (f) =>
+                        CloudFile.fromJson((f as Map).cast<String, dynamic>()),
+                  )
+                  .toList(),
+            );
+          }),
+        );
+        notifyListeners();
+        final updated = DateTime.tryParse(saved['updated'] as String? ?? '');
+        if (!refresh &&
+            updated != null &&
+            DateTime.now().difference(updated) < const Duration(minutes: 15)) {
+          _catalogueUpdated = updated;
+          await _loadNativeAlbums(session);
+          return;
+        }
+      }
+    }
+    discoveringAlbums = true;
+    catalogueError = null;
+    discoveredFolders = 0;
+    notifyListeners();
+    try {
+      await _ensureMemories(session);
+      if (generation != _catalogueVersion || account != session) return;
+      final queue = <MemoryFolder>[MemoryFolder(root, [])];
+      final found = <String, SmartAlbum>{};
+      while (queue.isNotEmpty) {
+        if (generation != _catalogueVersion ||
+            account != session ||
+            _disposed) {
+          return;
+        }
+        final folder = queue.removeAt(0);
+        List<MemoryFolder> children;
+        List<CloudFile> covers;
+        if (memoriesAvailable == true) {
+          children = await client.memoryFolders(session, folder.path);
+          final direct = await client.memoryDays(
+            session,
+            path: folder.path,
+            recursive: false,
+            existenceOnly: true,
+          );
+          covers = direct!.isEmpty
+              ? []
+              : folder.previews.isNotEmpty
+              ? folder.previews
+              : await client.memoryCover(session, folder.path, direct.first.id);
+        } else {
+          final contents = await client.listFiles(session, folder.path);
+          covers = contents.where((f) => f.isMedia).take(1).toList();
+          children = contents
+              .where((f) => f.isDirectory)
+              .map((f) => MemoryFolder(f.path, []))
+              .toList();
+        }
+        if (generation != _catalogueVersion ||
+            account != session ||
+            _disposed) {
+          return;
+        }
+        if (covers.isNotEmpty) {
+          final album = SmartAlbum(path: folder.path, files: covers);
+          found[album.key] = album;
+        }
+        queue.addAll(
+          memoriesAvailable == true
+              ? children.where((f) => f.previews.isNotEmpty)
+              : children,
+        );
+        discoveredFolders++;
+        _catalogue
+          ..clear()
+          ..addAll(found.values);
+        notifyListeners();
+      }
+      _catalogueUpdated = DateTime.now();
+      await cache?.writeDocument(key, {
+        'updated': _catalogueUpdated!.toIso8601String(),
+        'albums': [
+          for (final album in _catalogue)
+            {
+              'path': album.path,
+              'covers': album.files.map((f) => f.toJson()).toList(),
+            },
+        ],
+      });
+      await _loadNativeAlbums(session);
+    } catch (e) {
+      if (generation == _catalogueVersion && account == session && !_disposed) {
+        catalogueError = errorMessage(e);
+      }
+      rethrow;
+    } finally {
+      if (generation == _catalogueVersion) {
+        discoveringAlbums = false;
+        notifyListeners();
+      }
+    }
+  }
+
+  Future<void> _loadNativeAlbums(Account session) async {
+    nativeAlbumError = null;
+    try {
+      final own = await client.albums(session);
+      final shared = await client.albums(session, shared: true);
+      if (account == session && !_disposed) nativeAlbums = [...own, ...shared];
+    } catch (e) {
+      if (account == session && !_disposed) {
+        nativeAlbumError =
+            'Could not load Nextcloud albums. ${errorMessage(e)}';
+      }
+    }
+  }
+
+  Future<void> _invalidateBrowse() async {
+    _listings.clear();
+    _catalogueUpdated = null;
+    _catalogueVersion++;
+    discoveringAlbums = false;
+    _initialDays = null;
+    await cache?.clearDocuments();
   }
 
   Future<List<CloudFile>> folderContents(List<String> path) async {
@@ -620,6 +862,7 @@ class AppController extends ChangeNotifier {
       failure = e;
     }
     _covers.clear();
+    await _invalidateBrowse();
     await load();
     if (failure != null) {
       error = '$completed of $total completed. ${errorMessage(failure)}';
@@ -663,6 +906,7 @@ class AppController extends ChangeNotifier {
         await client.restore(account!, entry);
       }
       _covers.clear();
+      await _invalidateBrowse();
       await load();
     } finally {
       busy = false;
@@ -681,6 +925,7 @@ class AppController extends ChangeNotifier {
     try {
       await action();
       notice = success;
+      await _invalidateBrowse();
       await load();
     } catch (e) {
       error = errorMessage(e);
@@ -745,7 +990,7 @@ class AppController extends ChangeNotifier {
     }
     final key =
         '${session.server}|${session.userId}|${file.id ?? file.key}|'
-        '${file.modified?.microsecondsSinceEpoch}|${file.size}|$size';
+        '${file.modified?.microsecondsSinceEpoch}|${file.size}|${file.etag ?? ''}|$size';
     if (retry) _discardPreview(key);
     final cached = _previews.remove(key);
     if (cached != null) {
@@ -797,7 +1042,8 @@ class AppController extends ChangeNotifier {
 
   String _originalKey(Account session, CloudFile file) =>
       'original|${session.server}|${session.userId}|${file.id ?? file.key}|'
-      '${file.modified?.microsecondsSinceEpoch}|${file.size}';
+      '${file.modified?.microsecondsSinceEpoch}|${file.size}'
+      '${file.etag == null ? '' : '|${file.etag}'}';
 
   /// Direct authenticated WebDAV stream for the platform video player.
   ({Uri uri, Map<String, String> headers})? streamSource(CloudFile file) {
@@ -844,6 +1090,9 @@ class AppController extends ChangeNotifier {
   Future<void> clearCache() async {
     _clearPreviews();
     _covers.clear();
+    await _invalidateBrowse();
+    _activeListing = null;
+    hasMore = false;
     await cache?.clear();
     notifyListeners();
   }
@@ -899,9 +1148,47 @@ class AppController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _catalogueVersion++;
     _loadVersion++;
     _loginVersion++;
     client.close();
     super.dispose();
   }
+}
+
+class _MediaListing {
+  List<CloudFile> files = [];
+  List<MemoryDay>? days;
+  List<List<String>>? sharedPaths;
+  int dayIndex = 0;
+  int offset = 0;
+  bool more = false;
+  DateTime updated = DateTime.now();
+  bool get fresh =>
+      DateTime.now().difference(updated) < const Duration(minutes: 5);
+
+  Map<String, dynamic> toJson() => {
+    'files': files.map((f) => f.toJson()).toList(),
+    'days': days?.map((d) => d.toJson()).toList(),
+    'sharedPaths': sharedPaths,
+    'dayIndex': dayIndex,
+    'offset': offset,
+    'more': more,
+    'updated': updated.toIso8601String(),
+  };
+
+  static _MediaListing fromJson(Map<String, dynamic> value) => _MediaListing()
+    ..files = (value['files'] as List)
+        .map((f) => CloudFile.fromJson((f as Map).cast<String, dynamic>()))
+        .toList()
+    ..days = (value['days'] as List?)
+        ?.map((d) => MemoryDay.fromJson((d as Map).cast<String, dynamic>()))
+        .toList()
+    ..sharedPaths = (value['sharedPaths'] as List?)
+        ?.map((p) => (p as List).cast<String>())
+        .toList()
+    ..dayIndex = value['dayIndex'] as int
+    ..offset = value['offset'] as int
+    ..more = value['more'] as bool
+    ..updated = DateTime.parse(value['updated'] as String);
 }

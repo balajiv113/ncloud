@@ -65,6 +65,17 @@ jobs:
           for attempt in $(seq 1 90); do
             if curl -fsS http://127.0.0.1:8080/status.php | grep -q '"installed":true'; then
               docker exec --user www-data ncloud-nextcloud php occ app:enable photos
+              docker exec --user www-data ncloud-nextcloud php occ app:install memories
+              docker exec ncloud-nextcloud sh -c 'apt-get update -qq && apt-get install -y -qq libimage-exiftool-perl'
+              docker exec --user www-data ncloud-nextcloud php occ config:app:set memories exiftool --value=/usr/bin/exiftool
+              curl --fail-with-body --silent --show-error --user "ncloud-ci:$password" \
+                -X MKCOL http://127.0.0.1:8080/remote.php/dav/files/ncloud-ci/ncloud-index
+              printf '%s' 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGOQqMgGAAGnAPzLMdOkAAAAAElFTkSuQmCC' \
+                | base64 --decode > "$RUNNER_TEMP/ncloud-seed.png"
+              curl --fail-with-body --silent --show-error --user "ncloud-ci:$password" \
+                -T "$RUNNER_TEMP/ncloud-seed.png" \
+                http://127.0.0.1:8080/remote.php/dav/files/ncloud-ci/ncloud-index/seed.png
+              docker exec --user www-data ncloud-nextcloud php occ memories:index --user=ncloud-ci --no-interaction
               exit 0
             fi
             sleep 2
@@ -140,10 +151,10 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           mv app-release.apk ncloud-android.apk
-          gh release create "v0.4.0-preview.${{ github.run_number }}" ncloud-android.apk \
+          gh release create "v0.5.0-preview.${{ github.run_number }}" ncloud-android.apk \
             --target "${{ github.sha }}" --prerelease \
             --title "ncloud Android preview #${{ github.run_number }}" \
-            --notes "ncloud 0.4: a content-first three-tab redesign with compact headers, an edge-to-edge timeline and floating navigation. Automatic loading with no Load more buttons. Smart albums surface nested photo folders directly, hide empty/grouping folders, and open all descendant photos with optional grouping filters. Choose your photo source; native Nextcloud Photos albums stay separate with their original membership. Favorites, shared photos, offline originals and trash live under Albums. Streaming video and persistent caching retained. No Memories server app required. Updates install over 0.2/0.3 previews using the same cached development signer; uninstall 0.1 first. See README for limitations."
+            --notes "ncloud 0.5: automatically uses the installed Memories day index and capture dates. Photos load in bounded day batches as you scroll instead of scanning the entire library; cached pages and cursors are reused. Smart albums discover the indexed folder catalogue independently of timeline loading, hiding empty/grouping-only folders. Native Nextcloud albums and WebDAV video streaming are retained. Servers without Memories use paged WebDAV. A single very large capture day is loaded whole because Memories exposes no within-day cursor. Updates reuse the cached development signer. See README for indexing and preview limitations."
 
   ios:
     if: github.event_name == 'workflow_dispatch' && inputs.build_ios
