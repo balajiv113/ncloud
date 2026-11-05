@@ -125,6 +125,15 @@ jobs:
       - name: Verify native Android folder sync routing
         working-directory: android
         run: ./gradlew :app:testDebugUnitTest --no-daemon --console=plain
+      - name: Build background service device checks
+        working-directory: android
+        run: ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest --no-daemon --console=plain
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-background-check
+          path: |
+            build/app/outputs/apk/debug/app-debug.apk
+            build/app/outputs/apk/androidTest/debug/app-debug-androidTest.apk
       - name: Verify APK uses the cached preview signer
         run: |
           set -euo pipefail
@@ -154,9 +163,36 @@ jobs:
           name: dependency-lock
           path: pubspec.lock
 
+  android-background:
+    needs: android
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: android-background-check
+      - name: Allow Android emulator acceleration
+        run: if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; fi
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          script: |
+            adb install -r debug/app-debug.apk
+            adb install -r androidTest/debug/app-debug-androidTest.apk
+            adb shell am instrument -w app.ncloud.ncloud.test/androidx.test.runner.AndroidJUnitRunner | tee native-background-result.txt
+            grep -q '^OK (' native-background-result.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-background-result
+          path: native-background-result.txt
+
   publish:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-    needs: android
+    needs: [android, android-background]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -173,7 +209,7 @@ jobs:
           gh release create "v0.5.5-preview.${{ github.run_number }}" ncloud-android.apk \
             --target "${{ github.sha }}" --prerelease \
             --title "ncloud Android preview #${{ github.run_number }}" \
-            --notes "ncloud 0.5.5: Custom folder Backup and Two-way now include the selected source folder itself: Documents to /Backups produces /Backups/Documents, preserving subfolders. Empty selected roots are created; existing flattened uploads are never moved or deleted. Pair cards show the actual cloud root. Download-only pairs retain their exact selected cloud source. Photo backup remains unchanged: Android preserves DCIM/Pictures folders, iPhone uploads assets flat, and both use your chosen Nextcloud destination. All uploads stay create-only with persistent receipts. Transfers require ncloud to remain open. Updates reuse the cached development signer."
+            --notes "ncloud 0.5.5: Photo sync removed on Android and iPhone, including native media-library access. Folder sync uses manually selected folders only, with no automatic pairs or camera presets. Adds included/excluded subfolders, file-type filters, exact Nextcloud destination previews, editable/removable settings and up to three parallel create-only uploads. Optional Android Continue in background uses a data-sync foreground service with an ongoing Pause notification. Completed files remain checkpointed; process death or force-stop requires restarting the interrupted original. Exclusions and removal of settings never delete device or cloud files. Source folders and subfolders are preserved. Updates reuse the cached development signer."
 
   ios:
     if: github.event_name == 'workflow_dispatch' && inputs.build_ios

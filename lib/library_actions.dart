@@ -6,7 +6,6 @@ import 'package:share_plus/share_plus.dart';
 
 import 'app_controller.dart';
 import 'folder_sync_screen.dart';
-import 'photo_backup_screen.dart';
 import 'models.dart';
 import 'screens.dart';
 
@@ -646,32 +645,14 @@ class SettingsScreen extends StatelessWidget {
           ),
           if (!controller.demo && (Platform.isAndroid || Platform.isIOS))
             ListTile(
-              leading: const Icon(Icons.backup_outlined),
-              title: const Text('Photo backup'),
-              subtitle: Text(
-                Platform.isAndroid
-                    ? 'All DCIM + Pictures media · choose cloud destination'
-                    : 'Photos library · choose cloud destination',
-              ),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () => Navigator.of(context).push<void>(
-                MaterialPageRoute(
-                  builder: (_) => PhotoBackupScreen(controller: controller),
-                ),
-              ),
-            ),
-          if (!controller.demo && (Platform.isAndroid || Platform.isIOS))
-            ListTile(
               leading: const Icon(Icons.sync),
               title: Text(
-                Platform.isAndroid
-                    ? 'Custom folder backup'
-                    : 'Files folder sync',
+                Platform.isAndroid ? 'Folder sync' : 'Files folder sync',
               ),
               subtitle: Text(
                 Platform.isIOS
                     ? 'Selected Files folders · run manually · no deletions'
-                    : 'Saved folder pairs · no deletions or overwrites',
+                    : 'Choose device folders · include or exclude files',
               ),
               trailing: const Icon(Icons.chevron_right),
               onTap: () => Navigator.of(context).push<void>(
@@ -685,7 +666,7 @@ class SettingsScreen extends StatelessWidget {
             leading: Icon(Icons.construction_outlined),
             title: Text('Still on the roadmap'),
             subtitle: Text(
-              'Background transfers, photo editing, Live Photos playback and multi-account libraries.',
+              'Unattended backup scheduling, photo editing, Live Photos playback and multi-account libraries.',
             ),
           ),
           const ListTile(

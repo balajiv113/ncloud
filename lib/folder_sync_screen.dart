@@ -6,15 +6,25 @@ import 'app_controller.dart';
 import 'folder_sync.dart';
 import 'library_actions.dart' show chooseFolder;
 import 'screens.dart' show showError;
+import 'android_folder_sync_screen.dart';
 
-class FolderSyncScreen extends StatefulWidget {
+class FolderSyncScreen extends StatelessWidget {
   const FolderSyncScreen({super.key, required this.controller});
   final AppController controller;
   @override
-  State<FolderSyncScreen> createState() => _FolderSyncScreenState();
+  Widget build(BuildContext context) => controller.folderSync.android
+      ? AndroidFolderSyncScreen(controller: controller)
+      : _LegacyFolderSyncScreen(controller: controller);
 }
 
-class _FolderSyncScreenState extends State<FolderSyncScreen> {
+class _LegacyFolderSyncScreen extends StatefulWidget {
+  const _LegacyFolderSyncScreen({required this.controller});
+  final AppController controller;
+  @override
+  State<_LegacyFolderSyncScreen> createState() => _FolderSyncScreenState();
+}
+
+class _FolderSyncScreenState extends State<_LegacyFolderSyncScreen> {
   FolderSyncController get sync => widget.controller.folderSync;
   bool _loading = true;
 
@@ -111,9 +121,8 @@ class _FolderSyncScreenState extends State<FolderSyncScreen> {
                 '${sync.transferred} transferred · ${sync.conflicts} name conflicts',
               ),
             ),
-          for (final pair in sync.pairs.where((p) => !p.photoBackup))
-            _pair(pair),
-          if (!_loading && !sync.pairs.any((p) => !p.photoBackup))
+          for (final pair in sync.pairs) _pair(pair),
+          if (!_loading && sync.pairs.isEmpty)
             const Padding(
               padding: EdgeInsets.all(20),
               child: Text(

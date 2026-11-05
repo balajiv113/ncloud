@@ -2,6 +2,11 @@ package app.ncloud.ncloud
 
 import android.app.Activity
 import android.content.Intent
+import android.content.Context
+import android.content.pm.PackageManager
+import android.Manifest
+import android.app.NotificationManager
+import android.os.Build
 import android.net.Uri
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
@@ -21,17 +26,74 @@ class MainActivity : FlutterActivity() {
     private val worker = Executors.newSingleThreadExecutor()
     private var picker: MethodChannel.Result? = null
     private val pickCode = 9142
-    private val photos by lazy { PhotoBackupBridge(this, ::newStage) }
+    private var notificationPermission: MethodChannel.Result? = null
+    private val notificationCode = 9144
     private val stageRoot get() = File(cacheDir, "ncloud-sync-staging").apply { mkdirs() }
+
+    override fun provideFlutterEngine(context: Context): FlutterEngine? =
+        SyncUploadService.engine?.takeIf { SyncUploadService.running }
+
+    override fun shouldDestroyEngineWithHost(): Boolean = !SyncUploadService.running
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        SyncUploadService.engine = flutterEngine
+        SyncUploadService.hostAttached = true
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "app.ncloud/sync_background")
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "permission" -> {
+                        val allowed = uploadNotificationsAllowed()
+                        val postGranted = Build.VERSION.SDK_INT < 33 ||
+                            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+                        if (allowed || postGranted || call.argument<Boolean>("request") != true) {
+                            result.success(allowed)
+                        } else if (notificationPermission != null) {
+                            result.error("background_permission", "A notification permission request is already open.", null)
+                        } else {
+                            notificationPermission = result
+                            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), notificationCode)
+                        }
+                    }
+                    "settings" -> {
+                        try {
+                            startActivity(Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                Uri.parse("package:$packageName")))
+                            result.success(null)
+                        } catch (error: android.content.ActivityNotFoundException) {
+                            result.error("background_permission", "Open ncloud notification settings on your device.", null)
+                        }
+                    }
+                    "start" -> {
+                        if (!uploadNotificationsAllowed()) {
+                            result.error("background_permission", "Allow notifications before starting background uploads.", null)
+                        } else if (SyncUploadService.running || SyncUploadService.ready != null) {
+                            result.error("background_start", "An upload service is already running.", null)
+                        } else {
+                            SyncUploadService.ready = { error ->
+                                if (error == null) result.success(null)
+                                else result.error("background_start", error, null)
+                            }
+                            try {
+                                val intent = Intent(this, SyncUploadService::class.java)
+                                if (Build.VERSION.SDK_INT >= 26) startForegroundService(intent)
+                                else startService(intent)
+                            } catch (error: Exception) {
+                                SyncUploadService.ready = null
+                                result.error("background_start", "Open ncloud and retry starting background uploads.", null)
+                            }
+                        }
+                    }
+                    "stop" -> {
+                        SyncUploadService.finishing = true
+                        stopService(Intent(this, SyncUploadService::class.java))
+                        result.success(null)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "app.ncloud/folder_sync")
             .setMethodCallHandler { call, result ->
-                if (call.method.startsWith("photos.")) {
-                    photos.handle(call, result)
-                    return@setMethodCallHandler
-                }
                 dispatchFolderMethod(call.method, pick = {
                     if (picker != null) {
                         result.error("busy", "A folder picker is already open.", null)
@@ -179,6 +241,16 @@ class MainActivity : FlutterActivity() {
         }) { "Invalid relative path." }
     }
 
+    private fun uploadNotificationsAllowed(): Boolean {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return false
+        val manager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+        if (Build.VERSION.SDK_INT >= 24 && !manager.areNotificationsEnabled()) return false
+        if (Build.VERSION.SDK_INT >= 26 &&
+            manager.getNotificationChannel(SyncUploadService.channelId)?.importance == NotificationManager.IMPORTANCE_NONE) return false
+        return true
+    }
+
     private fun staged(path: String): File {
         val file = File(path).canonicalFile
         check(file.parentFile == stageRoot.canonicalFile && file.name.endsWith(".part")) {
@@ -207,6 +279,7 @@ class MainActivity : FlutterActivity() {
             return mapOf(
                 "name" to cursor.getString(1),
                 "directory" to (cursor.getString(2) == DocumentsContract.Document.MIME_TYPE_DIR),
+                "contentType" to cursor.getString(2),
                 "size" to cursor.getLong(3),
                 "modified" to cursor.getLong(4))
         }
@@ -229,6 +302,7 @@ class MainActivity : FlutterActivity() {
                 values.add(child to mapOf(
                     "name" to cursor.getString(1),
                     "directory" to (cursor.getString(2) == DocumentsContract.Document.MIME_TYPE_DIR),
+                    "contentType" to cursor.getString(2),
                     "size" to cursor.getLong(3),
                     "modified" to cursor.getLong(4)))
             }
@@ -246,7 +320,16 @@ class MainActivity : FlutterActivity() {
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        photos.onPermissionsResult(requestCode)
+        if (requestCode == notificationCode) {
+            notificationPermission?.success(uploadNotificationsAllowed())
+            notificationPermission = null
+        }
+    }
+
+    override fun onDestroy() {
+        SyncUploadService.hostAttached = false
+        if (!SyncUploadService.running) SyncUploadService.engine = null
+        super.onDestroy()
     }
 
     @Deprecated("Android activity result API required by FlutterActivity integration")

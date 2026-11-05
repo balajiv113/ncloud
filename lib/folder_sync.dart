@@ -10,6 +10,8 @@ import 'package:sqflite/sqflite.dart';
 
 import 'models.dart';
 import 'nextcloud_client.dart';
+import 'sync_rules.dart';
+import 'sync_background.dart';
 
 enum SyncMode { backup, download, merge }
 
@@ -52,13 +54,13 @@ class DeviceEntry {
     this.directory,
     this.size,
     this.modified, {
-    this.backupPath,
+    this.contentType = '',
   });
   final String name;
   final bool directory;
   final int size;
   final int modified;
-  final List<String>? backupPath;
+  final String contentType;
   String get version => '$size|$modified';
 }
 
@@ -107,6 +109,7 @@ class NativeFolderAccess implements FolderAccess {
     value['directory'] as bool,
     value['size'] as int,
     value['modified'] as int,
+    contentType: value['contentType'] as String? ?? '',
   );
 
   @override
@@ -179,7 +182,9 @@ class FolderPair {
     this.wifiOnly = true,
     this.chargingOnly = false,
     this.lastRun,
-    this.photoBackup = false,
+    this.rules = const SyncRules.all(),
+    this.uploadConcurrency = 1,
+    this.background = false,
   });
   final String id;
   final String account;
@@ -191,9 +196,11 @@ class FolderPair {
   final bool wifiOnly;
   final bool chargingOnly;
   DateTime? lastRun;
-  final bool photoBackup;
+  final SyncRules rules;
+  final int uploadConcurrency;
+  final bool background;
 
-  bool get includesSourceFolder => !photoBackup && mode != SyncMode.download;
+  bool get includesSourceFolder => mode != SyncMode.download;
 
   List<String> get cloudRoot => [
     ...remote,
@@ -213,7 +220,9 @@ class FolderPair {
     'wifiOnly': wifiOnly,
     'chargingOnly': chargingOnly,
     'lastRun': lastRun?.toIso8601String(),
-    'photoBackup': photoBackup,
+    'rules': rules.toJson(),
+    'uploadConcurrency': uploadConcurrency,
+    'background': background,
   };
 
   factory FolderPair.fromJson(Map<String, dynamic> value) => FolderPair(
@@ -231,7 +240,11 @@ class FolderPair {
     wifiOnly: value['wifiOnly'] as bool? ?? true,
     chargingOnly: value['chargingOnly'] as bool? ?? false,
     lastRun: DateTime.tryParse(value['lastRun'] as String? ?? ''),
-    photoBackup: value['photoBackup'] as bool? ?? false,
+    rules: value['rules'] == null
+        ? const SyncRules.all()
+        : SyncRules.fromJson((value['rules'] as Map).cast<String, dynamic>()),
+    uploadConcurrency: value['uploadConcurrency'] as int? ?? 1,
+    background: value['background'] as bool? ?? false,
   );
 }
 
@@ -270,16 +283,23 @@ class SyncJournal {
     );
   }
 
-  Future<List<FolderPair>> pairs(String account) async => [
+  Future<List<FolderPair>> pairs(String account) async {
+    final result = <FolderPair>[];
     for (final row in await (await db).query(
       'pairs',
       where: 'account=?',
       whereArgs: [account],
-    ))
-      FolderPair.fromJson(
-        (jsonDecode(row['payload'] as String) as Map).cast<String, dynamic>(),
-      ),
-  ];
+    )) {
+      final payload = (jsonDecode(row['payload'] as String) as Map)
+          .cast<String, dynamic>();
+      if (payload['photoBackup'] == true) {
+        await forget(row['id'] as String);
+      } else {
+        result.add(FolderPair.fromJson(payload));
+      }
+    }
+    return result;
+  }
 
   Future<void> save(FolderPair pair, {FolderPair? replacing}) async =>
       (await db).transaction((txn) async {
@@ -356,8 +376,10 @@ class FolderSyncController extends ChangeNotifier {
     FolderAccess? access,
     SyncJournal? journal,
     bool? android,
+    SyncBackground? backgroundService,
   }) : access = access ?? NativeFolderAccess(),
        journal = journal ?? SyncJournal(),
+       backgroundService = backgroundService ?? NativeSyncBackground(),
        android = android ?? Platform.isAndroid;
 
   final NextcloudClient client;
@@ -365,14 +387,17 @@ class FolderSyncController extends ChangeNotifier {
   final FolderAccess access;
   final SyncJournal journal;
   final bool android;
-  FolderAccess? photoAccess;
+  final SyncBackground backgroundService;
   List<FolderPair> pairs = [];
   String? error;
   String? activeId;
+  String? statusPairId;
   String phase = '';
   int transferred = 0;
   int conflicts = 0;
   bool _foreground = true;
+  bool _backgroundActive = false;
+  bool _backgroundRequested = false;
   bool _stop = false;
   bool _disposed = false;
   Timer? _timer;
@@ -397,6 +422,9 @@ class FolderSyncController extends ChangeNotifier {
     if (_owner != null && _owner != syncAccount(session)) {
       pairs = [];
       _owner = null;
+      statusPairId = null;
+      error = null;
+      phase = '';
       _notify();
     }
     try {
@@ -414,6 +442,23 @@ class FolderSyncController extends ChangeNotifier {
 
   String? get _accountKey => account() == null ? null : syncAccount(account()!);
 
+  void _validateRules(SyncRules rules, int concurrency) {
+    if (rules.included.isEmpty ||
+        rules.included.length + rules.excluded.length > 1000 ||
+        concurrency < 1 ||
+        concurrency > 3) {
+      throw const FormatException(
+        'Choose included folders and 1 to 3 uploads.',
+      );
+    }
+    for (final path in [...rules.included, ...rules.excluded]) {
+      checkSyncPath(path);
+      if (path.length > 64) {
+        throw const FormatException('Folder path is too deep.');
+      }
+    }
+  }
+
   Future<void> add(
     String name,
     DeviceFolder folder,
@@ -422,26 +467,46 @@ class FolderSyncController extends ChangeNotifier {
     bool repeat, {
     bool wifiOnly = true,
     bool chargingOnly = false,
+    SyncRules rules = const SyncRules.all(),
+    int uploadConcurrency = 1,
+    bool background = false,
+    FolderPair? replacing,
   }) async {
+    if (_running != null) {
+      throw StateError('Pause the current transfer before editing.');
+    }
     final owner = _accountKey;
     if (owner == null || owner != _owner) throw StateError('Reconnect first.');
     checkSyncPath(remote);
     checkSyncPath([folder.name]);
+    if (replacing != null &&
+        (replacing.account != owner ||
+            !pairs.any((p) => p.id == replacing.id))) {
+      throw StateError('This folder configuration is no longer available.');
+    }
+    _validateRules(rules, uploadConcurrency);
     bool overlaps(List<String> a, List<String> b) =>
         a.length <= b.length &&
         List.generate(a.length, (i) => a[i] == b[i]).every((v) => v);
     if (pairs.any(
       (pair) =>
-          pair.folder.identity == folder.identity ||
-          overlaps(pair.remote, remote) ||
-          overlaps(remote, pair.remote),
+          pair.id != replacing?.id &&
+          (pair.folder.identity == folder.identity ||
+              overlaps(pair.remote, remote) ||
+              overlaps(remote, pair.remote)),
     )) {
       throw const FormatException(
         'Choose a different device folder and a non-overlapping cloud folder.',
       );
     }
     final pair = FolderPair(
-      id: _id(),
+      id:
+          replacing != null &&
+              replacing.folder.identity == folder.identity &&
+              _key(replacing.remote) == _key(remote) &&
+              replacing.mode == mode
+          ? replacing.id
+          : _id(),
       account: owner,
       name: name.trim().isEmpty ? folder.name : name.trim(),
       folder: folder,
@@ -450,60 +515,14 @@ class FolderSyncController extends ChangeNotifier {
       repeat: android && repeat,
       wifiOnly: wifiOnly,
       chargingOnly: chargingOnly,
+      rules: rules,
+      uploadConcurrency: uploadConcurrency,
+      background: android && background,
     );
-    await journal.save(pair);
+    await journal.save(pair, replacing: replacing);
+    if (replacing != null) pairs.removeWhere((p) => p.id == replacing.id);
     pairs.add(pair);
     _schedule();
-    _notify();
-  }
-
-  Future<void> enablePhotos(
-    FolderAccess source, {
-    required bool wifiOnly,
-    required List<String> destination,
-  }) async {
-    await load();
-    if (_running != null) {
-      throw StateError(
-        'Pause the current transfer before changing photo backup.',
-      );
-    }
-    final owner = _accountKey;
-    if (owner == null || owner != _owner) throw StateError('Reconnect first.');
-    photoAccess = source;
-    final existing = pairs.where((pair) => pair.photoBackup).singleOrNull;
-    checkSyncPath(destination);
-    bool overlaps(List<String> a, List<String> b) =>
-        a.length <= b.length &&
-        List.generate(a.length, (i) => a[i] == b[i]).every((v) => v);
-    if (pairs.any(
-      (pair) =>
-          !pair.photoBackup &&
-          (overlaps(pair.remote, destination) ||
-              overlaps(destination, pair.remote)),
-    )) {
-      throw const FormatException(
-        'A custom pair overlaps this destination. Choose another cloud folder; files stay untouched.',
-      );
-    }
-    final pair = FolderPair(
-      id: existing != null && _key(existing.remote) == _key(destination)
-          ? existing.id
-          : _id(),
-      account: owner,
-      name: 'Photo backup',
-      folder: const DeviceFolder('photos', 'Photo library', 'photos'),
-      remote: List.of(destination),
-      mode: SyncMode.backup,
-      wifiOnly: wifiOnly,
-      photoBackup: true,
-      lastRun: existing != null && _key(existing.remote) == _key(destination)
-          ? existing.lastRun
-          : null,
-    );
-    await journal.save(pair, replacing: existing);
-    if (existing != null) pairs.remove(existing);
-    pairs.add(pair);
     _notify();
   }
 
@@ -536,6 +555,9 @@ class FolderSyncController extends ChangeNotifier {
       lastRun: pair.lastRun,
       wifiOnly: pair.wifiOnly,
       chargingOnly: pair.chargingOnly,
+      rules: pair.rules,
+      uploadConcurrency: pair.uploadConcurrency,
+      background: pair.background,
     );
     await journal.save(updated);
     pairs[pairs.indexWhere((value) => value.id == pair.id)] = updated;
@@ -559,7 +581,7 @@ class FolderSyncController extends ChangeNotifier {
   void setForeground(bool value) {
     _foreground = value;
     if (!value) {
-      _stop = true;
+      if (!_backgroundRequested) _stop = true;
       _timer?.cancel();
       _timer = null;
     } else {
@@ -596,6 +618,9 @@ class FolderSyncController extends ChangeNotifier {
     }
     pairs = [];
     _owner = null;
+    statusPairId = null;
+    error = null;
+    phase = '';
     _notify();
   }
 
@@ -604,11 +629,23 @@ class FolderSyncController extends ChangeNotifier {
     final session = account();
     if (session == null || syncAccount(session) != pair.account) return;
     _stop = false;
+    _backgroundRequested = android && pair.background;
     activeId = pair.id;
+    statusPairId = pair.id;
     error = null;
     transferred = conflicts = 0;
     _notify();
-    final task = _sync(session, pair);
+    String? backgroundReason;
+    final task = () async {
+      if (_backgroundRequested) {
+        await backgroundService.start((reason) {
+          backgroundReason = reason;
+          _stop = true;
+        });
+        _backgroundActive = true;
+      }
+      await _sync(session, pair);
+    }();
     _running = task;
     try {
       await task;
@@ -617,6 +654,7 @@ class FolderSyncController extends ChangeNotifier {
       phase = 'Up to date · no files deleted';
     } on SyncStopped {
       phase = 'Paused · completed transfers are saved';
+      error = backgroundReason;
     } on Object catch (e) {
       error = switch (e) {
         CloudException() => e.message,
@@ -637,12 +675,12 @@ class FolderSyncController extends ChangeNotifier {
           'conditions_permission' =>
             'Android could not check Wi-Fi/charging conditions. '
                 'Update ncloud and retry; folder permission is unchanged.',
-          'photo_permission' =>
-            'Photos access is unavailable. Open device Settings and allow ncloud '
-                'to read your library, then retry. Existing backups stay untouched.',
-          'photo_export' =>
-            'Could not prepare an original. Check Photos access, free device space '
-                'and connectivity for cloud-only originals, then retry.',
+          'background_permission' =>
+            'Allow ncloud notifications in device Settings to use background uploads, '
+                'or turn off Continue in background.',
+          'background_start' =>
+            'Android could not start the upload service. Open ncloud and retry, '
+                'or turn off Continue in background.',
           _ =>
             'The device folder operation failed (${e.code}). '
                 'Existing files were not overwritten. Check the selected folder provider.',
@@ -661,6 +699,16 @@ class FolderSyncController extends ChangeNotifier {
       };
       phase = 'Needs attention';
     } finally {
+      if (_backgroundActive) {
+        try {
+          await backgroundService.stop();
+        } on Object catch (e) {
+          error ??=
+              'Could not stop the upload notification (${e.runtimeType}). '
+              'Pause it from Android Settings if it remains visible.';
+        }
+      }
+      _backgroundActive = _backgroundRequested = false;
       activeId = null;
       _running = null;
       _schedule();
@@ -669,7 +717,10 @@ class FolderSyncController extends ChangeNotifier {
   }
 
   void _check(FolderPair pair) {
-    if (_stop || _disposed || !_foreground || _accountKey != pair.account) {
+    if (_stop ||
+        _disposed ||
+        (!_foreground && !_backgroundActive) ||
+        _accountKey != pair.account) {
       throw SyncStopped();
     }
   }
@@ -709,14 +760,10 @@ class FolderSyncController extends ChangeNotifier {
   }
 
   Future<void> _sync(Account session, FolderPair pair) async {
-    final source = pair.photoBackup ? photoAccess : access;
-    if (source == null) {
-      throw const FormatException(
-        'Open Photo backup before running this backup.',
-      );
-    }
+    final source = access;
     _check(pair);
     checkSyncPath(pair.cloudRoot);
+    _validateRules(pair.rules, pair.uploadConcurrency);
     phase = 'Checking Wi-Fi and charging conditions';
     _notify();
     await _conditions(pair);
@@ -724,15 +771,13 @@ class FolderSyncController extends ChangeNotifier {
     final remote = <String, (List<String>, CloudFile)>{};
     final directories = <List<String>>[[]];
     var scanned = 0;
-    phase = pair.photoBackup
-        ? 'Reading photo library'
-        : 'Reading selected device folder';
+    phase = 'Reading selected device folder';
     _notify();
     // A complete, successful inventory precedes transfers; a permission error
     // must not be interpreted as an empty source or a deletion.
     while (directories.isNotEmpty) {
       _check(pair);
-      if (++scanned > (pair.photoBackup ? 100001 : 100000)) {
+      if (++scanned > 100000) {
         throw const FormatException(
           'This pair exceeds the supported scan size.',
         );
@@ -747,9 +792,14 @@ class FolderSyncController extends ChangeNotifier {
           );
         }
         if (item.directory) {
-          directories.add(child);
+          if (pair.rules.visits(child)) {
+            directories.add(child);
+          }
         } else {
-          if (item.modified <= 0 || (!pair.photoBackup && item.size < 0)) {
+          if (!pair.rules.allows(child, contentType: item.contentType)) {
+            continue;
+          }
+          if (item.modified <= 0 || item.size < 0) {
             throw const FormatException(
               'The folder provider supplies no file modification date.',
             );
@@ -802,44 +852,49 @@ class FolderSyncController extends ChangeNotifier {
           );
         }
         if (item.isDirectory) {
-          directories.add(child);
+          if (pair.rules.visits(child)) directories.add(child);
         } else {
+          if (!pair.rules.allows(child, contentType: item.contentType)) {
+            continue;
+          }
           _remoteVersion(item);
           remote[_key(child)] = (child, item);
         }
       }
     }
     if (pair.mode != SyncMode.download) {
-      for (final (path, file) in local.values.toList()) {
+      final pending = local.values.toList();
+      final reserved = <String>{};
+      var directoryTail = Future<void>.value();
+      Future<void> prepare(List<String> target) async {
+        final previous = directoryTail;
+        final ready = Completer<void>();
+        directoryTail = ready.future;
+        try {
+          await previous;
+          await _ensureRemote(session, pair, target);
+        } finally {
+          ready.complete();
+        }
+      }
+
+      Future<void> upload((List<String>, DeviceEntry) entry) async {
+        final (path, file) = entry;
         _check(pair);
         final receipt = await journal.receipt(pair.id, 'local', path);
         if (receipt != null && receipt['version'] == file.version) {
           final target = remote[_key(_target(receipt))];
           if (target != null &&
               _remoteVersion(target.$2) == receipt['target_version']) {
-            continue;
+            return;
           }
         }
-        var target = pair.photoBackup
-            ? android
-                  ? file.backupPath ??
-                        (throw const FormatException(
-                          'The photo provider did not supply the original folder path.',
-                        ))
-                  : [path.last]
-            : path;
-        checkSyncPath(target);
-        if (pair.photoBackup &&
-            android &&
-            (target.length < 2 ||
-                !['dcim', 'pictures'].contains(target.first.toLowerCase()))) {
-          throw const FormatException(
-            'Photo path is outside DCIM or Pictures.',
-          );
-        }
-        if (remote.containsKey(_key(target))) {
+        var target = path;
+        while (remote.containsKey(_key(target)) ||
+            reserved.contains(_key(target))) {
           target = _conflict(target, 'device');
         }
+        reserved.add(_key(target));
         await _conditions(pair);
         phase = 'Uploading ${file.name}';
         _notify();
@@ -848,17 +903,12 @@ class FolderSyncController extends ChangeNotifier {
           staged = await source.export(pair.folder.token, path, file);
           _check(pair);
           final stagedSize = await staged.length();
-          if (pair.photoBackup && stagedSize == 0) {
-            throw const FormatException(
-              'The photo provider returned an empty original. Nothing was uploaded.',
-            );
-          }
           if (file.size >= 0 && stagedSize != file.size) {
             throw const FormatException(
               'The source changed while preparing it. Run again.',
             );
           }
-          await _ensureRemote(session, pair, target);
+          await prepare(target);
           _check(pair);
           await client.upload(
             session,
@@ -884,10 +934,31 @@ class FolderSyncController extends ChangeNotifier {
           await journal.confirm(pair.id, path, file.version, target, version);
           remote[_key(target)] = (target, confirmed);
           transferred++;
+          _notify();
         } finally {
           if (staged != null) await source.discard(staged);
         }
       }
+
+      var index = 0;
+      Object? failure;
+      StackTrace? failureStack;
+      Future<void> worker() async {
+        while (failure == null && index < pending.length) {
+          final entry = pending[index++];
+          try {
+            await upload(entry);
+          } on Object catch (e, stack) {
+            if (failure == null || failure is SyncStopped) {
+              failure = e;
+              failureStack = stack;
+            }
+          }
+        }
+      }
+
+      await Future.wait(List.generate(pair.uploadConcurrency, (_) => worker()));
+      if (failure != null) Error.throwWithStackTrace(failure!, failureStack!);
     }
     if (pair.mode != SyncMode.backup) {
       for (final (path, file) in remote.values.toList()) {

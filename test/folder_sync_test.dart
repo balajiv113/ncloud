@@ -12,8 +12,9 @@ import 'package:ncloud/folder_sync_screen.dart';
 import 'package:ncloud/app_controller.dart';
 import 'package:ncloud/models.dart';
 import 'package:ncloud/nextcloud_client.dart';
-import 'package:ncloud/photo_backup.dart';
-import 'package:ncloud/photo_backup_screen.dart';
+import 'package:ncloud/android_folder_sync_screen.dart';
+import 'package:ncloud/sync_rules.dart';
+import 'package:ncloud/sync_background.dart';
 
 import 'nextcloud_client_test.dart' show account;
 import 'app_test.dart' show MemoryStore;
@@ -114,39 +115,24 @@ class DeviceFolders implements FolderAccess {
   }
 }
 
-class PhotoAssets extends DeviceFolders {
-  PhotoAssets(super.root, super.staging);
-  final originalFolders = <String, List<String>>{};
-  bool unknownSize = true;
-
+class TestSyncBackground implements SyncBackground {
+  int starts = 0, stops = 0;
+  bool allowed = true;
+  Object? startError;
+  void Function(String?)? onPause;
   @override
-  DeviceEntry entry(FileSystemEntity entity) {
-    final value = super.entry(entity);
-    if (value.directory) return value;
-    final asset = entity.parent.uri.pathSegments
-        .where((p) => p.isNotEmpty)
-        .last;
-    return DeviceEntry(
-      value.name,
-      false,
-      unknownSize ? -1 : value.size,
-      value.modified,
-      backupPath: [...?originalFolders[asset], value.name],
-    );
+  Future<bool> permission({bool request = false}) async => allowed;
+  @override
+  Future<void> start(void Function(String?) callback) async {
+    if (startError case final e?) throw e;
+    starts++;
+    onPause = callback;
   }
 
   @override
-  Future<File> export(
-    String token,
-    List<String> path,
-    DeviceEntry expected,
-  ) async {
-    exports++;
-    final source = file(path);
-    if (super.entry(source).modified != expected.modified) {
-      throw const FileSystemException('Source changed');
-    }
-    return source.copy((await stage()).path);
+  Future<void> stop() async {
+    stops++;
+    onPause = null;
   }
 }
 
@@ -256,6 +242,7 @@ void main() {
   late Account? session;
   late String journalPath;
   bool disposed = false;
+  late TestSyncBackground background;
 
   FolderSyncController controller({bool android = true}) =>
       FolderSyncController(
@@ -264,12 +251,16 @@ void main() {
         access: device,
         journal: SyncJournal(path: journalPath),
         android: android,
+        backgroundService: background,
       );
 
   Future<FolderPair> pair(
     SyncMode mode, {
     bool repeat = false,
     bool chargingOnly = false,
+    SyncRules rules = const SyncRules.all(),
+    int concurrency = 1,
+    bool inBackground = false,
   }) async {
     await sync.load();
     await sync.add(
@@ -279,6 +270,9 @@ void main() {
       mode,
       repeat,
       chargingOnly: chargingOnly,
+      rules: rules,
+      uploadConcurrency: concurrency,
+      background: inBackground,
     );
     return sync.pairs.single;
   }
@@ -294,6 +288,7 @@ void main() {
     cloud = CloudFolders();
     session = account;
     journalPath = '${root.path}/sync.sqlite3';
+    background = TestSyncBackground();
     sync = controller();
   });
 
@@ -305,243 +300,343 @@ void main() {
     await root.delete(recursive: true);
   });
 
-  for (final android in [false, true]) {
-    test(
-      '${android ? 'Android folders' : 'iPhone flat'} photo backup preserves originals and remembers assets',
-      () async {
-        await sync.disconnect();
-        await sync.journal.close();
-        sync.dispose();
-        sync = controller(android: android);
-        final photos = PhotoAssets(device.root, device.staging)
-          ..originalFolders['asset-a'] = ['DCIM', 'Camera']
-          ..originalFolders['asset-b'] = ['Pictures', 'Trips']
-          ..unknownSize = !android;
-        await photos.put('asset-a/IMG_0001.HEIC', 'original-a');
-        await photos.put('asset-a/IMG_0001.MOV', 'live-motion');
-        await photos.put('asset-b/IMG_0001.HEIC', 'original-b');
-        cloud.folders.add('Chosen');
-        final protectedPath = android
-            ? 'Chosen/DCIM/Camera/IMG_0001.HEIC'
-            : 'Chosen/IMG_0001.HEIC';
-        cloud.put(protectedPath, 'existing-cloud-original');
-        await sync.enablePhotos(
-          photos,
-          wifiOnly: true,
-          destination: ['Chosen'],
-        );
-        final configured = sync.pairs.single;
-        expect(FolderPair.fromJson(configured.toJson()).photoBackup, isTrue);
-        await sync.run(configured);
-        expect(sync.error, isNull);
-        expect(sync.transferred, 3);
-        expect(
-          utf8.decode(cloud.files[protectedPath]!.$1),
-          'existing-cloud-original',
-        );
-        expect(
-          cloud.files.values.map((f) => utf8.decode(f.$1)),
-          containsAll(['original-a', 'original-b', 'live-motion']),
-        );
-        expect(
-          cloud.files.keys,
-          everyElement(
-            android
-                ? startsWith('Chosen/')
-                : matches(RegExp(r'^Chosen/[^/]+$')),
-          ),
-        );
-        if (android) {
-          expect(
-            cloud.files.keys,
-            contains('Chosen/Pictures/Trips/IMG_0001.HEIC'),
-          );
-        }
-        expect(photos.imports, 0);
-        expect(device.picks, 0);
-        expect(
-          await photos.file(['asset-a', 'IMG_0001.HEIC']).readAsString(),
-          'original-a',
-        );
-        expect(photos.staging.listSync(), isEmpty);
-        await sync.disconnect();
-        await sync.journal.close();
-        sync.dispose();
-        sync = controller(android: android)..photoAccess = photos;
-        await sync.load();
-        expect(sync.pairs, hasLength(1));
-        await sync.run(sync.pairs.single);
-        expect(sync.error, isNull);
-        expect(sync.transferred, 0);
-        expect(cloud.uploads, 3);
-        await photos.file(['asset-a', 'IMG_0001.HEIC']).delete();
-        await sync.run(sync.pairs.single);
-        expect(cloud.files, hasLength(4));
-        expect(cloud.uploads, 3);
-      },
-    );
-  }
-
   test(
-    'changing photo destination replaces settings atomically, not cloud files',
+    'loading starts empty and removes obsolete photo settings only',
     () async {
-      sync = sync..photoAccess = device;
-      cloud.folders.addAll(['One', 'Two']);
-      await sync.enablePhotos(device, wifiOnly: true, destination: ['One']);
-      final original = sync.pairs.single;
-      original.lastRun = DateTime.now();
-      cloud.put('One/kept.jpg', 'keep');
-      await sync.enablePhotos(device, wifiOnly: false, destination: ['One']);
-      expect(sync.pairs.single.id, original.id);
-      expect(sync.pairs.single.lastRun, isNotNull);
-      await sync.enablePhotos(device, wifiOnly: true, destination: ['Two']);
-      expect(sync.pairs.single.id, isNot(original.id));
-      expect(sync.pairs.single.lastRun, isNull);
-      expect((await sync.journal.pairs(syncAccount(account))).single.remote, [
-        'Two',
-      ]);
-      expect(cloud.files.keys, ['One/kept.jpg']);
+      await sync.load();
+      expect(sync.pairs, isEmpty);
+      final custom = await pair(SyncMode.backup);
+      final payload = custom.toJson()
+        ..['id'] = 'obsolete-photos'
+        ..['photoBackup'] = true
+        ..['repeat'] = true;
+      await (await sync.journal.db).insert('pairs', {
+        'id': 'obsolete-photos',
+        'account': syncAccount(account),
+        'payload': jsonEncode(payload),
+      });
+      cloud.put('Photos/kept.jpg', 'original');
+      final saved = await sync.journal.pairs(syncAccount(account));
+      expect(saved.map((p) => p.id), [custom.id]);
+      expect((await (await sync.journal.db).query('pairs')).length, 1);
+      expect(cloud.files.keys, ['Photos/kept.jpg']);
+      expect(device.picks, 0);
+      expect(device.exports, 0);
     },
   );
 
   test(
-    'photo destinations cannot overlap custom pairs in either direction',
+    'rules include selected subfolders, subtract exclusions and filter file types',
     () async {
-      await pair(SyncMode.backup);
-      for (final path in [
-        <String>[],
+      await device.put('Trips/keep.JPG', 'photo');
+      await device.put('Trips/clip.MOV', 'video');
+      await device.put('Trips/document.pdf', 'document');
+      await device.put('Trips/Private/no.jpg', 'private');
+      await device.put('TripsExtra/no.jpg', 'not included');
+      final rules = SyncRules(
+        included: [
+          ['Trips'],
+        ],
+        excluded: [
+          ['Trips', 'Private'],
+        ],
+        types: SyncFileTypes.photosAndVideos,
+      );
+      final value = await pair(SyncMode.backup, rules: rules, concurrency: 3);
+      await sync.run(value);
+      expect(sync.error, isNull);
+      expect(cloud.files.keys.toSet(), {
+        'Backup/Selected/Trips/keep.JPG',
+        'Backup/Selected/Trips/clip.MOV',
+      });
+      expect(device.exports, 2);
+      expect(rules.visits(['Trips']), isTrue);
+      expect(rules.visits(['Trips', 'Private']), isFalse);
+      expect(rules.visits(['TripsExtra']), isFalse);
+      expect(rules.allows(['Trips', 'Private', 'no.jpg']), isFalse);
+      expect(
+        rules.allows([
+          'Trips',
+          'keep.JPG',
+        ], contentType: 'application/octet-stream'),
+        isTrue,
+      );
+      final json = value.toJson();
+      final restored = FolderPair.fromJson(json);
+      expect(restored.rules.toJson(), rules.toJson());
+      expect(restored.uploadConcurrency, 3);
+    },
+  );
+
+  test(
+    'changing rules retains confirmed receipts and never removes excluded backups',
+    () async {
+      await device.put('Public/keep.jpg', 'keep');
+      await device.put('Private/old.jpg', 'private');
+      final value = await pair(SyncMode.backup);
+      await sync.run(value);
+      expect(cloud.uploads, 2);
+      await device.put('Private/new.jpg', 'do not upload');
+      await sync.add(
+        value.name,
+        value.folder,
+        value.remote,
+        value.mode,
+        false,
+        replacing: value,
+        rules: SyncRules(
+          excluded: [
+            ['Private'],
+          ],
+        ),
+      );
+      final edited = sync.pairs.single;
+      expect(edited.id, value.id);
+      await sync.run(edited);
+      expect(sync.error, isNull);
+      expect(cloud.uploads, 2);
+      expect(cloud.files.keys, contains('Backup/Selected/Private/old.jpg'));
+      expect(
+        cloud.files.keys,
+        isNot(contains('Backup/Selected/Private/new.jpg')),
+      );
+      await sync.disconnect();
+      await sync.journal.close();
+      sync.dispose();
+      sync = controller();
+      await sync.load();
+      expect(sync.pairs.single.rules.excluded, [
+        ['Private'],
+      ]);
+      await sync.run(sync.pairs.single);
+      expect(cloud.uploads, 2);
+    },
+  );
+
+  test('download and merge respect exclusions on both sides', () async {
+    for (final mode in [SyncMode.download, SyncMode.merge]) {
+      final prefix = mode == SyncMode.download ? 'Backup' : 'Backup/Selected';
+      cloud.put('$prefix/Public/photo.jpg', 'allowed');
+      cloud.put('$prefix/Private/secret.jpg', 'excluded');
+      cloud.put('$prefix/Public/file.txt', 'wrong type');
+      final value = await pair(
+        mode,
+        rules: SyncRules(
+          excluded: [
+            ['Private'],
+          ],
+          types: SyncFileTypes.photos,
+        ),
+      );
+      await sync.run(value);
+      expect(sync.error, isNull);
+      expect(await device.file(['Public', 'photo.jpg']).exists(), isTrue);
+      expect(await device.file(['Private', 'secret.jpg']).exists(), isFalse);
+      expect(await device.file(['Public', 'file.txt']).exists(), isFalse);
+      expect(cloud.files.keys, contains('$prefix/Private/secret.jpg'));
+      await sync.forget(value);
+    }
+  });
+
+  test(
+    'manually selected media folder applies inclusion and exclusion rules',
+    () async {
+      await device.put('Camera/yes.HEIC', 'yes');
+      await device.put('Screenshots/no.png', 'no');
+      await device.put('Camera/no.MOV', 'video excluded');
+      await sync.load();
+      await sync.add(
+        'Selected',
+        const DeviceFolder('token', 'Selected', 'identity'),
         ['Backup'],
-        ['Backup', 'Nested'],
-      ]) {
+        SyncMode.backup,
+        false,
+        rules: SyncRules(
+          included: [[]],
+          excluded: [
+            ['Screenshots'],
+          ],
+          types: SyncFileTypes.photos,
+        ),
+        uploadConcurrency: 3,
+      );
+      await sync.run(sync.pairs.single);
+      expect(sync.error, isNull);
+      expect(cloud.files.keys, ['Backup/Selected/Camera/yes.HEIC']);
+      expect(device.exports, 1);
+      expect(device.imports, 0);
+    },
+  );
+
+  test(
+    'parallel uploads are bounded to three and do not race folder creation',
+    () async {
+      for (var i = 0; i < 7; i++) {
+        await device.put('nested/$i.jpg', 'image-$i');
+      }
+      var active = 0, maximum = 0;
+      final release = Completer<void>();
+      cloud.holdUpload = () async {
+        active++;
+        if (active > maximum) maximum = active;
+        if (active == 3 && !release.isCompleted) release.complete();
+        await release.future;
+        await Future<void>.delayed(const Duration(milliseconds: 2));
+        active--;
+      };
+      final value = await pair(SyncMode.backup, concurrency: 3);
+      await sync.run(value);
+      expect(sync.error, isNull);
+      expect(maximum, 3);
+      expect(cloud.uploads, 7);
+      expect(cloud.folders, contains('Backup/Selected/nested'));
+      expect(device.staging.listSync(), isEmpty);
+      await sync.run(value);
+      expect(cloud.uploads, 7);
+    },
+  );
+
+  test(
+    'parallel failure settles started uploads and cleans every staged file',
+    () async {
+      for (var i = 0; i < 6; i++) {
+        await device.put('$i.jpg', 'image-$i');
+      }
+      var started = 0;
+      final allStarted = Completer<void>();
+      cloud.holdUpload = () async {
+        final n = ++started;
+        if (started == 3) allStarted.complete();
+        await allStarted.future;
+        if (n == 1) throw const CloudException('First upload failed');
+      };
+      final value = await pair(
+        SyncMode.backup,
+        concurrency: 3,
+        inBackground: true,
+      );
+      await sync.run(value);
+      expect(sync.error, 'First upload failed');
+      expect(started, 3);
+      expect(cloud.uploads, 2);
+      expect(sync.transferred, 2);
+      expect(sync.activeId, isNull);
+      expect(device.staging.listSync(), isEmpty);
+      expect(background.stops, 1);
+      cloud.holdUpload = null;
+      await sync.run(value);
+      expect(sync.error, isNull);
+      expect(cloud.uploads, 6);
+    },
+  );
+
+  test(
+    'parallel filename collisions keep all originals and wait for failures',
+    () async {
+      for (final id in ['a', 'b', 'c']) {
+        await device.put('$id/same.jpg', id);
+        cloud.put('Backup/Selected/$id/same.jpg', 'existing-$id');
+      }
+      await pair(SyncMode.backup, concurrency: 3);
+      await sync.run(sync.pairs.single);
+      expect(sync.error, isNull);
+      expect(cloud.files, hasLength(6));
+      expect(cloud.files.values.map((f) => utf8.decode(f.$1)).toSet(), {
+        'existing-a',
+        'existing-b',
+        'existing-c',
+        'a',
+        'b',
+        'c',
+      });
+      await sync.run(sync.pairs.single);
+      expect(cloud.uploads, 3);
+    },
+  );
+
+  test(
+    'background-enabled run continues across lifecycle changes and stops its service',
+    () async {
+      await device.put('first.txt', 'one');
+      await device.put('second.txt', 'two');
+      final started = Completer<void>(), release = Completer<void>();
+      cloud.holdUpload = () async {
+        if (!started.isCompleted) started.complete();
+        await release.future;
+      };
+      final value = await pair(SyncMode.backup, inBackground: true);
+      final running = sync.run(value);
+      await started.future;
+      expect(background.starts, 1);
+      sync.setForeground(false);
+      release.complete();
+      await running;
+      expect(sync.error, isNull);
+      expect(cloud.uploads, 2);
+      expect(background.stops, 1);
+      expect(sync.activeId, isNull);
+    },
+  );
+
+  test(
+    'notification pause stops subsequent files, preserving completed receipts',
+    () async {
+      await device.put('first.txt', 'one');
+      await device.put('second.txt', 'two');
+      cloud.beforeUpload = () => background.onPause?.call(null);
+      final value = await pair(SyncMode.backup, inBackground: true);
+      await sync.run(value);
+      expect(sync.error, isNull);
+      expect(sync.phase, contains('Paused'));
+      expect(cloud.uploads, 1);
+      expect(background.stops, 1);
+      cloud.beforeUpload = null;
+      await sync.run(value);
+      expect(sync.error, isNull);
+      expect(cloud.uploads, 2);
+    },
+  );
+
+  test(
+    'background startup failure performs no transfers or permission prompts',
+    () async {
+      await device.put('first.txt', 'one');
+      background.startError = PlatformException(code: 'background_permission');
+      final value = await pair(SyncMode.backup, inBackground: true);
+      await sync.run(value);
+      expect(sync.error, contains('notifications'));
+      expect(cloud.uploads, 0);
+      expect(device.exports, 0);
+      expect(background.stops, 0);
+      expect(sync.activeId, isNull);
+    },
+  );
+
+  test(
+    'legacy pair JSON keeps all files, serial uploads and foreground behavior',
+    () async {
+      final value = await pair(SyncMode.backup);
+      final json = value.toJson()
+        ..remove('rules')
+        ..remove('background')
+        ..remove('uploadConcurrency');
+      final legacy = FolderPair.fromJson(json);
+      expect(legacy.rules.toJson(), const SyncRules.all().toJson());
+      expect(legacy.background, isFalse);
+      expect(legacy.uploadConcurrency, 1);
+      for (final count in [0, 4]) {
         await expectLater(
-          sync.enablePhotos(device, wifiOnly: true, destination: path),
+          sync.add(
+            'Bad',
+            value.folder,
+            ['Elsewhere'],
+            SyncMode.backup,
+            false,
+            uploadConcurrency: count,
+          ),
           throwsFormatException,
         );
       }
-      await sync.enablePhotos(
-        device,
-        wifiOnly: true,
-        destination: ['Separate'],
-      );
-      await expectLater(
-        sync.add(
-          'No overlap',
-          const DeviceFolder('other', 'Other', 'other'),
-          ['Separate', 'Nested'],
-          SyncMode.backup,
-          false,
-        ),
-        throwsFormatException,
-      );
-      expect(cloud.uploads, 0);
-    },
-  );
-
-  test(
-    'photo permission status never prompts except on explicit request',
-    () async {
-      final calls = <MethodCall>[];
-      final photos = PhotoLibraryAccess();
-      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-          .setMockMethodCallHandler(PhotoLibraryAccess.channel, (call) async {
-            calls.add(call);
-            if (call.method == 'photos.permission') return 'limited';
-            if (call.method == 'photos.scan') {
-              return [
-                {'id': 'asset-id', 'modified': 12},
-              ];
-            }
-            if (call.method == 'photos.resources') {
-              return [
-                {'name': 'original.HEIC', 'size': -1, 'modified': 12},
-              ];
-            }
-            throw StateError('Unexpected ${call.method}');
-          });
-      addTearDown(
-        () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-            .setMockMethodCallHandler(PhotoLibraryAccess.channel, null),
-      );
-      expect(await photos.permission(), 'limited');
-      expect(await photos.permission(request: true), 'limited');
-      expect((await photos.list('photos', [])).single.name, 'asset-id');
-      expect((await photos.list('photos', ['asset-id'])).single.size, -1);
-      expect(calls.map((c) => c.method), [
-        'photos.permission',
-        'photos.permission',
-        'photos.scan',
-        'photos.resources',
-      ]);
-      expect((calls.first.arguments as Map)['request'], false);
-      expect((calls[1].arguments as Map)['request'], true);
-      expect(
-        () => photos.import('photos', ['file'], File('not-used')),
-        throwsUnsupportedError,
-      );
-    },
-  );
-
-  test(
-    'photo scan rejects duplicate asset identifiers and invalid native status',
-    () async {
-      final photos = PhotoLibraryAccess();
-      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-          .setMockMethodCallHandler(PhotoLibraryAccess.channel, (call) async {
-            if (call.method == 'photos.permission') return null;
-            return [
-              {'id': 'same', 'modified': 12},
-              {'id': 'same', 'modified': 12},
-            ];
-          });
-      addTearDown(
-        () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-            .setMockMethodCallHandler(PhotoLibraryAccess.channel, null),
-      );
-      await expectLater(photos.permission(), throwsStateError);
-      await expectLater(photos.list('photos', []), throwsFormatException);
-    },
-  );
-
-  testWidgets(
-    'photo setup shows saved destination and limited access without prompting',
-    (tester) async {
-      final calls = <MethodCall>[];
-      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-          .setMockMethodCallHandler(PhotoLibraryAccess.channel, (call) async {
-            calls.add(call);
-            if (call.method == 'photos.permission') return 'limited';
-            throw StateError('Unexpected ${call.method}');
-          });
-      addTearDown(
-        () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-            .setMockMethodCallHandler(PhotoLibraryAccess.channel, null),
-      );
-      final controller = AppController(
-        store: MemoryStore(),
-        folderSyncController: sync,
-      )..account = account;
-      await tester.runAsync(
-        () =>
-            sync.enablePhotos(device, wifiOnly: true, destination: ['Backup']),
-      );
-      await tester.binding.setSurfaceSize(const Size(450, 1800));
-      addTearDown(() => tester.binding.setSurfaceSize(null));
-      await tester.pumpWidget(
-        MaterialApp(home: PhotoBackupScreen(controller: controller)),
-      );
-      await tester.pumpAndSettle();
-      expect(find.text('Photos access: Limited'), findsOneWidget);
-      expect(find.text('/Backup'), findsOneWidget);
-      expect(find.textContaining('Only approved items'), findsOneWidget);
-      expect(find.text('Open device permission settings'), findsOneWidget);
-      expect(calls.map((c) => c.method), ['photos.permission']);
-      expect((calls.single.arguments as Map)['request'], false);
-      expect(tester.takeException(), isNull);
-      await tester.pumpWidget(const SizedBox());
-      await tester.runAsync(sync.disconnect);
-      await tester.runAsync(sync.journal.close);
-      controller.dispose();
-      disposed = true;
     },
   );
 
@@ -1059,52 +1154,147 @@ void main() {
     },
   );
 
-  testWidgets('dashboard and setup expose safe modes and explicit consent', (
-    tester,
-  ) async {
-    final controller = AppController(
-      store: MemoryStore(),
-      folderSyncController: sync,
-    )..account = account;
-    await tester.runAsync(sync.load);
-    await tester.pumpWidget(
-      MaterialApp(home: FolderSyncScreen(controller: controller)),
-    );
-    await tester.runAsync(sync.load);
-    await tester.pumpAndSettle();
-    expect(find.text('Your files stay protected'), findsOneWidget);
-    expect(find.text('Add sync pair'), findsOneWidget);
-    await tester.ensureVisible(find.text('Add sync pair'));
-    await tester.tap(find.text('Add sync pair'));
-    await tester.pumpAndSettle();
-    expect(find.text('Transfer direction'), findsOneWidget);
-    expect(find.text('Wi-Fi only'), findsOneWidget);
-    expect(find.text('Only while charging'), findsOneWidget);
-    await tester.tap(find.byType(DropdownButtonFormField<SyncMode>));
-    await tester.pumpAndSettle();
-    expect(find.text(SyncMode.download.label).last, findsOneWidget);
-    expect(find.text(SyncMode.merge.label).last, findsOneWidget);
-    await tester.tap(find.text(SyncMode.backup.label).last);
-    await tester.pumpAndSettle();
-    await tester.scrollUntilVisible(
-      find.text('Save pair'),
-      200,
-      scrollable: find
-          .byWidgetPredicate(
-            (widget) =>
-                widget is Scrollable &&
-                widget.axisDirection == AxisDirection.down,
-          )
-          .last,
-    );
-    final save = tester.widget<FilledButton>(
-      find.widgetWithText(FilledButton, 'Save pair'),
-    );
-    expect(save.onPressed, isNull);
-    expect(tester.takeException(), isNull);
-    await tester.pumpWidget(const SizedBox());
-    // The test fixture owns sync's asynchronous shutdown.
-    controller.dispose();
-    disposed = true;
-  });
+  testWidgets(
+    'destination preview shows exact Android roots without flattening',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SyncCloudPreview(
+              destination: const ['Photos', 'Phone'],
+              source: 'Documents',
+              rules: SyncRules(
+                included: [[]],
+                excluded: [
+                  ['Private'],
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+      expect(find.text('/Photos/Phone/Documents'), findsOneWidget);
+      expect(
+        find.text('1 excluded folder selections are skipped.'),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
+  testWidgets(
+    'folder rule selector narrows entire source to selected subfolder',
+    (tester) async {
+      List<List<String>>? result;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (context) => TextButton(
+              onPressed: () async {
+                result = await Navigator.of(context).push<List<List<String>>>(
+                  MaterialPageRoute(
+                    builder: (_) => SyncFolderRulesScreen(
+                      inclusion: true,
+                      rootName: 'Documents',
+                      initial: const [[]],
+                      included: const [[]],
+                      children: (path) async =>
+                          path.isEmpty ? ['Trips', 'Private'] : [],
+                    ),
+                  ),
+                );
+              },
+              child: const Text('Open rules'),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Open rules'));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.descendant(
+          of: find.widgetWithText(ListTile, 'Trips'),
+          matching: find.byType(Checkbox),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.widgetWithText(InputChip, 'Trips'), findsOneWidget);
+      expect(find.widgetWithText(InputChip, 'Entire source'), findsNothing);
+      await tester.tap(find.text('Apply inclusions'));
+      await tester.pumpAndSettle();
+      expect(result, [
+        ['Trips'],
+      ]);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
+  testWidgets(
+    'Android dashboard offers manual folders only and keeps advanced settings collapsed',
+    (tester) async {
+      final controller = AppController(
+        store: MemoryStore(),
+        folderSyncController: sync,
+      )..account = account;
+      await tester.runAsync(sync.load);
+      await tester.pumpWidget(
+        MaterialApp(home: FolderSyncScreen(controller: controller)),
+      );
+      await tester.runAsync(sync.load);
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Choose folders. Decide what gets uploaded.'),
+        findsOneWidget,
+      );
+      expect(find.text('Add folder'), findsOneWidget);
+      await tester.tap(find.text('Add folder'));
+      await tester.pumpAndSettle();
+      expect(find.text('Camera & pictures'), findsNothing);
+      expect(device.picks, 0);
+      expect(sync.pairs, isEmpty);
+      expect(find.text('Included subfolders'), findsOneWidget);
+      expect(find.text('Excluded folders'), findsOneWidget);
+      expect(find.text('More options'), findsOneWidget);
+      expect(find.text('Pair name'), findsNothing);
+      expect(find.byType(CheckboxListTile), findsNothing);
+      await tester.scrollUntilVisible(
+        find.text('More options'),
+        200,
+        scrollable: find.byType(Scrollable).last,
+      );
+      await tester.tap(find.text('More options'));
+      await tester.pumpAndSettle();
+      expect(find.text('Transfer direction'), findsOneWidget);
+      expect(find.text('Wi-Fi only'), findsOneWidget);
+      expect(find.text('Only while charging'), findsOneWidget);
+      await tester.tap(find.byType(DropdownButtonFormField<SyncMode>));
+      await tester.pumpAndSettle();
+      expect(find.text(SyncMode.download.label).last, findsOneWidget);
+      expect(find.text(SyncMode.merge.label).last, findsOneWidget);
+      await tester.tap(find.text(SyncMode.backup.label).last);
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(
+        find.text('Save backup'),
+        200,
+        scrollable: find
+            .byWidgetPredicate(
+              (widget) =>
+                  widget is Scrollable &&
+                  widget.axisDirection == AxisDirection.down,
+            )
+            .last,
+      );
+      final save = tester.widget<FilledButton>(
+        find.widgetWithText(FilledButton, 'Save backup'),
+      );
+      expect(save.onPressed, isNull);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+      // The test fixture owns sync's asynchronous shutdown.
+      controller.dispose();
+      disposed = true;
+    },
+  );
 }
