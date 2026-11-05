@@ -160,6 +160,10 @@ class AppController extends ChangeNotifier {
   int _previewBatches = 0;
   bool _multipreviewUnavailable = false;
   int _multipreviewFailures = 0;
+  Timer? _thumbnailWarmupTimer;
+  final List<CloudFile> _thumbnailWarmupQueue = [];
+  final Set<String> _thumbnailWarmupKnown = {};
+  bool _warmingThumbnails = false;
   final Map<String, Future<CloudFile?>> _covers = {};
   final Map<String, List<CloudFile>> _demoTrash = {};
 
@@ -543,8 +547,8 @@ class AppController extends ChangeNotifier {
   bool get albumIncludesSubfolders =>
       tab != 4 || !listEquals(directory, photoRoot);
 
-  /// The main timeline paints from Memories rows alone and looks paths up
-  /// in the background; albums need paths for their sub-folder chips.
+  /// The main timeline resolves paths on demand; albums need paths for their
+  /// sub-folder chips.
   bool _pathless(int currentTab) =>
       pathlessTimeline && currentTab == 0 && activeNativeAlbum == null;
 
@@ -605,7 +609,12 @@ class AppController extends ChangeNotifier {
     _activeListing = null;
     _timelineChanges = null;
     _pendingDays.clear();
-    if (!keepItems) items = [];
+    if (!keepItems) {
+      final previous = _listings[listingKey];
+      items = previous != null
+          ? fileStore.resolve(previous.keys)
+          : _seed(currentTab, path, native);
+    }
     _visibleListingKey = listingKey;
     notifyListeners();
     try {
@@ -755,6 +764,7 @@ class AppController extends ChangeNotifier {
         loading = false;
         refreshing = false;
         loadingMore = false;
+        if (tab == 0) _queueThumbnailWarmup(items);
         notifyListeners();
       }
     }
@@ -925,10 +935,12 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> _publishListing(_MediaListing listing, String? key) async {
+    listing.pruneEvicted(fileStore);
     _activeListing = listing;
     items = fileStore.resolve(listing.keys);
     hasMore = listing.more;
     if (tab == 0) _libraryFiles = items;
+    if (tab == 0) _queueThumbnailWarmup(items);
     if (key != null) {
       _listings[key] = listing;
       if (_listings.length > 20) _listings.remove(_listings.keys.first);
@@ -1708,6 +1720,9 @@ class AppController extends ChangeNotifier {
       }, 'Upload complete');
 
   void _clearPreviews() {
+    _thumbnailWarmupTimer?.cancel();
+    _thumbnailWarmupQueue.clear();
+    _thumbnailWarmupKnown.clear();
     _resolvedIds.clear();
     _thumbs.clear();
     _thumbBytes = 0;
@@ -1724,6 +1739,75 @@ class AppController extends ChangeNotifier {
   }
 
   final Map<String, CloudFile> _resolvedIds = {};
+
+  /// Prime disk-backed thumbnails beyond the viewport in small batches.
+  /// Visible tiles share these requests and still take priority in the queue.
+  void _queueThumbnailWarmup(List<CloudFile> files) {
+    if (cache == null || !pathlessTimeline || demo || _disposed) return;
+    final today = DateTime.now().toUtc().millisecondsSinceEpoch ~/ 86400000;
+    for (final file in files) {
+      if (_thumbnailWarmupKnown.length >= FileStore.maxFiles) break;
+      if (!file.isMedia ||
+          file.captureDay == null ||
+          file.captureDay! < today - warmYears * 366) {
+        continue;
+      }
+      final key = _previewKey(file, 384);
+      if (key != null &&
+          _thumbnailWarmupKnown.add('$key|${_previewVersion(file)}')) {
+        _thumbnailWarmupQueue.add(file);
+      }
+    }
+    _scheduleThumbnailWarmup();
+  }
+
+  void _scheduleThumbnailWarmup() {
+    if (_disposed ||
+        _warmingThumbnails ||
+        _thumbnailWarmupQueue.isEmpty ||
+        tab != 0) {
+      return;
+    }
+    _thumbnailWarmupTimer?.cancel();
+    _thumbnailWarmupTimer = Timer(
+      const Duration(milliseconds: 250),
+      _warmThumbnailBatch,
+    );
+  }
+
+  Future<void> _warmThumbnailBatch() async {
+    if (_disposed || tab != 0 || account == null) return;
+    if (busy || loading || loadingMore || fetchingDays) {
+      _scheduleThumbnailWarmup();
+      return;
+    }
+    _warmingThumbnails = true;
+    final session = account;
+    final batch = _thumbnailWarmupQueue.take(48).toList();
+    _thumbnailWarmupQueue.removeRange(0, batch.length);
+    try {
+      await Future.wait([
+        for (final file in batch)
+          preview(file).then<void>(
+            (_) {},
+            onError: (Object e) {
+              const message =
+                  'Some previews could not be cached. Tap them to retry.';
+              if (!_disposed &&
+                  account == session &&
+                  e is! PreviewCancelled &&
+                  notice != message) {
+                notice = message;
+                notifyListeners();
+              }
+            },
+          ),
+      ]);
+    } finally {
+      _warmingThumbnails = false;
+      if (!_disposed && account == session) _scheduleThumbnailWarmup();
+    }
+  }
 
   void _applyResolved(List<String> ids, Map<String, CloudFile> found) {
     final renamed = <String, String>{};
@@ -2117,6 +2201,7 @@ class AppController extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _warmTimer?.cancel();
+    _thumbnailWarmupTimer?.cancel();
     _catalogueVersion++;
     _sharedAlbumsVersion++;
     _loadVersion++;
@@ -2145,6 +2230,25 @@ class _MediaListing {
     store.putAll(files);
     for (final file in files) {
       if (_known.add(file.key)) keys.add(file.key);
+    }
+  }
+
+  /// Eviction must not leave a day marked as loaded with missing photo rows.
+  void pruneEvicted(FileStore store) {
+    final missing = keys.where((key) => store[key] == null).toSet();
+    if (missing.isEmpty) return;
+    keys.removeWhere(missing.contains);
+    _known.removeAll(missing);
+    final counts = <int, int>{};
+    for (final key in keys) {
+      final day = store[key]?.captureDay;
+      if (day != null) counts[day] = (counts[day] ?? 0) + 1;
+    }
+    for (final day in days ?? <MemoryDay>[]) {
+      if (counts[day.id] != day.count) loaded.remove(day.id);
+    }
+    if (days case final days?) {
+      more = days.any((day) => !loaded.contains(day.id));
     }
   }
 

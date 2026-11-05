@@ -59,6 +59,50 @@ void main() {
   });
 
   test(
+    'recent thumbnails prepare beyond the first screen and are reused',
+    () async {
+      var requests = 0;
+      final c = AppController(
+        store: MemoryStore(),
+        cache: cache,
+        pathlessTimeline: true,
+        client: NextcloudClient(transport: warmTransport([])),
+      )..account = account;
+      await c.load();
+      final beyondFirstScreen = c.items[95];
+      for (
+        var attempt = 0;
+        attempt < 150 && c.cachedPreview(beyondFirstScreen) == null;
+        attempt++
+      ) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(c.cachedPreview(beyondFirstScreen), png);
+      expect(c.previewCurrent(beyondFirstScreen), isTrue);
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+      c.dispose();
+
+      final reopened = AppController(
+        store: MemoryStore(),
+        cache: cache,
+        client: NextcloudClient(
+          transport: MockClient((_) async {
+            requests++;
+            return http.Response('', 500);
+          }),
+        ),
+      )..account = account;
+      expect(await reopened.preview(beyondFirstScreen), png);
+      expect(
+        requests,
+        0,
+        reason: 'prefetched thumbnails survive an app restart',
+      );
+      reopened.dispose();
+    },
+  );
+
+  test(
     'existing sessions prepare recent years despite the old warm marker',
     () async {
       await cache.writeDocument('warm-v1|${account.server}|${account.userId}', {

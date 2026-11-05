@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -204,6 +205,48 @@ void main() {
     expect(find.byType(Image), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'viewer keeps the grid thumbnail while its larger preview loads',
+    (tester) async {
+      final large = Completer<http.Response>();
+      final controller = AppController(
+        store: MemoryStore(),
+        client: NextcloudClient(
+          transport: MockClient(
+            (request) async => request.url.queryParameters['x'] == '1280'
+                ? large.future
+                : http.Response.bytes(png, 200),
+          ),
+        ),
+      )..account = account;
+      await tester.runAsync(() => controller.preview(photo()));
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MediaTile(
+            file: photo(),
+            controller: controller,
+            previewSize: 1280,
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(find.byType(Image), findsOneWidget);
+      final image =
+          tester.widget<Image>(find.byType(Image)).image as ResizeImage;
+      expect((image.imageProvider as MemoryImage).bytes, png);
+      expect(controller.previewCurrent(photo(), size: 1280), isFalse);
+      large.complete(http.Response.bytes(png, 200));
+      await tester.runAsync(() async {
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      });
+      await tester.pumpAndSettle();
+      expect(controller.previewCurrent(photo(), size: 1280), isTrue);
+      expect(find.byType(Image), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+      controller.dispose();
+    },
+  );
 
   test('cached listings show instantly and survive refresh errors', () async {
     var fail = false;

@@ -8,11 +8,55 @@ import 'package:ncloud/app_controller.dart';
 import 'package:ncloud/main.dart';
 import 'package:ncloud/models.dart';
 import 'package:ncloud/nextcloud_client.dart';
+import 'package:ncloud/asset_viewer.dart';
 
 import 'app_test.dart' show MemoryStore;
 import 'nextcloud_client_test.dart' show account, multistatus, responseEntry;
 
 void main() {
+  testWidgets(
+    'photo opening uses a brief fade without a stretching hero flight',
+    (tester) async {
+      final c = AppController(store: MemoryStore());
+      await tester.pumpWidget(NcloudApp(controller: c));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Try demo'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.bySemanticsLabel('Alpine morning.jpg'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 16));
+      expect(find.byType(AssetViewer), findsOneWidget);
+      final viewer = tester.element(find.byType(AssetViewer));
+      final route = ModalRoute.of(viewer)!;
+      expect(route, isA<PageRouteBuilder<void>>());
+      expect(route.transitionDuration, const Duration(milliseconds: 180));
+      expect(
+        find.descendant(
+          of: find.byType(AssetViewer),
+          matching: find.byType(Hero),
+        ),
+        findsNothing,
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Back to library'));
+      await tester.pumpAndSettle();
+      expect(find.byType(AssetViewer), findsNothing);
+      expect(find.bySemanticsLabel('Alpine morning.jpg'), findsOneWidget);
+      tester.platformDispatcher.accessibilityFeaturesTestValue =
+          const FakeAccessibilityFeatures(disableAnimations: true);
+      addTearDown(
+        tester.platformDispatcher.clearAccessibilityFeaturesTestValue,
+      );
+      await tester.pump();
+      await tester.tap(find.bySemanticsLabel('Alpine morning.jpg'));
+      await tester.pumpAndSettle();
+      final reducedRoute = ModalRoute.of(
+        tester.element(find.byType(AssetViewer)),
+      )!;
+      expect(reducedRoute.transitionDuration, Duration.zero);
+    },
+  );
+
   test(
     'incoming folder API uses recipient paths and excludes self-owned shares',
     () async {

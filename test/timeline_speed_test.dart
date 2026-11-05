@@ -2,10 +2,12 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:ncloud/app_controller.dart';
 import 'package:ncloud/nextcloud_client.dart';
+import 'package:ncloud/library_screen.dart';
 
 import 'app_test.dart' show MemoryStore;
 import 'memories_test.dart' show davForIds, indexedTransport, jsonResponse;
@@ -33,6 +35,57 @@ Future<void> settle(bool Function() done) async {
 }
 
 void main() {
+  testWidgets(
+    'indexed background loading never replaces the timeline with progress',
+    (tester) async {
+      final c = AppController(
+        store: MemoryStore(),
+        client: NextcloudClient(transport: indexedTransport([])),
+        pathlessTimeline: true,
+      )..account = account;
+      await c.load();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ListenableBuilder(
+            listenable: c,
+            builder: (_, _) => LibraryScreen(controller: c),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      c.loadingMore = true;
+      c.refreshing = true;
+      c.notifyListeners();
+      await tester.pump();
+      expect(find.byType(LinearProgressIndicator), findsNothing);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      expect(find.byType(CustomScrollView), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+      c.dispose();
+    },
+  );
+
+  test(
+    'evicted photo rows are not left marked as completely cached days',
+    () async {
+      final c = AppController(
+        store: MemoryStore(),
+        client: NextcloudClient(transport: indexedTransport([])),
+        pathlessTimeline: true,
+      )..account = account;
+      addTearDown(c.dispose);
+      await c.load();
+      final first = c.items.first;
+      c.fileStore.removeKeys([first.key]);
+      await c.loadNextPage();
+      expect(c.dayLoaded(first.captureDay!), isFalse);
+      c.ensureDays([first.captureDay!]);
+      await settle(() => !c.fetchingDays);
+      expect(c.dayLoaded(first.captureDay!), isTrue);
+      expect(c.items, hasLength(1800));
+    },
+  );
+
   test('multipreview records parse into per-request thumbnails', () {
     final parsed = NextcloudClient.parseMultipreview(
       multipreviewBody(['7', '9']),

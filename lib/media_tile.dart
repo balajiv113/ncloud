@@ -71,8 +71,11 @@ class _MediaTileState extends State<MediaTile> {
     final generation = ++_generation;
     final c = widget.controller;
     final cached = c.cachedPreview(widget.file, size: widget.previewSize);
-    _bytes = cached ?? (keep ? _bytes : null);
-    _instant = cached != null;
+    final thumbnail = widget.previewSize > 384
+        ? c.cachedPreview(widget.file)
+        : null;
+    _bytes = cached ?? thumbnail ?? (keep ? _bytes : null);
+    _instant = _bytes != null;
     _failed = false;
     _original = null;
     if (!retry &&

@@ -301,11 +301,21 @@ class _LibraryScreenState extends State<LibraryScreen>
       final media = visible.where((f) => f.isMedia).toList();
       Navigator.push(
         context,
-        MaterialPageRoute<void>(
-          builder: (_) => AssetViewer(
+        PageRouteBuilder<void>(
+          transitionDuration: MediaQuery.disableAnimationsOf(context)
+              ? Duration.zero
+              : const Duration(milliseconds: 180),
+          reverseTransitionDuration: MediaQuery.disableAnimationsOf(context)
+              ? Duration.zero
+              : const Duration(milliseconds: 150),
+          pageBuilder: (_, _, _) => AssetViewer(
             files: media,
             initialIndex: media.indexWhere((f) => f.key == file.key),
             controller: c,
+          ),
+          transitionsBuilder: (_, animation, _, child) => FadeTransition(
+            opacity: animation.drive(CurveTween(curve: Curves.easeOut)),
+            child: child,
           ),
         ),
       );
@@ -557,7 +567,10 @@ class _LibraryScreenState extends State<LibraryScreen>
                         SliverToBoxAdapter(
                           child: SizedBox(
                             height: 2,
-                            child: c.busy || c.refreshing || c.loadingMore
+                            child:
+                                c.busy ||
+                                    (!_indexedLayout &&
+                                        (c.refreshing || c.loadingMore))
                                 ? LinearProgressIndicator(
                                     minHeight: 2,
                                     value: c.busy && c.total > 0
@@ -628,6 +641,7 @@ class _LibraryScreenState extends State<LibraryScreen>
                           SliverToBoxAdapter(child: _albumContext()),
                         if (c.loading &&
                             c.items.isEmpty &&
+                            !_indexedLayout &&
                             !_albumHome &&
                             !_sharedHome)
                           const SliverFillRemaining(

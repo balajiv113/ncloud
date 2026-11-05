@@ -378,16 +378,13 @@ class _ZoomAssetState extends State<ZoomAsset> {
       minScale: 1,
       maxScale: 5,
       child: Center(
-        child: Hero(
-          tag: 'asset:${widget.file.key}',
-          child: AspectRatio(
-            aspectRatio: 1,
-            child: MediaTile(
-              file: widget.file,
-              controller: widget.controller,
-              fit: BoxFit.contain,
-              previewSize: 1280,
-            ),
+        child: AspectRatio(
+          aspectRatio: 1,
+          child: MediaTile(
+            file: widget.file,
+            controller: widget.controller,
+            fit: BoxFit.contain,
+            previewSize: 1280,
           ),
         ),
       ),
