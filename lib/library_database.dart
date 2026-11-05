@@ -13,6 +13,8 @@ class LibraryDatabase {
     String path, {
     DatabaseFactory? factory,
     required this.onError,
+    this.prepareStorage,
+    this.reclaimStorage,
   }) : path = File(path).absolute.path,
        _factory = factory ?? databaseFactory;
 
@@ -20,6 +22,8 @@ class LibraryDatabase {
   final String path;
   final DatabaseFactory _factory;
   final void Function(String) onError;
+  final Future<void> Function()? prepareStorage;
+  final Future<bool> Function(int attempt)? reclaimStorage;
   Database? _database;
   Future<Database>? _opening;
   final Map<String, int> _accessed = {};
@@ -133,18 +137,44 @@ class LibraryDatabase {
         message.contains('sqlite_notadb');
   }
 
-  Future<T> _run<T>(Future<T> Function(Database) operation) async {
-    try {
-      return await operation(await _open());
-    } catch (error) {
-      if (!_corrupt(error)) rethrow;
-      onError(
-        'The local library catalogue was damaged and has been rebuilt. '
-        'Saved originals are unaffected; reconnect to reload library metadata.',
-      );
-      await close();
-      await _factory.deleteDatabase(path);
-      return operation(await _open());
+  Future<T> _run<T>(
+    Future<T> Function(Database) operation, {
+    bool reserveSpace = true,
+  }) async {
+    if (reserveSpace) await prepareStorage?.call();
+    var storageRetries = 0;
+    var busyRetried = false;
+    var rebuilt = false;
+    while (true) {
+      try {
+        return await operation(await _open());
+      } catch (error) {
+        final code = error is DatabaseException
+            ? (error.getResultCode() ?? 0) & 0xff
+            : null;
+        final full =
+            code == 13 ||
+            (error is FileSystemException && error.osError?.errorCode == 28);
+        if (full &&
+            storageRetries < 3 &&
+            await reclaimStorage?.call(storageRetries++) == true) {
+          continue;
+        }
+        if (!busyRetried && (code == 5 || code == 6)) {
+          // Transactions have rolled back before retrying; never spin while idle.
+          busyRetried = true;
+          await Future<void>.delayed(const Duration(milliseconds: 75));
+          continue;
+        }
+        if (rebuilt || !_corrupt(error)) rethrow;
+        rebuilt = true;
+        onError(
+          'The local library catalogue was damaged and has been rebuilt. '
+          'Saved originals are unaffected; reconnect to reload library metadata.',
+        );
+        await close();
+        await _factory.deleteDatabase(path);
+      }
     }
   }
 
@@ -547,11 +577,31 @@ class LibraryDatabase {
   Future<void> invalidateListings(String accountKey) => _run(
     (db) => db.transaction((txn) async {
       final account = accountFor(accountKey);
-      await txn.delete(
+      final cached = await txn.query(
         'collections',
-        where: 'account=? AND kind IN (?,?,?)',
-        whereArgs: [account, 'listing', 'view', 'folder'],
+        columns: ['cache_key', 'kind', 'payload'],
+        where: 'account=? AND kind IN (?,?)',
+        whereArgs: [account, 'view', 'folder'],
       );
+      for (final collection in cached) {
+        final payload = (jsonDecode(collection['payload'] as String) as Map)
+            .cast<String, dynamic>();
+        payload['updated'] = DateTime.fromMillisecondsSinceEpoch(
+          0,
+        ).toIso8601String();
+        if (collection['kind'] == 'view') {
+          payload['staleDays'] = {
+            ...((payload['staleDays'] as List?) ?? const []),
+            ...((payload['loaded'] as List?) ?? const []),
+          }.toList();
+        }
+        await txn.update(
+          'collections',
+          {'payload': jsonEncode(payload)},
+          where: 'cache_key=?',
+          whereArgs: [collection['cache_key']],
+        );
+      }
       final libraries = await txn.query(
         'collections',
         columns: ['cache_key'],
@@ -570,7 +620,6 @@ class LibraryDatabase {
           whereArgs: [library['cache_key']],
         );
       }
-      await _deleteOrphans(txn);
       _accessed.clear();
     }),
   );
@@ -819,8 +868,10 @@ class LibraryDatabase {
     return bytes;
   }
 
-  Future<void> checkpoint() =>
-      _run((db) async => db.rawQuery('PRAGMA wal_checkpoint(TRUNCATE)'));
+  Future<void> checkpoint() => _run(
+    (db) async => db.rawQuery('PRAGMA wal_checkpoint(TRUNCATE)'),
+    reserveSpace: false,
+  );
 
   /// Called only under budget pressure, never on a schedule. Incremental
   /// vacuum reclaims free pages without rewriting the entire catalogue.

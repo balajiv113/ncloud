@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:ncloud/app_controller.dart';
+import 'package:ncloud/file_store.dart';
 import 'package:ncloud/local_cache.dart';
 import 'package:ncloud/models.dart';
 import 'package:ncloud/media_tile.dart';
@@ -17,6 +18,99 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'app_test.dart' show MemoryStore;
 import 'nextcloud_client_test.dart' show account, multistatus, responseEntry;
 import 'preview_test.dart' show photo, png;
+
+class _SqliteFailure extends DatabaseException {
+  _SqliteFailure(this.code) : super('SQL failure with private arguments');
+  final int code;
+
+  @override
+  int getResultCode() => code;
+
+  @override
+  Object? get result => null;
+}
+
+class _FailingFactory implements DatabaseFactory {
+  _FailingFactory(
+    this.error, {
+    required this.failures,
+    this.duringTransaction = false,
+  });
+  final Object error;
+  final bool duringTransaction;
+  int failures;
+  int attempts = 0;
+  int transactions = 0;
+
+  @override
+  Future<Database> openDatabase(
+    String path, {
+    OpenDatabaseOptions? options,
+  }) async {
+    attempts++;
+    if (!duringTransaction && failures > 0) {
+      failures--;
+      throw error;
+    }
+    final db = await databaseFactoryFfi.openDatabase(path, options: options);
+    return duringTransaction ? _FailingTransaction(db, this) : db;
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _FailingTransaction implements Database {
+  _FailingTransaction(this.database, this.factory);
+  @override
+  final Database database;
+  final _FailingFactory factory;
+
+  @override
+  Future<T> transaction<T>(
+    Future<T> Function(Transaction) action, {
+    bool? exclusive,
+  }) => database.transaction((txn) async {
+    factory.transactions++;
+    final value = await action(txn);
+    if (factory.failures > 0) {
+      factory.failures--;
+      throw factory.error;
+    }
+    return value;
+  }, exclusive: exclusive);
+
+  @override
+  Future<List<Map<String, Object?>>> query(
+    String table, {
+    bool? distinct,
+    List<String>? columns,
+    String? where,
+    List<Object?>? whereArgs,
+    String? groupBy,
+    String? having,
+    String? orderBy,
+    int? limit,
+    int? offset,
+  }) => database.query(
+    table,
+    distinct: distinct,
+    columns: columns,
+    where: where,
+    whereArgs: whereArgs,
+    groupBy: groupBy,
+    having: having,
+    orderBy: orderBy,
+    limit: limit,
+    offset: offset,
+  );
+
+  @override
+  Future<void> close() => database.close();
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -42,6 +136,175 @@ void main() {
     expect(cacheDigest('a'), isNot(cacheDigest('b')));
     expect(cacheDigest('a'), hasLength(32));
   });
+
+  test('thumbnail writes leave headroom and retain library metadata', () async {
+    cache = LocalCache(
+      () async => Directory('${root.path}/cache'),
+      budget: 1024 * 1024,
+    );
+    await cache.writeDocument('library', {'cached': true});
+    for (final key in ['old', 'middle', 'recent']) {
+      await cache.writeThumbnail(key, Uint8List(300 * 1024));
+    }
+    expect(await cache.readThumbnail('old'), isNull);
+    expect(await cache.readThumbnail('recent'), isNotNull);
+    expect(await cache.readDocument('library'), {'cached': true});
+    expect(await cache.size(), lessThanOrEqualTo(1024 * 1024 * 0.9));
+    expect(cache.writeError, isNull);
+  });
+
+  for (final error in [
+    _SqliteFailure(13),
+    const FileSystemException('full', 'private-path', OSError('full', 28)),
+  ]) {
+    test(
+      'disk-full metadata writes evict oldest previews and retry: $error',
+      () async {
+        final factory = _FailingFactory(error, failures: 1);
+        cache = LocalCache(
+          () async => Directory('${root.path}/cache'),
+          budget: 10 * 1024 * 1024,
+          databaseFactory: factory,
+        );
+        final original = await cache.original('saved', 'photo.jpg');
+        await original.writeAsBytes(png);
+        await cache.writeOfflineListing('offline', [photo()]);
+        await cache.writeThumbnail('old', Uint8List(1024 * 1024));
+        await cache.writeThumbnail('recent', Uint8List(1024 * 1024));
+        final old = File('${root.path}/cache/thumbs/${cacheDigest('old')}');
+        await old.setLastModified(DateTime.utc(2020));
+        // Reindex disk LRU order, as after restarting an already-full device.
+        await cache.close();
+        cache = LocalCache(
+          () async => Directory('${root.path}/cache'),
+          budget: 10 * 1024 * 1024,
+          databaseFactory: factory,
+        );
+        await cache.writeDocument('metadata', {'saved': true});
+        expect(factory.attempts, 2);
+        expect(cache.writeError, isNull);
+        expect(await cache.readDocument('metadata'), {'saved': true});
+        expect(await cache.readThumbnail('old'), isNull);
+        expect(await cache.readThumbnail('recent'), isNotNull);
+        expect(await original.readAsBytes(), png);
+        expect(await cache.readOfflineListing('offline'), hasLength(1));
+      },
+    );
+  }
+
+  test('busy database retries once without deleting previews', () async {
+    final factory = _FailingFactory(_SqliteFailure(5), failures: 1);
+    cache = LocalCache(
+      () async => Directory('${root.path}/cache'),
+      databaseFactory: factory,
+    );
+    await cache.writeThumbnail('keep', Uint8List(1024));
+    await cache.writeDocument('metadata', {'saved': true});
+    expect(factory.attempts, 2);
+    expect(cache.writeError, isNull);
+    expect(await cache.readThumbnail('keep'), isNotNull);
+    expect(await cache.readDocument('metadata'), {'saved': true});
+  });
+
+  test(
+    'offline membership metadata also reclaims previews on disk full',
+    () async {
+      var attempts = 0;
+      final saved = Directory('${root.path}/saved');
+      final original = File('${saved.path}/originals/keep.jpg');
+      await original.parent.create(recursive: true);
+      await original.writeAsBytes(png);
+      cache = LocalCache(
+        () async => Directory('${root.path}/cache'),
+        locateDownloads: () async {
+          if (attempts++ == 0) {
+            throw const FileSystemException('full', '', OSError('full', 28));
+          }
+          return saved;
+        },
+      );
+      await cache.writeThumbnail('disposable', Uint8List(1024));
+      await cache.writeOfflineListing('offline', [photo()]);
+      expect(attempts, 2);
+      expect(await cache.readThumbnail('disposable'), isNull);
+      expect(await cache.readOfflineListing('offline'), hasLength(1));
+      expect(await original.readAsBytes(), png);
+    },
+  );
+
+  test(
+    'full database transactions roll back and retry before acknowledging',
+    () async {
+      final factory = _FailingFactory(
+        _SqliteFailure(13),
+        failures: 1,
+        duringTransaction: true,
+      );
+      cache = LocalCache(
+        () async => Directory('${root.path}/cache'),
+        budget: 10 * 1024 * 1024,
+        databaseFactory: factory,
+      );
+      await cache.writeThumbnail('disposable', Uint8List(1024));
+      final store = FileStore()..putFolder(['Photos'], [photo()]);
+      await cache.writeLibrary('library', store);
+      expect(factory.transactions, 2);
+      expect(cache.writeError, isNull);
+      expect(store.persistenceChanges().files, isEmpty);
+      expect(await cache.readThumbnail('disposable'), isNull);
+      await cache.close();
+      cache = LocalCache(() async => Directory('${root.path}/cache'));
+      final restored = await cache.readDocument('library');
+      expect(restored!['files'] as List, hasLength(1));
+    },
+  );
+
+  test(
+    'unrecoverable full storage preserves dirty metadata and originals',
+    () async {
+      final factory = _FailingFactory(_SqliteFailure(13), failures: 10);
+      cache = LocalCache(
+        () async => Directory('${root.path}/cache'),
+        budget: 10 * 1024 * 1024,
+        databaseFactory: factory,
+      );
+      final original = await cache.original('saved', 'photo.jpg');
+      await original.writeAsBytes(png);
+      await cache.writeThumbnail('disposable', Uint8List(1024));
+      final store = FileStore()..putFolder(['Photos'], [photo()]);
+      await cache.writeLibrary('library', store);
+      expect(factory.attempts, 2);
+      expect(cache.writeError, contains('SQLite 13'));
+      expect(cache.writeError, isNot(contains('private')));
+      expect(store.persistenceChanges().files, isNotEmpty);
+      expect(await original.readAsBytes(), png);
+      factory.failures = 0;
+      await cache.writeLibrary('library', store);
+      expect(store.persistenceChanges().files, isEmpty);
+      expect(store.persistenceChanges().folders, isEmpty);
+      await cache.close();
+      cache = LocalCache(() async => Directory('${root.path}/cache'));
+      expect(await cache.readDocument('library'), isNotNull);
+    },
+  );
+
+  test(
+    'non-storage errors do not evict previews or expose SQL arguments',
+    () async {
+      final factory = _FailingFactory(_SqliteFailure(19), failures: 1);
+      cache = LocalCache(
+        () async => Directory('${root.path}/cache'),
+        databaseFactory: factory,
+      );
+      await cache.writeThumbnail('keep', Uint8List(1024));
+      await cache.writeDocument('metadata', {'saved': true});
+      expect(factory.attempts, 1);
+      expect(cache.writeError, contains('SQLite 19'));
+      expect(cache.writeError, isNot(contains('storage is full')));
+      expect(cache.writeError, isNot(contains('private')));
+      expect(await cache.readThumbnail('keep'), isNotNull);
+    },
+  );
 
   test('files round-trip through JSON', () {
     final file = CloudFile(

@@ -224,26 +224,30 @@ class AppController extends ChangeNotifier {
     try {
       final saved = await store.read();
       if (saved != null) account = Account.decode(saved);
-      warming = connected;
     } catch (e) {
       error = 'Could not restore the saved account. ${errorMessage(e)}';
     } finally {
-      starting = false;
+      if (!connected) starting = false;
       notifyListeners();
     }
     if (connected) {
       try {
         await cache?.readOfflineListing(_offlineListingKey);
-        await cache?.trim();
       } catch (e) {
-        notice =
-            'Could not enforce the browsing cache limit. ${errorMessage(e)}';
+        notice = 'Could not restore saved offline files. ${errorMessage(e)}';
       }
-      final preparation = _prepareLibrary(refresh: false);
+      final preparation = _prepareLibrary();
       unawaited(_prepareAlbums());
       unawaited(loadPeople());
       unawaited(_prepareSharedAlbums(refresh: false));
       await preparation;
+      try {
+        await cache?.trim();
+      } catch (e) {
+        notice =
+            'Could not enforce the browsing cache limit. ${errorMessage(e)}';
+        notifyListeners();
+      }
     }
   }
 
@@ -369,22 +373,34 @@ class AppController extends ChangeNotifier {
   static const warmBudget = Duration(seconds: 30);
   static const warmYears = 3;
 
-  Future<void> _prepareLibrary({bool refresh = true}) async {
+  Future<void> _prepareLibrary() async {
     final session = account!;
     final key = 'warm-v2|${session.server}|${session.userId}';
+    final prepared = await cache?.readDocument(key);
+    final saved = await cache?.readDocument(_listingKey()!);
+    if (_disposed || account != session) return;
+    var cachedLibrary = false;
+    if (saved != null) {
+      try {
+        _MediaListing.fromJson(saved);
+        cachedLibrary = true;
+      } catch (e) {
+        notice = 'The saved timeline needs rebuilding. ${errorMessage(e)}';
+      }
+    }
+    starting = false;
+    if (prepared?['complete'] == true || cachedLibrary) {
+      warming = false;
+      notifyListeners();
+      await load(refresh: false);
+      return;
+    }
     warming = true;
     warmProgress = 0;
     warmPhase = 0;
     warmIndex = '';
     warmDone = warmTotal = 0;
     notifyListeners();
-    final prepared = await cache?.readDocument(key);
-    if (_disposed || account != session) return;
-    if (prepared?['complete'] == true) {
-      skipWarmUp();
-      await load(refresh: refresh);
-      return;
-    }
     await _warmUp();
     if (!_disposed &&
         account == session &&
@@ -548,6 +564,7 @@ class AppController extends ChangeNotifier {
       _catalogueVersion++;
       _catalogueUpdated = null;
       _catalogueRoot = null;
+      _catalogueEtag = null;
       _catalogueTask = null;
       _catalogueSession = null;
       sharedAlbums.clear();
@@ -788,6 +805,7 @@ class AppController extends ChangeNotifier {
         if (document != null) previous = _MediaListing.fromJson(document);
       }
       var known = previous == null ? null : fileStore.resolve(previous.keys);
+      if (previous?.days != null) memoriesAvailable ??= true;
       if (previous != null &&
           known!.length != previous.keys.length &&
           listingKey != null) {
@@ -821,7 +839,30 @@ class AppController extends ChangeNotifier {
           notifyListeners();
         }
       }
-      final listing = _MediaListing()..allowCachedDays = !refresh;
+      String? scopeEtag;
+      if (cache != null &&
+          currentTab == 4 &&
+          smartAlbumOpen &&
+          native == null &&
+          person == null &&
+          mapBounds == null) {
+        scopeEtag = await client.folderEtag(session, path, optional: true);
+        if (version != _loadVersion || _disposed) return;
+        if (!refresh &&
+            previous != null &&
+            known?.length == previous.keys.length &&
+            scopeEtag != null &&
+            scopeEtag == previous.scopeEtag) {
+          previous.updated = DateTime.now();
+          previous.staleDays.clear();
+          await _publishListing(previous, listingKey);
+          return;
+        }
+      }
+      final listing = _MediaListing()
+        ..allowCachedDays =
+            !refresh && (scopeEtag == null || scopeEtag == previous?.scopeEtag);
+      listing.scopeEtag = scopeEtag;
       if (currentTab == 6) {
         final saved = await cache?.readOfflineListing(_offlineListingKey) ?? [];
         final available = <CloudFile>[];
@@ -868,7 +909,7 @@ class AppController extends ChangeNotifier {
         }
         listing.more = true;
         final previousDays = previous?.days;
-        if (listing.days case final days? when !refresh) {
+        if (listing.days case final days? when listing.allowCachedDays) {
           if (previousDays != null &&
               !previous!.updated.isBefore(fileStore.staleBefore)) {
             // Keep days whose index entry and cached files are unchanged so
@@ -1818,6 +1859,7 @@ class AppController extends ChangeNotifier {
     if (_catalogueRoot != rootKey) {
       _catalogue.clear();
       _catalogueUpdated = null;
+      _catalogueEtag = null;
       _catalogueRoot = rootKey;
       nativeAlbums = [];
     }
@@ -1846,6 +1888,8 @@ class AppController extends ChangeNotifier {
         }
         notifyListeners();
         final updated = DateTime.tryParse(saved['updated'] as String? ?? '');
+        _catalogueUpdated = updated;
+        _catalogueEtag = saved['etag'] as String?;
         if (!refresh &&
             updated != null &&
             DateTime.now().difference(updated) < const Duration(minutes: 15)) {
@@ -1856,6 +1900,25 @@ class AppController extends ChangeNotifier {
           return;
         }
       }
+    }
+    final etag = cache == null
+        ? null
+        : await client.folderEtag(session, root, optional: true);
+    if (generation != _catalogueVersion || account != session || _disposed) {
+      return;
+    }
+    if (!refresh &&
+        _catalogueUpdated != null &&
+        etag != null &&
+        etag == _catalogueEtag) {
+      // Album memberships can change independently of the files' etags.
+      await _loadNativeAlbums(session, generation);
+      if (generation != _catalogueVersion || account != session || _disposed) {
+        return;
+      }
+      _catalogueUpdated = DateTime.now();
+      await _saveCatalogue(key);
+      return;
     }
     discoveringAlbums = true;
     catalogueError = null;
@@ -1928,25 +1991,13 @@ class AppController extends ChangeNotifier {
         ..clear()
         ..addAll(found.values);
       _catalogueUpdated = DateTime.now();
+      _catalogueEtag = etag;
       notifyListeners();
       await nativeLoad;
       if (generation != _catalogueVersion || account != session || _disposed) {
         return;
       }
-      await cache?.writeDocument(key, {
-        'updated': _catalogueUpdated!.toIso8601String(),
-        'albums': _catalogue.map((a) => a.toJson()).toList(),
-        'native': [
-          for (final album in nativeAlbums)
-            {
-              'name': album.name,
-              'path': album.davPath,
-              'count': album.count,
-              'coverId': album.coverId,
-              'shared': album.shared,
-            },
-        ],
-      });
+      await _saveCatalogue(key);
     } catch (e) {
       if (generation == _catalogueVersion && account == session && !_disposed) {
         catalogueError = errorMessage(e);
@@ -1958,6 +2009,26 @@ class AppController extends ChangeNotifier {
         notifyListeners();
       }
     }
+  }
+
+  String? _catalogueEtag;
+
+  Future<void> _saveCatalogue(String key) async {
+    await cache?.writeDocument(key, {
+      'updated': _catalogueUpdated!.toIso8601String(),
+      'etag': _catalogueEtag,
+      'albums': _catalogue.map((a) => a.toJson()).toList(),
+      'native': [
+        for (final album in nativeAlbums)
+          {
+            'name': album.name,
+            'path': album.davPath,
+            'count': album.count,
+            'coverId': album.coverId,
+            'shared': album.shared,
+          },
+      ],
+    });
   }
 
   Future<void> _loadNativeAlbums(Account session, int generation) async {
@@ -2761,6 +2832,7 @@ class _MediaListing {
   final Set<int> staleDays = {};
   bool allowCachedDays = true;
   int offset = 0;
+  String? scopeEtag;
   bool more = false;
   DateTime updated = DateTime.now();
 
@@ -2816,6 +2888,7 @@ class _MediaListing {
     'loaded': loaded.toList(),
     'staleDays': staleDays.toList(),
     'offset': offset,
+    'scopeEtag': scopeEtag,
     'more': more,
     'updated': updated.toIso8601String(),
   };
@@ -2826,6 +2899,7 @@ class _MediaListing {
           ?.map((d) => MemoryDay.fromJson((d as Map).cast<String, dynamic>()))
           .toList()
       ..offset = value['offset'] as int
+      ..scopeEtag = value['scopeEtag'] as String?
       ..more = value['more'] as bool
       ..updated = DateTime.parse(value['updated'] as String);
     listing.keys = (value['keys'] as List).cast<String>();

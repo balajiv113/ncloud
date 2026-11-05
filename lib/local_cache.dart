@@ -4,12 +4,39 @@ import 'dart:io';
 import 'dart:isolate';
 import 'dart:typed_data';
 
+import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:sqflite/sqflite.dart' show DatabaseFactory;
+import 'package:sqflite/sqflite.dart' show DatabaseFactory, DatabaseException;
 
 import 'file_store.dart';
 import 'library_database.dart';
 import 'models.dart';
+
+String cacheFailureMessage(String operation, Object error) {
+  if (error is DatabaseException) {
+    final code = error.getResultCode();
+    final primary = code == null ? null : code & 0xff;
+    final reason = switch (primary) {
+      13 => 'Device storage is full. Free some space and retry.',
+      5 ||
+      6 => 'The local database is busy. Retry after the current operation.',
+      8 => 'The local database is read-only. Check app storage permissions.',
+      10 => 'A device storage I/O error prevented the database write.',
+      _ => 'A local database operation failed.',
+    };
+    return 'Could not $operation. $reason '
+        '(SQLite ${code ?? 'unknown'}). Saved offline originals are unaffected.';
+  }
+  if (error is FileSystemException) {
+    return 'Could not $operation. '
+        '${error.osError?.errorCode == 28 ? 'Device storage is full.' : 'Cannot access app cache storage; check free space and permissions.'}';
+  }
+  if (error is MissingPluginException) {
+    return 'Could not $operation. The local database service is unavailable. Restart the app.';
+  }
+  return 'Could not $operation. Local cache failure (${error.runtimeType}). '
+      'Saved offline originals are unaffected.';
+}
 
 Object? _decodeMetadata(Uint8List bytes) {
   final packed = bytes.length > 1 && bytes[0] == 0x1f && bytes[1] == 0x8b;
@@ -122,6 +149,8 @@ class LocalCache {
     '${(await _root).path}/catalogue.sqlite3',
     factory: _databaseFactory,
     onError: _reportWriteError,
+    prepareStorage: _reserveMetadataSpace,
+    reclaimStorage: _reclaimMetadataSpace,
   );
 
   Future<LibraryDatabase?> get _existingDatabase async {
@@ -137,8 +166,11 @@ class LocalCache {
   Future<void> _index() async {
     if (_entries != null) return;
     final entries = <String, ({int size, DateTime accessed})>{};
+    final root = await _root;
     for (final name in ['thumbs', 'listings', 'indexes']) {
-      await for (final entity in (await _folder(name)).list()) {
+      final folder = Directory('${root.path}/$name');
+      if (!await folder.exists()) continue;
+      await for (final entity in folder.list()) {
         if (entity is! File) continue;
         if (entity.path.endsWith('.part')) {
           await entity.delete();
@@ -150,6 +182,50 @@ class LocalCache {
     }
     _entries = entries;
     _totalBytes = entries.values.fold(0, (total, entry) => total + entry.size);
+  }
+
+  int get _metadataReserve => (budget ~/ 10).clamp(1, 16 * 1024 * 1024);
+
+  Future<bool> _reclaimMetadataSpace(int attempt) async =>
+      await _evictThumbnails(
+        attempt == 2 ? _totalBytes : _metadataReserve * (attempt == 0 ? 1 : 4),
+      ) >
+      0;
+
+  Future<int> _evictThumbnails(int bytes, {String? protectedPath}) async {
+    if (bytes <= 0) return 0;
+    await _index();
+    final prefix = '${(await _root).path}/thumbs/';
+    final entries = _entries!;
+    final oldest =
+        entries.keys
+            .where((path) => path.startsWith(prefix) && path != protectedPath)
+            .toList()
+          ..sort(
+            (a, b) => entries[a]!.accessed.compareTo(entries[b]!.accessed),
+          );
+    var freed = 0;
+    for (final path in oldest) {
+      if (freed >= bytes) break;
+      final file = File(path);
+      if (await file.exists()) await file.delete();
+      final size = entries.remove(path)!.size;
+      freed += size;
+      _totalBytes -= size;
+    }
+    return freed;
+  }
+
+  Future<void> _reserveMetadataSpace({
+    int incomingBytes = 0,
+    String? protectedPath,
+  }) async {
+    await _index();
+    final databaseBytes = await _database?.allocatedBytes() ?? 0;
+    await _evictThumbnails(
+      _totalBytes + databaseBytes + incomingBytes + _metadataReserve - budget,
+      protectedPath: protectedPath,
+    );
   }
 
   void _touch(File file) {
@@ -165,6 +241,10 @@ class LocalCache {
 
   Future<void> _write(File file, List<int> bytes) async {
     await _index();
+    await _reserveMetadataSpace(
+      incomingBytes: bytes.length - (_entries![file.path]?.size ?? 0),
+      protectedPath: file.path,
+    );
     final temp = File('${file.path}.part');
     try {
       await temp.writeAsBytes(bytes);
@@ -174,6 +254,7 @@ class LocalCache {
     }
     _totalBytes += bytes.length - (_entries![file.path]?.size ?? 0);
     _entries![file.path] = (size: bytes.length, accessed: DateTime.now());
+    await _reserveMetadataSpace();
     await _trim();
   }
 
@@ -266,37 +347,34 @@ class LocalCache {
           await _removeLegacy(await _file('listings', key, '.json'));
           await _index();
           await _trim();
-        } on Object {
-          _reportWriteError(
-            'Could not save library pages. Check available device storage.',
-          );
+        } catch (e) {
+          _reportWriteError(cacheFailureMessage('save library pages', e));
         }
       });
 
-  Future<Map<String, dynamic>?> readDocument(
-    String key,
-  ) => _serialized(() async {
-    try {
-      final existing = await _existingDatabase;
-      final saved = await existing?.readDocument(key);
-      if (saved != null) return saved;
-      final file = await _file('indexes', key, '.json');
-      if (!await file.exists()) return null;
-      final value = ((await _readMetadata(file)) as Map)
-          .cast<String, dynamic>();
-      await (await _db).writeDocument(key, value);
-      await _removeLegacy(file);
-      final restored = await (await _db).readDocument(key);
-      await _index();
-      await _trim();
-      return restored;
-    } on Object {
-      _reportWriteError(
-        'Could not read the local library catalogue. Reconnect to reload metadata.',
-      );
-      return null;
-    }
-  });
+  Future<Map<String, dynamic>?> readDocument(String key) =>
+      _serialized(() async {
+        try {
+          final existing = await _existingDatabase;
+          final saved = await existing?.readDocument(key);
+          if (saved != null) return saved;
+          final file = await _file('indexes', key, '.json');
+          if (!await file.exists()) return null;
+          final value = ((await _readMetadata(file)) as Map)
+              .cast<String, dynamic>();
+          await (await _db).writeDocument(key, value);
+          await _removeLegacy(file);
+          final restored = await (await _db).readDocument(key);
+          await _index();
+          await _trim();
+          return restored;
+        } catch (e) {
+          _reportWriteError(
+            cacheFailureMessage('read the local library catalogue', e),
+          );
+          return null;
+        }
+      });
 
   Future<void> writeDocument(String key, Map<String, dynamic> value) =>
       _serialized(() async {
@@ -305,10 +383,8 @@ class LocalCache {
           await _removeLegacy(await _file('indexes', key, '.json'));
           await _index();
           await _trim();
-        } on Object {
-          _reportWriteError(
-            'Could not save library metadata. Check available device storage.',
-          );
+        } catch (e) {
+          _reportWriteError(cacheFailureMessage('save library metadata', e));
         }
       });
 
@@ -325,10 +401,8 @@ class LocalCache {
           await _removeLegacy(await _file('indexes', key, '.json'));
           await _index();
           await _trim();
-        } on Object {
-          _reportWriteError(
-            'Could not save library metadata. Check available device storage.',
-          );
+        } catch (e) {
+          _reportWriteError(cacheFailureMessage('save library metadata', e));
         }
       });
 
@@ -432,12 +506,27 @@ class LocalCache {
 
   Future<void> writeOfflineListing(String key, List<CloudFile> files) =>
       _serialized(() async {
-        final file = await _downloadFile('listings', key, '.json');
-        final temp = File('${file.path}.part');
-        await temp.writeAsString(
-          jsonEncode([for (final f in files) f.toJson()]),
-        );
-        await temp.rename(file.path);
+        await _reserveMetadataSpace();
+        for (var attempt = 0; ; attempt++) {
+          File? temp;
+          try {
+            final file = await _downloadFile('listings', key, '.json');
+            temp = File('${file.path}.part');
+            await temp.writeAsString(
+              jsonEncode([for (final f in files) f.toJson()]),
+            );
+            await temp.rename(file.path);
+            return;
+          } on FileSystemException catch (error) {
+            if (error.osError?.errorCode != 28 ||
+                attempt >= 3 ||
+                !await _reclaimMetadataSpace(attempt)) {
+              rethrow;
+            }
+          } finally {
+            if (temp != null && await temp.exists()) await temp.delete();
+          }
+        }
       });
 
   /// Location for a fully downloaded original that can be replayed offline.
@@ -465,6 +554,8 @@ class LocalCache {
       if (_totalBytes + databaseBytes <= budget) return;
     }
     final target = (budget * 0.8).floor();
+    await _evictThumbnails(_totalBytes + databaseBytes - target);
+    if (_totalBytes + databaseBytes <= target) return;
     final ordered = entries.keys.toList()
       ..sort((a, b) => entries[a]!.accessed.compareTo(entries[b]!.accessed));
     for (final path in ordered) {

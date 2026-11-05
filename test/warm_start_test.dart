@@ -148,7 +148,14 @@ void main() {
         client: NextcloudClient(transport: warmTransport([])),
         pathlessTimeline: true,
       );
+      final warmingStates = <bool>[];
+      restored.addListener(() => warmingStates.add(restored.warming));
       await restored.initialize();
+      expect(
+        warmingStates,
+        isNot(contains(true)),
+        reason: 'cached sessions must never flash the preparation page',
+      );
       expect(restored.error, isNull);
       expect(restored.items, hasLength(1800));
       expect(
@@ -157,6 +164,41 @@ void main() {
         reason: 'successful preparation is not repeated',
       );
       restored.dispose();
+    },
+  );
+
+  test(
+    'partial cached timeline resumes without a completion marker or welcome page',
+    () async {
+      final first = AppController(
+        store: MemoryStore(),
+        cache: cache,
+        pathlessTimeline: true,
+        client: NextcloudClient(transport: warmTransport([])),
+      )..account = account;
+      await first.load();
+      expect(await cache.readDocument(key), isNull);
+      final loaded = first.items.length;
+      first.dispose();
+      await cache.close();
+      final restored = AppController(
+        store: MemoryStore()..value = account.encode(),
+        cache: cache,
+        pathlessTimeline: true,
+        client: NextcloudClient(transport: warmTransport([])),
+      );
+      addTearDown(restored.dispose);
+      final states = <bool>[];
+      restored.addListener(() => states.add(restored.warming));
+      await restored.initialize();
+      expect(states, isNot(contains(true)));
+      expect(restored.items, hasLength(loaded));
+      expect(
+        restored.warmPhase,
+        0,
+        reason:
+            'incomplete three-year warmup is not a reason to block reopening',
+      );
     },
   );
 

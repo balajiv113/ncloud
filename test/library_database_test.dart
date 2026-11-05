@@ -415,6 +415,7 @@ void main() {
       await cache.writeDocument(listing, {
         'keys': [file.key],
         'updated': DateTime.now().toIso8601String(),
+        'loaded': [20454],
       });
       await cache.writeDocument('people-v1|https://cloud.example|alice', {
         'ok': true,
@@ -427,11 +428,18 @@ void main() {
       await cache.writeOfflineListing('saved', [file]);
       await cache.invalidateListings(library);
       await cache.close();
-      expect(await cache.readDocument(listing), isNull);
+      final stale = (await cache.readDocument(listing))!;
+      expect(stale['keys'], [file.key]);
+      expect(
+        DateTime.parse(stale['updated'] as String).millisecondsSinceEpoch,
+        0,
+      );
+      expect(stale['staleDays'], [20454]);
       final restored = FileStore()
         ..restore((await cache.readDocument(library))!);
       expect(restored.length, 1);
-      expect(restored.folder(['Photos'], fresh: false), isNull);
+      expect(restored.folder(['Photos'], fresh: false), hasLength(1));
+      expect(restored.folder(['Photos']), isNull);
       expect(restored.staleBefore.millisecondsSinceEpoch, greaterThan(0));
       expect(
         await cache.readDocument('people-v1|https://cloud.example|alice'),

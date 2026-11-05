@@ -352,7 +352,11 @@ class NextcloudClient {
   Future<List<CloudFile>> listFiles(Account account, List<String> path) async =>
       (await listFolder(account, path)).children;
 
-  Future<String?> folderEtag(Account account, List<String> path) async {
+  Future<String?> folderEtag(
+    Account account,
+    List<String> path, {
+    bool optional = false,
+  }) async {
     final response = await _request(
       'PROPFIND',
       davUri(account, path),
@@ -362,6 +366,7 @@ class NextcloudClient {
           '<d:propfind xmlns:d="DAV:"><d:prop><d:getetag/>'
           '</d:prop></d:propfind>',
     );
+    if (optional && {404, 405, 501}.contains(response.statusCode)) return null;
     _expect(response, {207});
     final root = XmlDocument.parse(response.body);
     for (final propstat in root.findAllElements(
