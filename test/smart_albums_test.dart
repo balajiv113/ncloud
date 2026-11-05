@@ -315,15 +315,16 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byTooltip('Library'), findsNothing);
       expect(find.text('Kyoto'), findsOneWidget);
-      expect(find.text('Favorites'), findsNothing);
+      expect(find.text('Favorites'), findsOneWidget);
       expect(find.textContaining('Photo source:'), findsNothing);
       expect(find.text('Your albums'), findsNothing);
       expect(find.widgetWithText(ChoiceChip, 'Travel'), findsNothing);
       expect(find.text('Empty folder'), findsNothing);
-      expect(find.text('Best days'), findsNothing);
-      await tester.tap(find.byTooltip('Album source'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Nextcloud albums'));
+      expect(find.text('Best days'), findsOneWidget);
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('View all Nextcloud albums')),
+      );
+      await tester.tap(find.byKey(const ValueKey('View all Nextcloud albums')));
       await tester.pumpAndSettle();
       expect(find.text('Best days'), findsOneWidget);
       expect(find.text('Kyoto'), findsNothing);
@@ -331,6 +332,12 @@ void main() {
       await tester.pumpAndSettle();
       expect(c.items, hasLength(3));
       await tester.tap(find.byTooltip('Back'));
+      await tester.pumpAndSettle();
+      expect(find.text('Best days'), findsOneWidget);
+      expect(find.text('Kyoto'), findsNothing);
+      await tester.tap(find.byTooltip('Back'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('View all Smart albums')));
       await tester.pumpAndSettle();
       await tester.tap(find.byTooltip('View options'));
       await tester.pumpAndSettle();
@@ -349,7 +356,7 @@ void main() {
   );
 
   testWidgets(
-    'clean Albums puts covers first and collections stay one tap away',
+    'Albums sections expand independently and pinned shortcuts open directly',
     (tester) async {
       tester.view.physicalSize = const Size(412, 915);
       tester.view.devicePixelRatio = 1;
@@ -362,17 +369,17 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byTooltip('Albums'));
       await tester.pumpAndSettle();
-      expect(tester.getTopLeft(find.text('Kyoto')).dy, lessThan(440));
-      await tester.tap(find.byTooltip('Collections'));
+      expect(tester.getTopLeft(find.text('Kyoto')).dy, lessThan(550));
+      expect(find.text('Pinned'), findsOneWidget);
+      expect(find.byType(SliverGrid), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('View all Smart albums')));
       await tester.pumpAndSettle();
-      for (final name in [
-        'Favorites',
-        'Shared',
-        'Offline',
-        'Recently deleted',
-      ]) {
-        expect(find.text(name), findsOneWidget);
-      }
+      expect(find.byType(SliverGrid), findsOneWidget);
+      expect(find.text('Best days'), findsNothing);
+      expect(find.text('Pinned'), findsNothing);
+      await tester.tap(find.byTooltip('Back'));
+      await tester.pumpAndSettle();
+      expect(find.text('Pinned'), findsOneWidget);
       await tester.tap(find.text('Favorites'));
       await tester.pumpAndSettle();
       expect(c.tab, 2);

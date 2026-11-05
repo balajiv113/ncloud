@@ -46,15 +46,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Try demo'));
-      await tester.pumpAndSettle();
-      for (final (label, name) in [
-        ('Timeline', 'timeline'),
-        ('Albums', 'albums'),
-        ('Drive', 'drive'),
-      ]) {
-        await tester.tap(find.byTooltip(label));
-        await tester.pumpAndSettle();
+      Future<void> capture(String name) async {
         final boundary =
             key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
         await tester.runAsync(() async {
@@ -68,21 +60,39 @@ void main() {
         });
         expect(tester.takeException(), isNull);
       }
+
+      await tester.tap(find.text('Try demo'));
+      await tester.pumpAndSettle();
+      for (final (label, name) in [
+        ('Timeline', 'timeline'),
+        ('Albums', 'albums'),
+        ('Drive', 'drive'),
+      ]) {
+        await tester.tap(find.byTooltip(label));
+        await tester.pumpAndSettle();
+        await capture(name);
+      }
       await tester.tap(find.byTooltip('Albums'));
       await tester.pumpAndSettle();
+      tester.platformDispatcher.platformBrightnessTestValue = Brightness.dark;
+      addTearDown(tester.platformDispatcher.clearPlatformBrightnessTestValue);
+      await tester.pumpAndSettle();
+      await capture('albums-dark');
+      tester.platformDispatcher.clearPlatformBrightnessTestValue();
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('View all Smart albums')));
+      await tester.pumpAndSettle();
+      await capture('albums-expanded');
       await tester.tap(find.text('Kyoto'));
       await tester.pumpAndSettle();
-      final boundary =
-          key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
-      await tester.runAsync(() async {
-        final image = await boundary.toImage();
-        final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
-        await File(
-          'build/ui/smart-album.png',
-        ).writeAsBytes(bytes!.buffer.asUint8List());
-        image.dispose();
-      });
-      expect(tester.takeException(), isNull);
+      await capture('smart-album');
+      await tester.tap(find.byTooltip('Back'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Back'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('View all Nextcloud albums')));
+      await tester.pumpAndSettle();
+      await capture('nextcloud-albums-expanded');
       debugDisableShadows = oldShadows;
     },
     skip: !const bool.fromEnvironment('CAPTURE_UI'),

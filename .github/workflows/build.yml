@@ -157,7 +157,7 @@ jobs:
           gh release create "v0.5.1-preview.${{ github.run_number }}" ncloud-android.apk \
             --target "${{ github.sha }}" --prerelease \
             --title "ncloud Android preview #${{ github.run_number }}" \
-            --notes "ncloud 0.5.1: fixes photo loading HTTP 500 by respecting Nextcloud's 100-comparison DAV search limit. Smart album discovery stops at the first media-containing folder per branch and does not request its subfolders; nested media remains inside that album. Cleaner cover-first Albums screen matching the proposed mock, with collections behind an icon and grouping/source controls in View options. Native Nextcloud albums remain separate. Existing streaming and offline copies preserved. Updates reuse the cached development signer."
+            --notes "ncloud 0.5.1: fixes photo loading HTTP 500 by respecting Nextcloud's 100-comparison DAV search limit. Smart album discovery stops at the first media-containing folder per branch and does not request its subfolders; nested media remains inside that album. Google Photos-inspired Albums overview: small pinned shortcuts and separate Smart/Nextcloud cover-preview rows. View all expands one section; Back returns to the overview. Grouping/source controls stay in View options. Native membership, streaming and saved offline originals preserved. Updates reuse the cached development signer."
 
   ios:
     if: github.event_name == 'workflow_dispatch' && inputs.build_ios
