@@ -71,6 +71,14 @@ void main() {
         await tester.tap(find.byTooltip(label));
         await tester.pumpAndSettle();
         await capture(name);
+        if (label == 'Timeline') {
+          await tester.drag(
+            find.byType(CustomScrollView),
+            const Offset(0, -350),
+          );
+          await tester.pumpAndSettle();
+          await capture('navigation-compact');
+        }
       }
       await tester.tap(find.byTooltip('Albums'));
       await tester.pumpAndSettle();

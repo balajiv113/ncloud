@@ -71,6 +71,7 @@ class AppController extends ChangeNotifier {
   bool hasMore = false;
   final Map<String, _MediaListing> _listings = {};
   _MediaListing? _activeListing;
+  String? _visibleListingKey;
   bool? memoriesAvailable;
   bool discoveringAlbums = false;
   int discoveredFolders = 0;
@@ -91,6 +92,12 @@ class AppController extends ChangeNotifier {
   bool smartAlbumOpen = false;
   String? nativeAlbumError;
   String? catalogueError;
+  final List<SmartAlbum> sharedAlbums = [];
+  String? sharedAlbumError;
+  DateTime? _sharedAlbumsUpdated;
+  Future<void>? _sharedAlbumsTask;
+  int _sharedAlbumsVersion = 0;
+  bool get sharedAlbumHome => tab == 5 && directory.isEmpty;
   List<String>? _demoPhotoRoot;
   List<String>? _autoPhotoRoot;
   List<CloudFile> get libraryFiles => _libraryFiles;
@@ -132,7 +139,10 @@ class AppController extends ChangeNotifier {
       starting = false;
       notifyListeners();
     }
-    if (connected) await load(refresh: false);
+    if (connected) {
+      unawaited(_prepareAlbums());
+      await load(refresh: false);
+    }
   }
 
   void enterDemo() {
@@ -233,6 +243,7 @@ class AppController extends ChangeNotifier {
       demo = false;
       tab = 0;
       directory = [];
+      unawaited(_prepareAlbums());
       await load();
     } finally {
       _savingAccount = false;
@@ -264,12 +275,18 @@ class AppController extends ChangeNotifier {
       _libraryFiles = [];
       _listings.clear();
       _activeListing = null;
+      _visibleListingKey = null;
       _catalogue.clear();
       _catalogueVersion++;
       _catalogueUpdated = null;
       _catalogueRoot = null;
       _catalogueTask = null;
       _catalogueSession = null;
+      sharedAlbums.clear();
+      sharedAlbumError = null;
+      _sharedAlbumsUpdated = null;
+      _sharedAlbumsTask = null;
+      _sharedAlbumsVersion++;
       catalogueError = null;
       memoriesAvailable = null;
       _initialDays = null;
@@ -323,11 +340,25 @@ class AppController extends ChangeNotifier {
     await load(refresh: false);
   }
 
+  bool get albumIncludesSubfolders =>
+      tab != 4 || !listEquals(directory, photoRoot);
+
+  bool _recursiveMedia(int currentTab, List<String> path) =>
+      currentTab != 4 || !listEquals(path, photoRoot);
+
   Future<void> openNativeAlbum(NativeAlbum album) async {
     activeNativeAlbum = album;
     smartAlbumOpen = false;
     tab = 4;
     directory = [];
+    await load(refresh: false);
+  }
+
+  Future<void> openSharedAlbum(List<String> path) async {
+    tab = 5;
+    directory = [...path];
+    activeNativeAlbum = null;
+    smartAlbumOpen = false;
     await load(refresh: false);
   }
 
@@ -355,15 +386,17 @@ class AppController extends ChangeNotifier {
     final currentTab = tab;
     final path = [...directory];
     final native = activeNativeAlbum;
+    final listingKey = _listingKey();
+    final keepItems = listingKey != null && listingKey == _visibleListingKey;
     loading = true;
-    refreshing = false;
+    refreshing = keepItems && items.isNotEmpty;
     loadingMore = false;
     hasMore = false;
     error = null;
     _activeListing = null;
-    items = [];
+    if (!keepItems) items = [];
+    _visibleListingKey = listingKey;
     notifyListeners();
-    final listingKey = _listingKey();
     try {
       if (demo) {
         items = native != null
@@ -371,7 +404,11 @@ class AppController extends ChangeNotifier {
             : _demo
                   .where(
                     (file) => switch (currentTab) {
-                      0 || 4 => file.isMedia && pathStartsWith(file.path, path),
+                      0 || 4 =>
+                        file.isMedia &&
+                            pathStartsWith(file.path, path) &&
+                            (_recursiveMedia(currentTab, path) ||
+                                file.path.length == path.length + 1),
                       2 => file.favorite,
                       5 || 6 => false,
                       _ =>
@@ -392,21 +429,13 @@ class AppController extends ChangeNotifier {
         }
         return;
       }
+      if (sharedAlbumHome) {
+        await _prepareSharedAlbums(refresh: refresh);
+        return;
+      }
       if (session == null) return;
       if (albumHome) {
-        final pending = _catalogueTask;
-        if (!refresh && pending != null && _catalogueSession == session) {
-          await pending;
-        } else {
-          final task = _loadCatalogue(session, refresh: refresh);
-          _catalogueTask = task;
-          _catalogueSession = session;
-          try {
-            await task;
-          } finally {
-            if (identical(_catalogueTask, task)) _catalogueTask = null;
-          }
-        }
+        await _prepareAlbums(refresh: refresh);
         return;
       }
       _MediaListing? previous = listingKey == null
@@ -449,18 +478,16 @@ class AppController extends ChangeNotifier {
       } else if (currentTab == 1) {
         listing.files = await client.listFiles(session, path);
       } else {
-        await _ensureMemories(session);
+        if (currentTab != 5) await _ensureMemories(session);
         if (version != _loadVersion) return;
-        if (currentTab == 5) {
-          listing.sharedPaths = await client.sharedPaths(session);
-        }
-        if (memoriesAvailable == true) {
+        if (memoriesAvailable == true && currentTab != 5) {
           listing.days = currentTab == 0 && _initialDays != null
               ? _initialDays
               : await client.memoryDays(
                   session,
                   path: path,
                   favorites: currentTab == 2,
+                  recursive: _recursiveMedia(currentTab, path),
                 );
           _initialDays = null;
         }
@@ -505,6 +532,7 @@ class AppController extends ChangeNotifier {
     int currentTab,
     List<String> path,
   ) async {
+    final recursive = _recursiveMedia(currentTab, path);
     List<CloudFile> page;
     if (listing.days case final days?) {
       final ids = <int>[];
@@ -521,6 +549,7 @@ class AppController extends ChangeNotifier {
         ids,
         path: path,
         favorites: currentTab == 2,
+        recursive: recursive,
       );
       listing.dayIndex = next;
       listing.more = next < days.length;
@@ -530,6 +559,7 @@ class AppController extends ChangeNotifier {
         favorites: currentTab == 2,
         path: path,
         offset: listing.offset,
+        recursive: recursive,
       );
       final existing = listing.files.map((f) => f.key).toSet();
       if (page.isNotEmpty && page.every((f) => existing.contains(f.key))) {
@@ -542,10 +572,7 @@ class AppController extends ChangeNotifier {
     }
     final merged = {for (final file in listing.files) file.key: file};
     for (final file in page) {
-      if (listing.sharedPaths == null ||
-          listing.sharedPaths!.any((p) => pathStartsWith(file.path, p))) {
-        merged[file.key] = file;
-      }
+      merged[file.key] = file;
     }
     listing.files = merged.values.toList();
   }
@@ -599,17 +626,144 @@ class AppController extends ChangeNotifier {
   String? _listingKey() {
     final session = account;
     if (demo || session == null || tab == 3) return null;
-    return 'browse-v2|${session.server}|${session.userId}|$tab|$smartAlbumOpen|'
+    return 'browse-v3|${session.server}|${session.userId}|$tab|$smartAlbumOpen|'
         '${directory.join('/')}|${activeNativeAlbum?.davPath.join('/') ?? ''}';
   }
 
+  Future<void> _prepareAlbums({bool refresh = false}) async {
+    final session = account;
+    if (demo || session == null || _disposed) return;
+    final pending = _catalogueTask;
+    if (pending != null && _catalogueSession == session) return pending;
+    final generation = _catalogueVersion + 1;
+    final task = () async {
+      try {
+        await _loadCatalogue(session, refresh: refresh);
+      } catch (e) {
+        if (account == session &&
+            generation == _catalogueVersion &&
+            !_disposed) {
+          catalogueError = errorMessage(e);
+          notifyListeners();
+        }
+      }
+    }();
+    _catalogueTask = task;
+    _catalogueSession = session;
+    try {
+      await task;
+    } finally {
+      if (identical(_catalogueTask, task)) _catalogueTask = null;
+    }
+  }
+
+  Future<void> _prepareSharedAlbums({required bool refresh}) async {
+    final pending = _sharedAlbumsTask;
+    if (pending != null) return pending;
+    final session = account!;
+    final generation = ++_sharedAlbumsVersion;
+    final task = () async {
+      final key = 'incoming-albums-v1|${session.server}|${session.userId}';
+      sharedAlbumError = null;
+      try {
+        if (_sharedAlbumsUpdated == null) {
+          final saved = await cache?.readDocument(key);
+          if (account != session ||
+              generation != _sharedAlbumsVersion ||
+              _disposed) {
+            return;
+          }
+          if (saved != null) {
+            sharedAlbums
+              ..clear()
+              ..addAll(
+                (saved['albums'] as List).map(
+                  (a) =>
+                      SmartAlbum.fromJson((a as Map).cast<String, dynamic>()),
+                ),
+              );
+            _sharedAlbumsUpdated = DateTime.parse(saved['updated'] as String);
+            notifyListeners();
+          }
+        }
+        if (!refresh &&
+            _sharedAlbumsUpdated != null &&
+            DateTime.now().difference(_sharedAlbumsUpdated!) <
+                const Duration(minutes: 15)) {
+          return;
+        }
+        final folders = await client.incomingSharedFolders(session);
+        final found = <SmartAlbum>[];
+        for (final path in folders) {
+          if (account != session ||
+              generation != _sharedAlbumsVersion ||
+              _disposed) {
+            return;
+          }
+          final covers = await client.search(session, path: path, limit: 1);
+          if (covers.isNotEmpty) {
+            found.add(SmartAlbum(path: path, files: covers));
+          }
+        }
+        if (account != session ||
+            generation != _sharedAlbumsVersion ||
+            _disposed) {
+          return;
+        }
+        found.sort(
+          (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+        );
+        sharedAlbums
+          ..clear()
+          ..addAll(found);
+        _sharedAlbumsUpdated = DateTime.now();
+        notifyListeners();
+        await cache?.writeDocument(key, {
+          'updated': _sharedAlbumsUpdated!.toIso8601String(),
+          'albums': sharedAlbums.map((a) => a.toJson()).toList(),
+        });
+      } catch (e) {
+        if (account == session &&
+            generation == _sharedAlbumsVersion &&
+            !_disposed) {
+          sharedAlbumError = errorMessage(e);
+          notifyListeners();
+        }
+      }
+    }();
+    _sharedAlbumsTask = task;
+    try {
+      await task;
+    } finally {
+      if (identical(_sharedAlbumsTask, task)) _sharedAlbumsTask = null;
+    }
+  }
+
   Future<void> _loadCatalogue(Account session, {required bool refresh}) async {
+    final generation = ++_catalogueVersion;
     if (session.photoRoot == null && _autoPhotoRoot == null) {
-      final roots = await client.listFiles(session, []);
-      if (account != session || _disposed) return;
-      _autoPhotoRoot = roots.any((f) => f.isDirectory && f.name == 'Photos')
-          ? ['Photos']
-          : [];
+      final sourceKey = 'album-source|${session.server}|${session.userId}';
+      final saved = await cache?.readDocument(sourceKey);
+      if (account != session || generation != _catalogueVersion || _disposed) {
+        return;
+      }
+      if (saved != null) {
+        _autoPhotoRoot = (saved['path'] as List).cast<String>();
+      } else {
+        final roots = await client.listFiles(session, []);
+        if (account != session ||
+            generation != _catalogueVersion ||
+            _disposed) {
+          return;
+        }
+        _autoPhotoRoot = roots.any((f) => f.isDirectory && f.name == 'Photos')
+            ? ['Photos']
+            : [];
+        await cache?.writeDocument(sourceKey, {'path': _autoPhotoRoot});
+      }
+    }
+    if (account != session || generation != _catalogueVersion || _disposed) {
+      return;
     }
     final root = [...photoRoot];
     final rootKey = '${session.server}|${session.userId}|${root.join('/')}';
@@ -620,8 +774,7 @@ class AppController extends ChangeNotifier {
             const Duration(minutes: 15)) {
       return;
     }
-    final generation = ++_catalogueVersion;
-    final key = 'album-catalogue-v3|$rootKey';
+    final key = 'album-catalogue-v4|$rootKey';
     if (_catalogueRoot != rootKey) {
       _catalogue.clear();
       _catalogueUpdated = null;
@@ -634,26 +787,32 @@ class AppController extends ChangeNotifier {
       if (saved != null) {
         _catalogue.clear();
         _catalogue.addAll(
-          (saved['albums'] as List).map((value) {
-            final item = (value as Map).cast<String, dynamic>();
-            return SmartAlbum(
-              path: (item['path'] as List).cast<String>(),
-              files: (item['covers'] as List)
-                  .map(
-                    (f) =>
-                        CloudFile.fromJson((f as Map).cast<String, dynamic>()),
-                  )
-                  .toList(),
-            );
-          }),
+          (saved['albums'] as List).map(
+            (value) =>
+                SmartAlbum.fromJson((value as Map).cast<String, dynamic>()),
+          ),
         );
+        if (saved['native'] case final List native) {
+          nativeAlbums = native.map((value) {
+            final item = (value as Map).cast<String, dynamic>();
+            return NativeAlbum(
+              name: item['name'] as String,
+              davPath: (item['path'] as List).cast<String>(),
+              count: item['count'] as int,
+              coverId: item['coverId'] as String?,
+              shared: item['shared'] as bool,
+            );
+          }).toList();
+        }
         notifyListeners();
         final updated = DateTime.tryParse(saved['updated'] as String? ?? '');
         if (!refresh &&
             updated != null &&
             DateTime.now().difference(updated) < const Duration(minutes: 15)) {
           _catalogueUpdated = updated;
-          await _loadNativeAlbums(session);
+          if (saved['native'] == null) {
+            await _loadNativeAlbums(session, generation);
+          }
           return;
         }
       }
@@ -661,7 +820,7 @@ class AppController extends ChangeNotifier {
     discoveringAlbums = true;
     catalogueError = null;
     discoveredFolders = 0;
-    final nativeLoad = _loadNativeAlbums(session);
+    final nativeLoad = _loadNativeAlbums(session, generation);
     notifyListeners();
     try {
       await _ensureMemories(session);
@@ -694,18 +853,14 @@ class AppController extends ChangeNotifier {
               : folder.previews.isNotEmpty
               ? folder.previews
               : await client.memoryCover(session, folder.path, direct.first.id);
-          children = direct.isEmpty
-              ? await client.memoryFolders(session, folder.path)
-              : [];
+          children = await client.memoryFolders(session, folder.path);
         } else {
           final contents = await client.listFiles(session, folder.path);
           covers = contents.where((f) => f.isMedia).take(1).toList();
-          children = covers.isNotEmpty
-              ? []
-              : contents
-                    .where((f) => f.isDirectory)
-                    .map((f) => MemoryFolder(f.path, []))
-                    .toList();
+          children = contents
+              .where((f) => f.isDirectory)
+              .map((f) => MemoryFolder(f.path, []))
+              .toList();
         }
         if (generation != _catalogueVersion ||
             account != session ||
@@ -716,7 +871,7 @@ class AppController extends ChangeNotifier {
           final album = SmartAlbum(path: folder.path, files: covers);
           found[album.key] = album;
         }
-        if (covers.isEmpty) {
+        if (folder.path.length == root.length) {
           queue.addAll(
             memoriesAvailable == true
                 ? children.where((f) => f.previews.isNotEmpty)
@@ -724,23 +879,30 @@ class AppController extends ChangeNotifier {
           );
         }
         discoveredFolders++;
-        _catalogue
-          ..clear()
-          ..addAll(found.values);
-        notifyListeners();
       }
+      _catalogue
+        ..clear()
+        ..addAll(found.values);
       _catalogueUpdated = DateTime.now();
+      notifyListeners();
+      await nativeLoad;
+      if (generation != _catalogueVersion || account != session || _disposed) {
+        return;
+      }
       await cache?.writeDocument(key, {
         'updated': _catalogueUpdated!.toIso8601String(),
-        'albums': [
-          for (final album in _catalogue)
+        'albums': _catalogue.map((a) => a.toJson()).toList(),
+        'native': [
+          for (final album in nativeAlbums)
             {
-              'path': album.path,
-              'covers': album.files.map((f) => f.toJson()).toList(),
+              'name': album.name,
+              'path': album.davPath,
+              'count': album.count,
+              'coverId': album.coverId,
+              'shared': album.shared,
             },
         ],
       });
-      await nativeLoad;
     } catch (e) {
       if (generation == _catalogueVersion && account == session && !_disposed) {
         catalogueError = errorMessage(e);
@@ -754,19 +916,23 @@ class AppController extends ChangeNotifier {
     }
   }
 
-  Future<void> _loadNativeAlbums(Account session) async {
+  Future<void> _loadNativeAlbums(Account session, int generation) async {
     nativeAlbumError = null;
     try {
       final own = await client.albums(session);
       final shared = await client.albums(session, shared: true);
-      if (account == session && !_disposed) nativeAlbums = [...own, ...shared];
+      if (account == session && generation == _catalogueVersion && !_disposed) {
+        nativeAlbums = [...own, ...shared];
+      }
     } catch (e) {
-      if (account == session && !_disposed) {
+      if (account == session && generation == _catalogueVersion && !_disposed) {
         nativeAlbumError =
             'Could not load Nextcloud albums. ${errorMessage(e)}';
       }
     } finally {
-      if (account == session && !_disposed) notifyListeners();
+      if (account == session && generation == _catalogueVersion && !_disposed) {
+        notifyListeners();
+      }
     }
   }
 
@@ -776,6 +942,9 @@ class AppController extends ChangeNotifier {
     _catalogueVersion++;
     _catalogueTask = null;
     _catalogueSession = null;
+    _sharedAlbumsUpdated = null;
+    _sharedAlbumsVersion++;
+    _sharedAlbumsTask = null;
     discoveringAlbums = false;
     _initialDays = null;
     await cache?.clearDocuments();
@@ -1182,6 +1351,7 @@ class AppController extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _catalogueVersion++;
+    _sharedAlbumsVersion++;
     _loadVersion++;
     _loginVersion++;
     client.close();
@@ -1192,7 +1362,6 @@ class AppController extends ChangeNotifier {
 class _MediaListing {
   List<CloudFile> files = [];
   List<MemoryDay>? days;
-  List<List<String>>? sharedPaths;
   int dayIndex = 0;
   int offset = 0;
   bool more = false;
@@ -1203,7 +1372,6 @@ class _MediaListing {
   Map<String, dynamic> toJson() => {
     'files': files.map((f) => f.toJson()).toList(),
     'days': days?.map((d) => d.toJson()).toList(),
-    'sharedPaths': sharedPaths,
     'dayIndex': dayIndex,
     'offset': offset,
     'more': more,
@@ -1216,9 +1384,6 @@ class _MediaListing {
         .toList()
     ..days = (value['days'] as List?)
         ?.map((d) => MemoryDay.fromJson((d as Map).cast<String, dynamic>()))
-        .toList()
-    ..sharedPaths = (value['sharedPaths'] as List?)
-        ?.map((p) => (p as List).cast<String>())
         .toList()
     ..dayIndex = value['dayIndex'] as int
     ..offset = value['offset'] as int

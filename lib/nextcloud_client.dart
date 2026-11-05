@@ -50,7 +50,7 @@ class NextcloudClient {
     final request = http.Request(method, uri)
       ..followRedirects = false
       ..headers.addAll({
-        'User-Agent': 'ncloud/0.5.2',
+        'User-Agent': 'ncloud/0.5.3',
         if (account != null) 'Authorization': account.authorization,
         ...headers,
       });
@@ -378,6 +378,7 @@ class NextcloudClient {
     int offset = 0,
     int limit = photoLimit,
     List<String>? fileIds,
+    bool recursive = true,
   }) async {
     // Relative SEARCH scopes are literal DAV paths, not URI-encoded URLs.
     final scope = XmlText(
@@ -401,7 +402,7 @@ class NextcloudClient {
         <d:searchrequest xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns" xmlns:sd="https://github.com/icewind1991/SearchDAV/ns">
           <d:basicsearch>
             <d:select><d:prop>$_properties</d:prop></d:select>
-            <d:from><d:scope><d:href>$scope</d:href><d:depth>infinity</d:depth></d:scope></d:from>
+            <d:from><d:scope><d:href>$scope</d:href><d:depth>${recursive ? 'infinity' : '1'}</d:depth></d:scope></d:from>
             <d:where>$where</d:where>
             <d:orderby><d:order><d:prop><d:getlastmodified/></d:prop><d:descending/></d:order></d:orderby>
             <d:limit><d:nresults>$limit</d:nresults><sd:firstresult>$offset</sd:firstresult></d:limit>
@@ -476,6 +477,7 @@ class NextcloudClient {
     List<int> dayIds, {
     List<String> path = const [],
     bool favorites = false,
+    bool recursive = true,
   }) async {
     if (dayIds.isEmpty) return [];
     final rows = await _memories(
@@ -483,7 +485,7 @@ class NextcloudClient {
       ['days', dayIds.join(',')],
       {
         'folder': '/${path.join('/')}',
-        'recursive': '1',
+        if (recursive) 'recursive': '1',
         if (favorites) 'fav': '1',
         'nopreload': '1',
       },
@@ -757,16 +759,43 @@ class NextcloudClient {
         .toList();
   }
 
-  Future<List<List<String>>> sharedPaths(Account account) async {
-    final data = await _sharesRequest(account, 'GET') as List<dynamic>;
-    return [
-      for (final item in data.cast<Map<String, dynamic>>())
-        if (item['path'] is String)
-          (item['path'] as String)
-              .split('/')
-              .where((s) => s.isNotEmpty)
-              .toList(),
-    ];
+  Future<List<List<String>>> incomingSharedFolders(Account account) async {
+    final data =
+        await _sharesRequest(
+              account,
+              'GET',
+              parameters: {'shared_with_me': 'true'},
+            )
+            as List<dynamic>;
+    final folders = <String, List<String>>{};
+    for (final item in data.cast<Map<String, dynamic>>()) {
+      if (item['item_type'] != 'folder' ||
+          item['uid_owner'] == account.userId ||
+          item['uid_file_owner'] == account.userId ||
+          item['share_type'].toString() == '3') {
+        continue;
+      }
+      final path = item['path'];
+      if (path is! String || !path.startsWith('/')) {
+        throw const FormatException('Unsupported incoming shared-folder path.');
+      }
+      final segments = path.split('/').where((s) => s.isNotEmpty).toList();
+      if (segments.isEmpty) {
+        throw const FormatException('Unsupported incoming shared-folder path.');
+      }
+      for (final segment in segments) {
+        validateName(segment);
+      }
+      folders[segments.map(Uri.encodeComponent).join('/')] = segments;
+    }
+    return folders.values
+        .where(
+          (path) => !folders.values.any(
+            (parent) =>
+                parent.length < path.length && pathStartsWith(path, parent),
+          ),
+        )
+        .toList();
   }
 
   Future<PublicShare> createShare(
@@ -943,7 +972,7 @@ class NextcloudClient {
         'Authorization': account.authorization,
         'Content-Type': 'application/octet-stream',
         'If-None-Match': '*',
-        'User-Agent': 'ncloud/0.5.2',
+        'User-Agent': 'ncloud/0.5.3',
       });
     try {
       final response = await http.Response.fromStream(

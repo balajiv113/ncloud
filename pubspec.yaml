@@ -1,7 +1,7 @@
 name: ncloud
 description: A private, unified Nextcloud photos and files app.
 publish_to: none
-version: 0.5.2+1
+version: 0.5.3+1
 
 environment:
   sdk: ^3.10.0

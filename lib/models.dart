@@ -243,6 +243,16 @@ class SmartAlbum {
   final List<CloudFile> files;
   String get name => path.isEmpty ? 'Photos at root' : path.last;
   String get key => path.map(Uri.encodeComponent).join('/');
+  Map<String, dynamic> toJson() => {
+    'path': path,
+    'covers': files.map((f) => f.toJson()).toList(),
+  };
+  factory SmartAlbum.fromJson(Map<String, dynamic> json) => SmartAlbum(
+    path: (json['path'] as List).cast<String>(),
+    files: (json['covers'] as List)
+        .map((f) => CloudFile.fromJson((f as Map).cast<String, dynamic>()))
+        .toList(),
+  );
 }
 
 class MemoryDay {
@@ -270,10 +280,11 @@ List<SmartAlbum> buildSmartAlbums(List<CloudFile> files, List<String> root) {
   final media = files
       .where((f) => f.isMedia && pathStartsWith(f.path, root))
       .toList();
-  final rootHasMedia = media.any((f) => f.path.length == root.length + 1);
   final parents = <String, SmartAlbum>{};
   for (final file in media) {
-    final path = rootHasMedia ? root : file.path.take(root.length + 1).toList();
+    final path = file.path.length == root.length + 1
+        ? root
+        : file.path.take(root.length + 1).toList();
     final key = path.map(Uri.encodeComponent).join('/');
     parents
         .putIfAbsent(key, () => SmartAlbum(path: path, files: []))

@@ -4,6 +4,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:ncloud/nextcloud_client.dart';
 import 'package:ncloud/models.dart';
+import 'package:ncloud/app_controller.dart';
+
+import 'app_test.dart' show MemoryStore;
 
 void main() {
   const enabled = bool.fromEnvironment('LIVE_NEXTCLOUD');
@@ -44,6 +47,7 @@ void main() {
         session,
         days.map((d) => d.id).toList(),
         path: ['ncloud-index'],
+        recursive: false,
       );
       expect(files, hasLength(201));
       final seed = files.singleWhere((f) => f.name == 'seed.png');
@@ -52,6 +56,111 @@ void main() {
       expect(days.map((d) => d.id), contains(seed.captureDay));
       expect(seed.etag, isNotEmpty);
       expect(await client.preview(session, seed), isNotEmpty);
+      final recursiveDays = await client.memoryDays(
+        session,
+        path: ['ncloud-index'],
+      );
+      expect(recursiveDays!.fold<int>(0, (sum, day) => sum + day.count), 202);
+      expect(files.every((f) => f.path.length == 2), isTrue);
+      final davDirect = await client.search(
+        session,
+        path: ['ncloud-index'],
+        recursive: false,
+      );
+      expect(davDirect, hasLength(200));
+      expect(davDirect.every((f) => f.path.length == 2), isTrue);
+      final controller = AppController(store: MemoryStore(), client: client)
+        ..account = session.withPhotoRoot(['ncloud-index']);
+      addTearDown(controller.dispose);
+      await controller.selectTab(4);
+      expect(controller.catalogueError, isNull);
+      expect(controller.smartAlbums.map((a) => a.path), [
+        ['ncloud-index'],
+        ['ncloud-index', 'Travel'],
+      ]);
+      await controller.openSmartAlbum(['ncloud-index']);
+      expect(controller.error, isNull);
+      expect(controller.items, hasLength(201));
+      expect(controller.items.every((f) => f.path.length == 2), isTrue);
+      await controller.openSmartAlbum(['ncloud-index', 'Travel']);
+      expect(controller.error, isNull);
+      expect(controller.items.single.path, [
+        'ncloud-index',
+        'Travel',
+        'Japan',
+        'nested.png',
+      ]);
+    },
+    skip: !enabled,
+    timeout: const Timeout(Duration(minutes: 1)),
+  );
+  test(
+    'real incoming shared folders become albums without relying on recipient Memories indexing',
+    () async {
+      final client = NextcloudClient();
+      addTearDown(client.close);
+      final server = Uri.parse('http://127.0.0.1:8080');
+      const password = String.fromEnvironment('NEXTCLOUD_TEST_PASSWORD');
+      final owner = await client.authenticate(server, 'ncloud-ci', password);
+      final receiverId =
+          'ncloud-receiver-${DateTime.now().microsecondsSinceEpoch}';
+      final transport = http.Client();
+      addTearDown(transport.close);
+      final headers = {
+        'Authorization': owner.authorization,
+        'OCS-APIRequest': 'true',
+        'Accept': 'application/json',
+      };
+      final create = await transport.post(
+        server.resolve('/ocs/v1.php/cloud/users?format=json'),
+        headers: headers,
+        body: {'userid': receiverId, 'password': password},
+      );
+      expect(create.statusCode, 200);
+      expect((jsonDecode(create.body) as Map)['ocs']['meta']['status'], 'ok');
+      addTearDown(() async {
+        final response = await transport.delete(
+          server.resolve('/ocs/v1.php/cloud/users/$receiverId?format=json'),
+          headers: headers,
+        );
+        expect(response.statusCode, 200);
+      });
+      final share = await transport.post(
+        server.resolve(
+          '/ocs/v2.php/apps/files_sharing/api/v1/shares?format=json',
+        ),
+        headers: headers,
+        body: {
+          'path': '/ncloud-index',
+          'shareType': '0',
+          'shareWith': receiverId,
+          'permissions': '1',
+        },
+      );
+      expect(share.statusCode, 200);
+      expect((jsonDecode(share.body) as Map)['ocs']['meta']['status'], 'ok');
+      expect(await client.incomingSharedFolders(owner), isEmpty);
+      final receiver = await client.authenticate(server, receiverId, password);
+      final incoming = await client.incomingSharedFolders(receiver);
+      expect(incoming, [
+        ['ncloud-index'],
+      ]);
+      final controller = AppController(store: MemoryStore(), client: client)
+        ..account = receiver
+        ..memoriesAvailable = true;
+      addTearDown(controller.dispose);
+      await controller.selectTab(5);
+      expect(controller.sharedAlbumError, isNull);
+      expect(controller.sharedAlbums.single.path, ['ncloud-index']);
+      await controller.openSharedAlbum(['ncloud-index']);
+      expect(controller.error, isNull);
+      expect(controller.items, hasLength(200));
+      expect(controller.hasMore, isTrue);
+      await controller.loadNextPage();
+      expect(controller.error, isNull);
+      expect(controller.items, hasLength(202));
+      expect(controller.items.any((f) => f.path.last == 'nested.png'), isTrue);
+      expect(controller.hasMore, isFalse);
     },
     skip: !enabled,
     timeout: const Timeout(Duration(minutes: 1)),

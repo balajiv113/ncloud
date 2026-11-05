@@ -99,6 +99,28 @@ void main() {
   });
 
   test(
+    'loose source photos stay separate instead of collapsing all parent albums',
+    () {
+      CloudFile photo(List<String> path) => CloudFile(
+        path: path,
+        name: path.last,
+        isDirectory: false,
+        contentType: 'image/jpeg',
+      );
+      final files = [
+        photo(['Photos', 'loose.jpg']),
+        photo(['Photos', 'Travel', 'Japan', 'a.jpg']),
+        photo(['Photos', 'Family', 'b.jpg']),
+      ];
+      final albums = buildSmartAlbums(files, ['Photos']);
+      expect(albums.map((a) => a.name), ['Family', 'Photos', 'Travel']);
+      expect(albums.expand((a) => a.files).toSet(), files.toSet());
+      expect(albums.every((a) => a.files.length == 1), isTrue);
+      expect(buildSmartAlbums(files, []).single.name, 'Photos');
+    },
+  );
+
+  test(
     'photo source survives account persistence without changing credentials',
     () {
       final original = Account(

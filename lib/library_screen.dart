@@ -1,3 +1,5 @@
+import 'dart:ui' show ImageFilter;
+
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -47,6 +49,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
   bool _showNative = false;
   bool _albumsExpanded = false;
   int _prefetchBudget = 2;
+  bool _dockCompact = false;
+  bool _dockUserScroll = false;
+  double _dockTravel = 0;
   String _query = '';
   AppController get c => widget.controller;
   bool get _album => c.tab == 4;
@@ -57,6 +62,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
       c.directory.isEmpty &&
       c.activeNativeAlbum == null;
   bool get _collection => const [2, 5, 6].contains(c.tab);
+  bool get _sharedHome => c.sharedAlbumHome;
   bool get _selecting => _selected.isNotEmpty;
   double get _span => _pointers.length == 2
       ? (_pointers.values.first - _pointers.values.last).distance
@@ -94,6 +100,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
   void _prefetch() {
     if (!_scroll.hasClients ||
         _albumHome ||
+        _sharedHome ||
         _drive ||
         _selecting ||
         _query.isNotEmpty ||
@@ -111,6 +118,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
   }
 
   void _reset({bool keepAlbumSection = false}) {
+    _dockCompact = false;
+    _dockTravel = 0;
+    _dockUserScroll = false;
     _search.clear();
     _selected.clear();
     _query = '';
@@ -133,6 +143,30 @@ class _LibraryScreenState extends State<LibraryScreen> {
     c.selectTab(tab);
   }
 
+  void _updateDock(ScrollNotification notification) {
+    if (notification.depth != 0 ||
+        notification.metrics.axis != Axis.vertical ||
+        _selecting) {
+      return;
+    }
+    if (notification is ScrollStartNotification) {
+      _dockUserScroll = notification.dragDetails != null;
+      _dockTravel = 0;
+    } else if (notification is ScrollEndNotification) {
+      _dockUserScroll = false;
+    } else if (notification is ScrollUpdateNotification && _dockUserScroll) {
+      final delta = notification.scrollDelta ?? 0;
+      if (delta.sign != _dockTravel.sign) _dockTravel = 0;
+      _dockTravel += delta;
+      final compact = notification.metrics.pixels < 40 || _dockTravel < -16
+          ? false
+          : notification.metrics.pixels > 80 && _dockTravel > 32
+          ? true
+          : _dockCompact;
+      if (compact != _dockCompact) setState(() => _dockCompact = compact);
+    }
+  }
+
   void _back() {
     if (_selecting) {
       setState(() => _selected.clear());
@@ -143,6 +177,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
       setState(() => _reset(keepAlbumSection: true));
       if (_scroll.hasClients) _scroll.jumpTo(0);
       c.selectTab(4);
+    } else if (c.tab == 5 && !_sharedHome) {
+      setState(_reset);
+      if (_scroll.hasClients) _scroll.jumpTo(0);
+      c.selectTab(5);
     } else if (_collection) {
       _navigate(4);
     } else {
@@ -268,7 +306,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _prefetch();
     });
-    final files = _albumHome ? <CloudFile>[] : _visible;
+    final files = _albumHome || _sharedHome ? <CloudFile>[] : _visible;
     final theme = Theme.of(context);
     final detail =
         (_albumHome && _albumsExpanded) ||
@@ -278,7 +316,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
         (_collection
             ? switch (c.tab) {
                 2 => 'Favorites',
-                5 => 'Shared',
+                5 => _sharedHome ? 'Shared with you' : c.directory.last,
                 _ => 'Offline',
               }
             : _album
@@ -338,6 +376,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                   onPointerCancel: (event) => _pointers.remove(event.pointer),
                   child: NotificationListener<ScrollNotification>(
                     onNotification: (notification) {
+                      _updateDock(notification);
                       if ((notification is ScrollUpdateNotification &&
                               notification.dragDetails != null) ||
                           (notification is OverscrollNotification &&
@@ -466,16 +505,25 @@ class _LibraryScreenState extends State<LibraryScreen> {
                             const SizedBox(width: 4),
                           ],
                         ),
-                        if (c.busy || c.refreshing || c.loadingMore)
-                          SliverToBoxAdapter(
-                            child: LinearProgressIndicator(
-                              minHeight: 2,
-                              value: c.busy && c.total > 0
-                                  ? c.completed / c.total
-                                  : null,
-                            ),
+                        SliverToBoxAdapter(
+                          child: SizedBox(
+                            height: 2,
+                            child: c.busy || c.refreshing || c.loadingMore
+                                ? LinearProgressIndicator(
+                                    minHeight: 2,
+                                    value: c.busy && c.total > 0
+                                        ? c.completed / c.total
+                                        : null,
+                                  )
+                                : null,
                           ),
-                        if ((c.error ?? (_albumHome ? c.catalogueError : null))
+                        ),
+                        if ((c.error ??
+                                (_albumHome
+                                    ? c.catalogueError
+                                    : _sharedHome
+                                    ? c.sharedAlbumError
+                                    : null))
                             case final error?)
                           SliverToBoxAdapter(
                             child: Padding(
@@ -525,17 +573,22 @@ class _LibraryScreenState extends State<LibraryScreen> {
                           ),
                         if (_drive && c.directory.isNotEmpty)
                           SliverToBoxAdapter(child: _breadcrumbs()),
-                        if (_album &&
+                        if ((_album || (c.tab == 5 && !_sharedHome)) &&
                             !_albumHome &&
                             c.activeNativeAlbum == null)
                           SliverToBoxAdapter(child: _albumContext()),
-                        if (c.loading && c.items.isEmpty && !_albumHome)
+                        if (c.loading &&
+                            c.items.isEmpty &&
+                            !_albumHome &&
+                            !_sharedHome)
                           const SliverFillRemaining(
                             hasScrollBody: false,
                             child: Center(child: CircularProgressIndicator()),
                           )
                         else if (_albumHome)
                           ..._albumHomeSlivers()
+                        else if (_sharedHome)
+                          ..._sharedAlbumSlivers()
                         else ...[
                           if (c.tab == 0 &&
                               !_selecting &&
@@ -675,90 +728,165 @@ class _LibraryScreenState extends State<LibraryScreen> {
         : _album || _collection
         ? 4
         : 0;
+    final destinations = [
+      (0, 'Timeline', Icons.photo_library_outlined),
+      (4, 'Albums', Icons.collections_bookmark_outlined),
+      (1, 'Drive', Icons.folder_outlined),
+    ];
+    final activeIndex = destinations.indexWhere((d) => d.$1 == active);
+    final duration = MediaQuery.disableAnimationsOf(context)
+        ? Duration.zero
+        : const Duration(milliseconds: 240);
+    final fullWidth = (MediaQuery.sizeOf(context).width - 40).clamp(0.0, 440.0);
+    final width = _dockCompact ? fullWidth.clamp(0.0, 268.0) : fullWidth;
     return SafeArea(
       top: false,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(24, 8, 24, 12),
-        child: Material(
-          elevation: 8,
-          shadowColor: Colors.black26,
-          color: colors.surface,
-          shape: StadiumBorder(
-            side: BorderSide(
-              color: colors.outlineVariant.withValues(alpha: .5),
-            ),
-          ),
+      child: SizedBox(
+        height: 96,
+        child: Align(
+          alignment: Alignment.bottomCenter,
           child: Padding(
-            padding: const EdgeInsets.all(6),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceAround,
-              children: [
-                for (final (tab, label, icon) in [
-                  (0, 'Timeline', Icons.photo_library_outlined),
-                  (4, 'Albums', Icons.collections_bookmark_outlined),
-                  (1, 'Drive', Icons.folder_outlined),
-                ])
-                  Flexible(
-                    child: Tooltip(
-                      message: label,
-                      child: Semantics(
-                        selected: tab == active,
-                        button: true,
-                        label: label,
-                        excludeSemantics: true,
-                        child: InkWell(
-                          borderRadius: BorderRadius.circular(28),
-                          onTap: c.busy ? null : () => _navigate(tab),
-                          child: AnimatedContainer(
-                            duration: const Duration(milliseconds: 180),
-                            constraints: const BoxConstraints(
-                              minHeight: 46,
-                              minWidth: 56,
-                            ),
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 10,
-                            ),
-                            decoration: BoxDecoration(
-                              color: active == tab
-                                  ? colors.primaryContainer
-                                  : Colors.transparent,
-                              borderRadius: BorderRadius.circular(28),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(
-                                  icon,
-                                  size: 21,
-                                  color: active == tab
-                                      ? colors.onPrimaryContainer
-                                      : colors.onSurfaceVariant,
+            padding: const EdgeInsets.only(bottom: 12),
+            child: AnimatedContainer(
+              key: const ValueKey('navigation-dock'),
+              duration: duration,
+              curve: Curves.easeOutCubic,
+              width: width,
+              height: _dockCompact ? 60 : 78,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(30),
+                boxShadow: [
+                  BoxShadow(
+                    color: colors.shadow.withValues(alpha: .12),
+                    blurRadius: 24,
+                    offset: const Offset(0, 8),
+                  ),
+                ],
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(30),
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+                  child: Material(
+                    color: colors.surface.withValues(alpha: .94),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(30),
+                      side: BorderSide(
+                        color: colors.outlineVariant.withValues(alpha: .5),
+                      ),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(6),
+                      child: LayoutBuilder(
+                        builder: (context, constraints) {
+                          final selectedWidth =
+                              constraints.maxWidth *
+                              (_dockCompact ? .46 : 1 / 3);
+                          final otherWidth =
+                              (constraints.maxWidth - selectedWidth) / 2;
+                          return Stack(
+                            children: [
+                              AnimatedPositioned(
+                                duration: duration,
+                                curve: Curves.easeOutCubic,
+                                left: activeIndex * otherWidth,
+                                top: 0,
+                                bottom: 0,
+                                width: selectedWidth,
+                                child: DecoratedBox(
+                                  decoration: BoxDecoration(
+                                    color: colors.primaryContainer,
+                                    borderRadius: BorderRadius.circular(24),
+                                  ),
                                 ),
-                                if (active == tab) ...[
-                                  const SizedBox(width: 7),
-                                  Flexible(
-                                    child: Text(
-                                      label,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w600,
-                                        color: colors.onPrimaryContainer,
+                              ),
+                              Row(
+                                children: [
+                                  for (final (tab, label, icon) in destinations)
+                                    Expanded(
+                                      flex: _dockCompact
+                                          ? (active == tab ? 46 : 27)
+                                          : 1,
+                                      child: Tooltip(
+                                        message: label,
+                                        child: Semantics(
+                                          selected: tab == active,
+                                          button: true,
+                                          label: label,
+                                          excludeSemantics: true,
+                                          child: InkWell(
+                                            key: ValueKey('navigate-$tab'),
+                                            borderRadius: BorderRadius.circular(
+                                              28,
+                                            ),
+                                            onTap: c.busy
+                                                ? null
+                                                : () => _navigate(tab),
+                                            child: SizedBox.expand(
+                                              child: Flex(
+                                                direction: _dockCompact
+                                                    ? Axis.horizontal
+                                                    : Axis.vertical,
+                                                mainAxisAlignment:
+                                                    MainAxisAlignment.center,
+                                                children: [
+                                                  Icon(
+                                                    icon,
+                                                    size: 21,
+                                                    color: active == tab
+                                                        ? colors
+                                                              .onPrimaryContainer
+                                                        : colors
+                                                              .onSurfaceVariant,
+                                                  ),
+                                                  if (!_dockCompact ||
+                                                      active == tab) ...[
+                                                    SizedBox(
+                                                      width: _dockCompact
+                                                          ? 6
+                                                          : 0,
+                                                      height: _dockCompact
+                                                          ? 0
+                                                          : 4,
+                                                    ),
+                                                    Flexible(
+                                                      child: Text(
+                                                        _dockCompact && tab == 0
+                                                            ? 'Photos'
+                                                            : label,
+                                                        maxLines: 1,
+                                                        overflow: TextOverflow
+                                                            .ellipsis,
+                                                        style: TextStyle(
+                                                          fontSize: 12,
+                                                          fontWeight:
+                                                              FontWeight.w600,
+                                                          color: active == tab
+                                                              ? colors
+                                                                    .onPrimaryContainer
+                                                              : colors
+                                                                    .onSurfaceVariant,
+                                                        ),
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ],
+                                              ),
+                                            ),
+                                          ),
+                                        ),
                                       ),
                                     ),
-                                  ),
                                 ],
-                              ],
-                            ),
-                          ),
-                        ),
+                              ),
+                            ],
+                          );
+                        },
                       ),
                     ),
                   ),
-              ],
+                ),
+              ),
             ),
           ),
         ),
@@ -1047,13 +1175,17 @@ class _LibraryScreenState extends State<LibraryScreen> {
           'Smart albums',
           expand: () => _expandAlbums(false),
         ),
-        if (c.discoveringAlbums)
-          const SliverToBoxAdapter(
-            child: Padding(
-              padding: EdgeInsets.fromLTRB(18, 0, 18, 8),
-              child: LinearProgressIndicator(minHeight: 2),
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(18, 0, 18, 8),
+            child: SizedBox(
+              height: 2,
+              child: c.discoveringAlbums
+                  ? const LinearProgressIndicator(minHeight: 2)
+                  : null,
             ),
           ),
+        ),
         if (smartCards.isNotEmpty)
           _albumPreview(smartCards)
         else
@@ -1226,6 +1358,55 @@ class _LibraryScreenState extends State<LibraryScreen> {
     ),
   );
 
+  List<Widget> _sharedAlbumSlivers() {
+    final albums = c.sharedAlbums
+        .where(
+          (a) =>
+              _query.isEmpty ||
+              a.name.toLowerCase().contains(_query.toLowerCase()),
+        )
+        .toList();
+    return [
+      SliverToBoxAdapter(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(18, 8, 18, 18),
+          child: Text(
+            c.loading && albums.isEmpty
+                ? 'Loading folders shared with you...'
+                : 'Folders others shared with you. Your outgoing shares stay in Drive.',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ),
+      ),
+      if (albums.isEmpty && !c.loading && c.sharedAlbumError == null)
+        const SliverToBoxAdapter(
+          child: Padding(
+            padding: EdgeInsets.all(24),
+            child: Text(
+              'No shared photo albums here yet. Incoming folders containing photos or videos appear here.',
+            ),
+          ),
+        ),
+      _albumCards(
+        albums
+            .map(
+              (a) => (
+                name: a.name,
+                subtitle: 'Shared with you',
+                count: '',
+                cover: a.files.first,
+                open: () {
+                  setState(_reset);
+                  if (_scroll.hasClients) _scroll.jumpTo(0);
+                  c.openSharedAlbum(a.path);
+                },
+              ),
+            )
+            .toList(),
+      ),
+    ];
+  }
+
   Widget _albumContext() {
     final children = <String, List<String>>{};
     for (final file in c.items.where((f) => f.isMedia)) {
@@ -1243,7 +1424,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
             children: [
               Expanded(
                 child: Text(
-                  '${c.items.where((f) => f.isMedia).length} items, including subfolders',
+                  '${c.items.where((f) => f.isMedia).length} items'
+                  '${c.albumIncludesSubfolders ? ', including subfolders' : ', in this folder only'}',
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
               ),

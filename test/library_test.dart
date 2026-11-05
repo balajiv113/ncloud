@@ -13,6 +13,153 @@ import 'app_test.dart' show MemoryStore;
 import 'nextcloud_client_test.dart' show account, multistatus, responseEntry;
 
 void main() {
+  test(
+    'incoming folder API uses recipient paths and excludes self-owned shares',
+    () async {
+      final client = NextcloudClient(
+        transport: MockClient((request) async {
+          expect(request.url.queryParameters['shared_with_me'], 'true');
+          return http.Response(
+            jsonEncode({
+              'ocs': {
+                'meta': {'status': 'ok'},
+                'data': [
+                  {
+                    'path': '/Shared/Mounted name',
+                    'file_target': '/Old name',
+                    'item_type': 'folder',
+                    'uid_owner': 'bob',
+                    'uid_file_owner': 'bob',
+                    'share_type': 0,
+                  },
+                  {
+                    'path': '/Shared/Mounted name',
+                    'item_type': 'folder',
+                    'uid_owner': 'bob',
+                    'share_type': 1,
+                  },
+                  {
+                    'path': '/Shared/Mounted name/Nested',
+                    'item_type': 'folder',
+                    'uid_owner': 'bob',
+                    'share_type': 0,
+                  },
+                  {
+                    'path': '/Outgoing',
+                    'item_type': 'folder',
+                    'uid_owner': 'alice',
+                    'share_type': 0,
+                  },
+                  {
+                    'path': '/My reshared folder',
+                    'item_type': 'folder',
+                    'uid_owner': 'bob',
+                    'uid_file_owner': 'alice',
+                    'share_type': 0,
+                  },
+                  {
+                    'path': '/Public',
+                    'item_type': 'folder',
+                    'uid_owner': 'bob',
+                    'share_type': 3,
+                  },
+                  {
+                    'path': '/Photo.jpg',
+                    'item_type': 'file',
+                    'uid_owner': 'bob',
+                    'share_type': 0,
+                  },
+                ],
+              },
+            }),
+            200,
+          );
+        }),
+      );
+      addTearDown(client.close);
+      expect(await client.incomingSharedFolders(account), [
+        ['Shared', 'Mounted name'],
+      ]);
+    },
+  );
+
+  testWidgets(
+    'floating dock compacts on scroll and restores without moving content',
+    (tester) async {
+      tester.view.physicalSize = const Size(412, 915);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final c = AppController(store: MemoryStore());
+      await tester.pumpWidget(NcloudApp(controller: c));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Try demo'));
+      await tester.pumpAndSettle();
+      final dock = find.byKey(const ValueKey('navigation-dock'));
+      expect(tester.getSize(dock).height, 78);
+      for (final tab in [0, 4, 1]) {
+        final size = tester.getSize(find.byKey(ValueKey('navigate-$tab')));
+        expect(size.width, greaterThanOrEqualTo(48));
+        expect(size.height, greaterThanOrEqualTo(48));
+      }
+      await tester.drag(find.byType(CustomScrollView), const Offset(0, -350));
+      await tester.pumpAndSettle();
+      expect(tester.getSize(dock).height, 60);
+      expect(tester.getSize(dock).width, lessThanOrEqualTo(268));
+      final position = tester
+          .state<ScrollableState>(find.byType(Scrollable).first)
+          .position;
+      final offset = position.pixels;
+      await tester.pump(const Duration(seconds: 1));
+      expect(
+        position.pixels,
+        offset,
+        reason: 'dock resizing must not shift the scroll extent',
+      );
+      await tester.drag(find.byType(CustomScrollView), const Offset(0, 180));
+      await tester.pumpAndSettle();
+      expect(tester.getSize(dock).height, 78);
+      await tester.tap(find.byTooltip('Timeline'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.bySemanticsLabel('Alpine morning.jpg'));
+      await tester.pumpAndSettle();
+      expect(dock, findsNothing, reason: 'viewer stays immersive');
+      await tester.tap(find.byTooltip('Back to library'));
+      await tester.pumpAndSettle();
+      expect(dock, findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('dock honors reduced motion and retains compact tap targets', (
+    tester,
+  ) async {
+    tester.platformDispatcher.accessibilityFeaturesTestValue =
+        const FakeAccessibilityFeatures(disableAnimations: true);
+    addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
+    await tester.pumpWidget(
+      NcloudApp(controller: AppController(store: MemoryStore())),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Try demo'));
+    await tester.pumpAndSettle();
+    await tester.drag(find.byType(CustomScrollView), const Offset(0, -350));
+    await tester.pumpAndSettle();
+    final dock = tester.widget<AnimatedContainer>(
+      find.byKey(const ValueKey('navigation-dock')),
+    );
+    expect(dock.duration, Duration.zero);
+    for (final tab in [0, 4, 1]) {
+      final size = tester.getSize(find.byKey(ValueKey('navigate-$tab')));
+      expect(size.width, greaterThanOrEqualTo(48));
+      expect(size.height, greaterThanOrEqualTo(48));
+    }
+    await tester.tap(find.byTooltip('Albums'));
+    await tester.pumpAndSettle();
+    expect(find.text('Smart albums'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   test('trash restore targets a child of the restore collection', () async {
     final client = NextcloudClient(
       transport: MockClient((request) async {

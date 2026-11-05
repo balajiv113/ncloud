@@ -82,6 +82,8 @@ jobs:
                 http://127.0.0.1:8080/remote.php/dav/files/ncloud-ci/ncloud-index/seed.png
               docker exec --user www-data ncloud-nextcloud bash -c \
                 'for i in $(seq 1 200); do cp data/ncloud-ci/files/ncloud-index/seed.png "data/ncloud-ci/files/ncloud-index/seed-$i.png"; done'
+              docker exec --user www-data ncloud-nextcloud bash -c \
+                'mkdir -p data/ncloud-ci/files/ncloud-index/Travel/Japan; cp data/ncloud-ci/files/ncloud-index/seed.png data/ncloud-ci/files/ncloud-index/Travel/Japan/nested.png'
               docker exec --user www-data ncloud-nextcloud php occ files:scan --path=/ncloud-ci/files/ncloud-index --no-interaction
               docker exec --user www-data ncloud-nextcloud php occ memories:index --user=ncloud-ci --no-interaction
               exit 0
@@ -165,10 +167,10 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           mv app-release.apk ncloud-android.apk
-          gh release create "v0.5.2-preview.${{ github.run_number }}" ncloud-android.apk \
+          gh release create "v0.5.3-preview.${{ github.run_number }}" ncloud-android.apk \
             --target "${{ github.sha }}" --prerelease \
             --title "ncloud Android preview #${{ github.run_number }}" \
-            --notes "ncloud 0.5.2: Nextcloud-blue light/dark theme. Smart albums now represent each folder immediately under your photo source, even when its photos are only in subfolders. Descendant folders are never duplicate album cards; opening a parent includes all its nested media. Memories supplies parent covers without per-child metadata queries or a descendant walk. Empty branches stay hidden; native Nextcloud albums keep their membership. Expandable sections, fixed pinned shortcuts, streaming/offline copies and the HTTP 500 paging fix retained. CI now caches Gradle dependencies/task outputs and reports actual APK build duration. Updates reuse the cached development signer."
+            --notes "ncloud 0.5.3: fixes loose source photos collapsing the entire album catalogue. Photos at root now contains only direct media, alongside separate parent folder albums. Startup warms cached Smart/native albums independently of Timeline; refresh retains complete cards and photos without blank or partial loading frames. Approved floating navigation: labeled dock at rest, compact on downward scrolling, restored on scroll-up, reduced-motion support and no viewer dock. Shared now shows only incoming shared folders as photo album covers, excluding outgoing shares, single-file shares and empty folders; opening a card loads only that folder recursively. Nextcloud blue, native albums, streaming/offline copies and the HTTP 500 fix retained. Updates reuse the cached development signer."
 
   ios:
     if: github.event_name == 'workflow_dispatch' && inputs.build_ios
