@@ -103,6 +103,14 @@ class _FolderSyncScreenState extends State<FolderSyncScreen> {
                 ),
               ),
             ),
+          if (sync.activeId == null && sync.phase.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Text(
+                '${sync.phase}\n'
+                '${sync.transferred} transferred · ${sync.conflicts} name conflicts',
+              ),
+            ),
           for (final pair in sync.pairs) _pair(pair),
           if (!_loading && sync.pairs.isEmpty)
             const Padding(

@@ -233,13 +233,26 @@ import Network
     }
 
     private func copyBytes(_ source: URL, _ destination: URL) throws {
-      let input = try FileHandle(forReadingFrom: source)
-      defer { try? input.close() }
-      let output = try FileHandle(forWritingTo: destination)
-      defer { try? output.close() }
-      while let data = try input.read(upToCount: 1024 * 1024), !data.isEmpty {
-        try output.write(contentsOf: data)
+      guard let input = InputStream(url: source),
+            let output = OutputStream(url: destination, append: false) else { throw failure() }
+      input.open()
+      output.open()
+      defer { input.close(); output.close() }
+      let capacity = 1024 * 1024
+      let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: capacity)
+      defer { buffer.deallocate() }
+      while true {
+        let count = input.read(buffer, maxLength: capacity)
+        guard count >= 0 else { throw input.streamError ?? failure() }
+        if count == 0 { break }
+        var offset = 0
+        while offset < count {
+          let written = output.write(buffer.advanced(by: offset), maxLength: count - offset)
+          guard written > 0 else { throw output.streamError ?? failure() }
+          offset += written
+        }
       }
+      if let error = input.streamError ?? output.streamError { throw error }
     }
 
     func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {

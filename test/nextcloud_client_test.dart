@@ -57,6 +57,16 @@ void main() {
     },
   );
 
+  test('DAV file revisions are retained for conditional folder sync', () {
+    final file = NextcloudClient.parseFiles(
+      multistatus(
+        responseEntry(properties: '<d:getetag>"revision-1"</d:getetag>'),
+      ),
+      account,
+    ).single;
+    expect(file.etag, '"revision-1"');
+  });
+
   test('ignores failed properties and hrefs outside the account root', () {
     final xml = multistatus(
       [

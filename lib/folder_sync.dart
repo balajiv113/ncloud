@@ -802,6 +802,7 @@ class FolderSyncController extends ChangeNotifier {
     for (final segment in target.take(target.length - 1)) {
       _check(pair);
       final children = await client.listFiles(session, parent);
+      _check(pair);
       final match = children.where((file) => file.name == segment).singleOrNull;
       parent = [...parent, segment];
       if (match == null) {

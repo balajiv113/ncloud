@@ -1299,6 +1299,7 @@ class NextcloudClient {
               ? null
               : value('fileid', 'http://owncloud.org/ns'),
           favorite: value('favorite', 'http://owncloud.org/ns') == '1',
+          etag: value('getetag').isEmpty ? null : value('getetag'),
         ),
       );
     }
