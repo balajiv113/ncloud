@@ -25,8 +25,6 @@ jobs:
   android:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    env:
-      ANDROID_USER_HOME: ${{ runner.temp }}/ncloud-android
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-java@v5
@@ -78,6 +76,8 @@ jobs:
           flutter test test/live_nextcloud_test.dart \
             --dart-define=LIVE_NEXTCLOUD=true \
             --dart-define=NEXTCLOUD_TEST_PASSWORD="$NEXTCLOUD_TEST_PASSWORD"
+      - name: Set Android preview signing location
+        run: echo "ANDROID_USER_HOME=$RUNNER_TEMP/ncloud-android" >> "$GITHUB_ENV"
       - name: Reuse development preview signer when available
         uses: actions/cache@v4
         with:
