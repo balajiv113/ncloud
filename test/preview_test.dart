@@ -169,19 +169,28 @@ void main() {
       final first = controller.preview(photo());
       expect(identical(first, controller.preview(photo())), isTrue);
       await expectLater(first, throwsA(isA<CloudException>()));
-      final successful = controller.preview(photo());
-      expect(await successful, png);
-      expect(identical(successful, controller.preview(photo())), isTrue);
+      expect(controller.cachedPreview(photo()), isNull);
+      expect(await controller.preview(photo()), png);
+      expect(await controller.preview(photo()), png);
+      expect(controller.cachedPreview(photo()), png);
+      expect(controller.previewCurrent(photo()), isTrue);
       expect(calls, 2);
       await controller.preview(photo(), size: 1280);
-      await controller.preview(photo(modified: DateTime.utc(2026, 11, 6)));
+      final edited = photo(modified: DateTime.utc(2026, 11, 6));
+      expect(controller.previewCurrent(edited), isFalse);
+      expect(
+        controller.cachedPreview(edited),
+        png,
+        reason: 'the older revision stays visible while the edit loads',
+      );
+      await controller.preview(edited);
       expect(calls, 4);
     },
   );
 
   test('cache remains bounded by entry count and encoded bytes', () async {
     var calls = 0;
-    final data = Uint8List(4 * 1024 * 1024);
+    final data = Uint8List(7 * 1024 * 1024 + 512 * 1024);
     final client = NextcloudClient(
       transport: MockClient((request) async {
         calls++;
@@ -191,10 +200,12 @@ void main() {
     final controller = AppController(store: MemoryStore(), client: client)
       ..account = account;
     addTearDown(controller.dispose);
-    for (var i = 0; i < 7; i++) {
+    for (var i = 0; i < 9; i++) {
       await controller.preview(photo(id: '$i'));
     }
+    expect(controller.cachedPreview(photo(id: '8')), isNotNull);
+    expect(controller.cachedPreview(photo(id: '0')), isNull);
     await controller.preview(photo(id: '0'));
-    expect(calls, 8);
+    expect(calls, 10);
   });
 }

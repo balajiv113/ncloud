@@ -81,6 +81,17 @@ Future<void> fileActions(
     ),
   );
   if (!context.mounted || action == null || c.busy) return;
+  try {
+    file = await c.resolve(file);
+  } catch (e) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(errorMessage(e))));
+    }
+    return;
+  }
+  if (!context.mounted) return;
   switch (action) {
     case 'offline':
       try {

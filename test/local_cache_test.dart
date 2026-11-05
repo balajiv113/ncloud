@@ -57,8 +57,10 @@ void main() {
 
   test('thumbnails and listings persist, report size and clear', () async {
     expect(await cache.readThumbnail('k'), isNull);
-    await cache.writeThumbnail('k', Uint8List.fromList(png));
-    expect(await cache.readThumbnail('k'), png);
+    await cache.writeThumbnail('k', Uint8List.fromList(png), version: 'e1');
+    final stored = await cache.readThumbnail('k');
+    expect(stored!.bytes, png);
+    expect(stored.version, 'e1');
     await cache.writeListing('l', [photo()]);
     expect((await cache.readListing('l'))!.single.name, 'Sun & sky.png');
     expect(await cache.size(), greaterThan(png.length));

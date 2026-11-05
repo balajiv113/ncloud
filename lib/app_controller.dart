@@ -50,8 +50,16 @@ String errorMessage(Object error) => switch (error) {
 };
 
 class AppController extends ChangeNotifier {
-  AppController({required this.store, NextcloudClient? client, this.cache})
-    : client = client ?? NextcloudClient();
+  AppController({
+    required this.store,
+    NextcloudClient? client,
+    this.cache,
+    this.pathlessTimeline = false,
+  }) : client = client ?? NextcloudClient();
+
+  /// Paints the Timeline straight from Memories rows and looks file paths up
+  /// in the background, so scrolling never waits on WebDAV searches.
+  final bool pathlessTimeline;
 
   final SessionStore store;
   final NextcloudClient client;
@@ -134,9 +142,20 @@ class AppController extends ChangeNotifier {
   int _loginVersion = 0;
   bool _disposed = false;
   List<CloudFile> _demo = [];
-  final Map<String, Future<Uint8List>> _previews = {};
-  final Map<String, int> _previewSizes = {};
-  int _previewBytes = 0;
+
+  /// Decoded-ready thumbnails keyed by file id and size, each tagged with
+  /// the file version it was rendered from. Survives revisions so a stale
+  /// thumbnail stays on screen until its replacement arrives.
+  final Map<String, ({Uint8List bytes, String version})> _thumbs = {};
+  int _thumbBytes = 0;
+  static const thumbnailMemoryBudget = 64 * 1024 * 1024;
+  final Map<String, Future<Uint8List>> _previewLoads = {};
+  final Map<String, int> _previewInterest = {};
+  final Map<String, _PreviewRequest> _previewBatch = {};
+  Timer? _previewTimer;
+  int _previewBatches = 0;
+  bool _multipreviewUnavailable = false;
+  int _multipreviewFailures = 0;
   final Map<String, Future<CloudFile?>> _covers = {};
   final Map<String, List<CloudFile>> _demoTrash = {};
 
@@ -365,6 +384,15 @@ class AppController extends ChangeNotifier {
 
   bool get albumIncludesSubfolders =>
       tab != 4 || !listEquals(directory, photoRoot);
+
+  /// The main timeline paints from Memories rows alone and looks paths up
+  /// in the background; albums need paths for their sub-folder chips.
+  bool _pathless(int currentTab) =>
+      pathlessTimeline && currentTab == 0 && activeNativeAlbum == null;
+
+  /// Metadata-only batches are cheap, so the timeline asks for many more
+  /// photos per request than views that must look up paths.
+  int _dayBatchLimit(int currentTab) => _pathless(currentTab) ? 1500 : 200;
 
   bool _recursiveMedia(int currentTab, List<String> path) =>
       currentTab != 4 || !listEquals(path, photoRoot);
@@ -679,9 +707,11 @@ class AppController extends ChangeNotifier {
     if (listing.days case final days?) {
       final ids = <int>[];
       var count = 0;
+      final limit = _dayBatchLimit(currentTab);
       for (final day in days) {
         if (listing.loaded.contains(day.id)) continue;
-        if (ids.length >= 40 || (ids.isNotEmpty && count + day.count > 200)) {
+        if (ids.length >= 120 ||
+            (ids.isNotEmpty && count + day.count > limit)) {
           break;
         }
         ids.add(day.id);
@@ -694,6 +724,7 @@ class AppController extends ChangeNotifier {
         path: path,
         favorites: currentTab == 2,
         recursive: recursive,
+        resolvePaths: !_pathless(currentTab),
       );
       return (files: files, days: ids);
     }
@@ -741,6 +772,7 @@ class AppController extends ChangeNotifier {
     items = fileStore.resolve(listing.keys);
     hasMore = listing.more;
     if (tab == 0) _libraryFiles = items;
+    _queuePending(items);
     if (key != null) {
       _listings[key] = listing;
       if (_listings.length > 20) _listings.remove(_listings.keys.first);
@@ -816,13 +848,14 @@ class AppController extends ChangeNotifier {
         final counts = {for (final day in days) day.id: day.count};
         final batch = <int>[];
         var count = 0;
+        final limit = _dayBatchLimit(tab);
         for (final day in _pendingDays.toList().reversed) {
           final size = counts[day];
           if (size == null || listing.loaded.contains(day)) {
             _pendingDays.remove(day);
             continue;
           }
-          if (batch.isNotEmpty && count + size > 200) break;
+          if (batch.isNotEmpty && count + size > limit) break;
           batch.add(day);
           count += size;
         }
@@ -838,6 +871,7 @@ class AppController extends ChangeNotifier {
           path: path,
           favorites: currentTab == 2,
           recursive: _recursiveMedia(currentTab, path),
+          resolvePaths: !_pathless(currentTab),
         );
         if (version != _loadVersion ||
             _disposed ||
@@ -1250,6 +1284,7 @@ class AppController extends ChangeNotifier {
     notifyListeners();
     Object? failure;
     try {
+      files = await _resolveAll(files);
       for (final file in files) {
         if (file.readOnly) {
           throw const CloudException(
@@ -1400,6 +1435,7 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> favorite(CloudFile file) => _action(() async {
+    file = await resolve(file);
     if (demo) {
       _demo = _demo
           .map((f) => f.key == file.key ? f.withFavorite(!file.favorite) : f)
@@ -1435,74 +1471,331 @@ class AppController extends ChangeNotifier {
         fileStore.invalidateFolder(directory);
       }, 'Upload complete');
 
-  void _discardPreview(String key) {
-    _previews.remove(key);
-    _previewBytes -= _previewSizes.remove(key) ?? 0;
-  }
-
   void _clearPreviews() {
-    _previews.clear();
-    _previewSizes.clear();
-    _previewBytes = 0;
+    _pendingIds.clear();
+    _resolvedIds.clear();
+    _thumbs.clear();
+    _thumbBytes = 0;
+    _previewLoads.clear();
+    _previewInterest.clear();
+    _previewTimer?.cancel();
+    _previewTimer = null;
+    for (final request in _previewBatch.values) {
+      request.completer.completeError(const PreviewCancelled());
+    }
+    _previewBatch.clear();
+    _multipreviewUnavailable = false;
+    _multipreviewFailures = 0;
   }
 
+  final Set<String> _pendingIds = {};
+  final Map<String, CloudFile> _resolvedIds = {};
+  bool _resolvingPaths = false;
+
+  void _queuePending(Iterable<CloudFile> files) {
+    var added = false;
+    for (final file in files) {
+      if (file.pending && _pendingIds.add(file.id!)) added = true;
+    }
+    if (added && !_resolvingPaths) {
+      _resolvingPaths = true;
+      unawaited(_resolvePending());
+    }
+  }
+
+  /// Looks real paths up for placeholder timeline items, newest first, and
+  /// swaps them into every listing without touching their thumbnails.
+  Future<void> _resolvePending() async {
+    try {
+      while (_pendingIds.isNotEmpty && !_disposed) {
+        final session = account;
+        if (session == null) break;
+        final batch = _pendingIds.take(400).toList();
+        _pendingIds.removeAll(batch);
+        final Map<String, CloudFile> found;
+        try {
+          found = await client.resolveFileIds(session, batch);
+        } on Object {
+          // Retried on demand by [resolve] and on the next publish.
+          break;
+        }
+        if (_disposed || !identical(session, account)) break;
+        _applyResolved(batch, found);
+      }
+    } finally {
+      _resolvingPaths = false;
+    }
+  }
+
+  void _applyResolved(List<String> ids, Map<String, CloudFile> found) {
+    final renamed = <String, String>{};
+    final gone = <String>{};
+    final resolved = <CloudFile>[];
+    for (final id in ids) {
+      final key = CloudFile(
+        path: [CloudFile.pendingRoot, id],
+        name: id,
+        isDirectory: false,
+      ).key;
+      final placeholder = fileStore[key];
+      final real = found[id];
+      if (real == null) {
+        gone.add(key);
+        continue;
+      }
+      final day = placeholder?.captureDay;
+      final file = placeholder != null && day != null
+          ? real.withCaptureDate(
+              placeholder.taken ?? real.modified ?? DateTime.now(),
+              placeholder.etag ?? real.etag,
+              day: day,
+            )
+          : real;
+      _resolvedIds[id] = file;
+      resolved.add(file);
+      renamed[key] = file.key;
+    }
+    fileStore.putAll(resolved);
+    var changed = false;
+    for (final listing in {..._listings.values, ?_activeListing}) {
+      if (listing.replace(renamed, gone)) changed = true;
+    }
+    fileStore.removeKeys({...renamed.keys, ...gone});
+    if (!changed) return;
+    if (_activeListing case final listing?) {
+      items = fileStore.resolve(listing.keys);
+      if (tab == 0) _libraryFiles = items;
+    }
+    _persistStore();
+    notifyListeners();
+  }
+
+  /// Real WebDAV location of [file]; actions call this before touching paths.
+  Future<CloudFile> resolve(CloudFile file) async {
+    if (!file.pending) return file;
+    final id = file.id!;
+    if (_resolvedIds[id] case final known?) return known;
+    final session = account;
+    if (session == null) {
+      throw const CloudException('Sign in again to open this item.');
+    }
+    final found = await client.resolveFileIds(session, [id]);
+    _applyResolved([id], found);
+    return _resolvedIds[id] ??
+        (throw const CloudException('This item is no longer available.'));
+  }
+
+  Future<List<CloudFile>> _resolveAll(List<CloudFile> files) async {
+    if (!files.any((f) => f.pending)) return files;
+    return [for (final file in files) await resolve(file)];
+  }
+
+  String? _previewKey(CloudFile file, int size) {
+    final session = account;
+    if (session == null) return null;
+    return '${session.server}|${session.userId}|${file.id ?? file.key}|$size';
+  }
+
+  static String _previewVersion(CloudFile file) {
+    final etag = (file.etag ?? '').replaceAll('"', '');
+    return etag.isNotEmpty
+        ? etag
+        : '${file.modified?.microsecondsSinceEpoch}|${file.size}';
+  }
+
+  void _rememberPreview(String key, Uint8List bytes, String version) {
+    final old = _thumbs.remove(key);
+    if (old != null) _thumbBytes -= old.bytes.length;
+    _thumbs[key] = (bytes: bytes, version: version);
+    _thumbBytes += bytes.length;
+    while ((_thumbBytes > thumbnailMemoryBudget || _thumbs.length > 4000) &&
+        _thumbs.length > 1) {
+      final oldest = _thumbs.keys.first;
+      _thumbBytes -= _thumbs.remove(oldest)!.bytes.length;
+    }
+  }
+
+  /// Thumbnail already in memory, possibly from an older file revision, so
+  /// tiles can paint on their first frame without a loading state.
+  Uint8List? cachedPreview(CloudFile file, {int size = 384}) {
+    final key = _previewKey(file, size);
+    final entry = key == null ? null : _thumbs.remove(key);
+    if (entry == null) return null;
+    _thumbs[key!] = entry;
+    return entry.bytes;
+  }
+
+  /// Whether [cachedPreview] matches the file's current revision.
+  bool previewCurrent(CloudFile file, {int size = 384}) {
+    final key = _previewKey(file, size);
+    return key != null && _thumbs[key]?.version == _previewVersion(file);
+  }
+
+  /// Current thumbnail for [file]: memory, then disk, then the server.
+  /// A cached thumbnail of an older revision is handed to [stale] at once
+  /// while the new one downloads. Callers must [releasePreview] if they stop
+  /// waiting, so requests for tiles scrolled away are dropped.
   Future<Uint8List> preview(
     CloudFile file, {
     bool retry = false,
     int size = 384,
+    void Function(Uint8List bytes)? stale,
   }) {
     final session = account;
-    if (session == null) {
+    final key = _previewKey(file, size);
+    if (session == null || key == null) {
       return Future.error(const CloudException('Reconnect to load previews.'));
     }
-    final key =
-        '${session.server}|${session.userId}|${file.id ?? file.key}|'
-        '${file.modified?.microsecondsSinceEpoch}|${file.size}|${(file.etag ?? '').replaceAll('"', '')}|$size';
-    if (retry) _discardPreview(key);
-    final cached = _previews.remove(key);
-    if (cached != null) {
-      _previews[key] = cached;
-      return cached;
+    final version = _previewVersion(file);
+    final memory = _thumbs[key];
+    if (!retry && memory?.version == version) {
+      cachedPreview(file, size: size);
+      return Future.value(memory!.bytes);
     }
-    late final Future<Uint8List> pending;
+    final loadKey = '$key|$version';
+    _previewInterest[loadKey] = (_previewInterest[loadKey] ?? 0) + 1;
+    final existing = _previewLoads[loadKey];
+    if (existing != null && !retry) return existing;
     final disk = cache;
-    Future<Uint8List> fetch() async {
+    Future<Uint8List> load() async {
       if (!retry && disk != null) {
         final stored = await disk.readThumbnail(key);
-        if (stored != null) return stored;
+        if (stored != null) {
+          if (stored.version == version) {
+            _rememberPreview(key, stored.bytes, version);
+            return stored.bytes;
+          }
+          if (memory == null) stale?.call(stored.bytes);
+        }
       }
-      final bytes = await client.preview(session, file, size: size);
-      unawaited(disk?.writeThumbnail(key, bytes));
+      final bytes = await _fetchPreview(session, file, size, loadKey);
+      if (identical(account, session)) {
+        _rememberPreview(key, bytes, version);
+        unawaited(disk?.writeThumbnail(key, bytes, version: version));
+      }
       return bytes;
     }
 
-    pending = fetch().then(
-      (bytes) {
-        if (identical(_previews[key], pending)) {
-          _previewSizes[key] = bytes.length;
-          _previewBytes += bytes.length;
-          while (_previewBytes > 24 * 1024 * 1024 && _previews.isNotEmpty) {
-            _discardPreview(_previews.keys.first);
-          }
-        }
-        return bytes;
-      },
-      onError: (Object error, StackTrace stack) {
-        if (identical(_previews[key], pending)) _discardPreview(key);
-        Error.throwWithStackTrace(error, stack);
-      },
-    );
-    _previews[key] = pending;
-    while (_previews.length > 128) {
-      _discardPreview(_previews.keys.first);
-    }
+    late final Future<Uint8List> pending;
+    pending = load().whenComplete(() {
+      if (identical(_previewLoads[loadKey], pending)) {
+        _previewLoads.remove(loadKey);
+        _previewInterest.remove(loadKey);
+      }
+    });
+    _previewLoads[loadKey] = pending;
     return pending;
+  }
+
+  /// A tile no longer needs [file]'s thumbnail.
+  void releasePreview(CloudFile file, {int size = 384}) {
+    final key = _previewKey(file, size);
+    if (key == null) return;
+    final loadKey = '$key|${_previewVersion(file)}';
+    final interest = (_previewInterest[loadKey] ?? 0) - 1;
+    if (interest > 0) {
+      _previewInterest[loadKey] = interest;
+    } else {
+      _previewInterest.remove(loadKey);
+    }
+  }
+
+  Future<Uint8List> _fetchPreview(
+    Account session,
+    CloudFile file,
+    int size,
+    String loadKey,
+  ) {
+    if (file.id == null ||
+        memoriesAvailable != true ||
+        _multipreviewUnavailable ||
+        size > 512) {
+      return client.preview(session, file, size: size);
+    }
+    final batchKey = '${file.id}|$size';
+    final queued = _previewBatch.remove(batchKey);
+    final request =
+        queued ?? _PreviewRequest(file, size, loadKey, Completer<Uint8List>());
+    // Re-inserting keeps the most recently wanted thumbnails last.
+    _previewBatch[batchKey] = request;
+    _previewTimer ??= Timer(
+      const Duration(milliseconds: 12),
+      () => _flushPreviews(session),
+    );
+    return request.completer.future;
+  }
+
+  /// Sends queued thumbnails as Memories multipreview batches, newest
+  /// requests (tiles currently on screen) first.
+  void _flushPreviews(Account session) {
+    _previewTimer = null;
+    if (!identical(account, session)) return;
+    while (_previewBatch.isNotEmpty && _previewBatches < 3) {
+      final batch = <_PreviewRequest>[];
+      for (final key in _previewBatch.keys.toList().reversed) {
+        final request = _previewBatch[key]!;
+        if (batch.isNotEmpty && request.size != batch.first.size) continue;
+        _previewBatch.remove(key);
+        if ((_previewInterest[request.loadKey] ?? 0) <= 0) {
+          request.completer.completeError(const PreviewCancelled());
+          continue;
+        }
+        batch.add(request);
+        if (batch.length == 48) break;
+      }
+      if (batch.isEmpty) continue;
+      _previewBatches++;
+      unawaited(_sendPreviews(session, batch));
+    }
+  }
+
+  Future<void> _sendPreviews(
+    Account session,
+    List<_PreviewRequest> batch,
+  ) async {
+    void single(_PreviewRequest request) => request.completer.complete(
+      client.preview(session, request.file, size: request.size),
+    );
+    try {
+      if (batch.length == 1) {
+        single(batch.single);
+        return;
+      }
+      final previews = await client.multipreview(session, [
+        for (final request in batch) request.file.id!,
+      ], size: batch.first.size);
+      _multipreviewFailures = 0;
+      for (final request in batch) {
+        final bytes = previews[request.file.id];
+        if (bytes != null) {
+          request.completer.complete(bytes);
+        } else {
+          single(request);
+        }
+      }
+    } on Object {
+      // Older Memories versions or proxies may not support batching.
+      if (++_multipreviewFailures >= 2) _multipreviewUnavailable = true;
+      for (final request in batch) {
+        if (!request.completer.isCompleted) single(request);
+      }
+    } finally {
+      _previewBatches--;
+      if (_previewBatch.isNotEmpty) {
+        _previewTimer ??= Timer(Duration.zero, () => _flushPreviews(session));
+      }
+    }
   }
 
   /// Previously saved original for offline replay, if any.
   Future<File?> offlineCopy(CloudFile file) async {
     final session = account;
     if (cache == null || session == null) return null;
+    try {
+      file = await resolve(file);
+    } on Object {
+      return null;
+    }
     final copy = await cache!.original(_originalKey(session, file), file.name);
     return await copy.exists() ? copy : null;
   }
@@ -1527,6 +1820,7 @@ class AppController extends ChangeNotifier {
     if (cache == null || session == null) {
       throw const CloudException('Offline copies need a connected server.');
     }
+    file = await resolve(file);
     final target = await cache!.original(
       _originalKey(session, file),
       file.name,
@@ -1581,6 +1875,7 @@ class AppController extends ChangeNotifier {
     notifyListeners();
     File? output;
     try {
+      file = await resolve(file);
       final folder = Directory(
         '${(await getTemporaryDirectory()).path}/ncloud-downloads',
       );
@@ -1648,6 +1943,22 @@ class _MediaListing {
     }
   }
 
+  /// Swaps placeholder keys for resolved files, dropping any in [gone].
+  bool replace(Map<String, String> renamed, Set<String> gone) {
+    if (!keys.any((k) => renamed.containsKey(k) || gone.contains(k))) {
+      return false;
+    }
+    final next = <String>[];
+    _known.clear();
+    for (final key in keys) {
+      if (gone.contains(key)) continue;
+      final value = renamed[key] ?? key;
+      if (_known.add(value)) next.add(value);
+    }
+    keys = next;
+    return true;
+  }
+
   Map<String, dynamic> toJson() => {
     'keys': keys,
     'days': days?.map((d) => d.toJson()).toList(),
@@ -1670,4 +1981,17 @@ class _MediaListing {
     listing.loaded.addAll((value['loaded'] as List).cast<int>());
     return listing;
   }
+}
+
+class _PreviewRequest {
+  _PreviewRequest(this.file, this.size, this.loadKey, this.completer);
+  final CloudFile file;
+  final int size;
+  final String loadKey;
+  final Completer<Uint8List> completer;
+}
+
+/// A thumbnail request dropped because no tile is waiting for it anymore.
+class PreviewCancelled implements Exception {
+  const PreviewCancelled();
 }

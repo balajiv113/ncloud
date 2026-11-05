@@ -457,6 +457,72 @@ class NextcloudClient {
     return json;
   }
 
+  /// Thumbnails for many files in one streamed Memories request. Files whose
+  /// preview is not generated yet are omitted; callers fetch those singly.
+  Future<Map<String, Uint8List>> multipreview(
+    Account account,
+    List<String> fileIds, {
+    int size = 384,
+  }) async {
+    if (fileIds.isEmpty) return {};
+    final response = await _request(
+      'POST',
+      serverEndpoint(account.server, [
+        'index.php',
+        'apps',
+        'memories',
+        'api',
+        'image',
+        'multipreview',
+      ]),
+      account: account,
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/octet-stream',
+      },
+      body: jsonEncode({
+        'files': [
+          for (final id in fileIds)
+            {
+              'reqid': id,
+              'fileid': int.parse(id),
+              'x': size,
+              'y': size,
+              'a': '1',
+            },
+        ],
+      }),
+    );
+    _expect(response, {200});
+    return parseMultipreview(response.bodyBytes);
+  }
+
+  /// Parses `[1-byte header length][JSON header][image bytes]` records.
+  static Map<String, Uint8List> parseMultipreview(Uint8List body) {
+    final previews = <String, Uint8List>{};
+    var offset = 0;
+    while (offset < body.length) {
+      final length = body[offset++];
+      if (offset + length > body.length) {
+        throw const FormatException('Truncated Memories preview header.');
+      }
+      final header =
+          jsonDecode(utf8.decode(body.sublist(offset, offset + length))) as Map;
+      offset += length;
+      final size = header['len'];
+      if (size is! int || size <= 0 || offset + size > body.length) {
+        throw const FormatException('Truncated Memories preview.');
+      }
+      previews['${header['reqid']}'] = Uint8List.sublistView(
+        body,
+        offset,
+        offset + size,
+      );
+      offset += size;
+    }
+    return previews;
+  }
+
   Future<List<MemoryDay>?> memoryDays(
     Account account, {
     List<String> path = const [],
@@ -490,6 +556,7 @@ class NextcloudClient {
     List<String> path = const [],
     bool favorites = false,
     bool recursive = true,
+    bool resolvePaths = true,
   }) async {
     if (dayIds.isEmpty) return [];
     final rows = await _memories(
@@ -511,27 +578,86 @@ class NextcloudClient {
       }
       metadata[id.toString()] = data;
     }
-    final ids = metadata.keys.toList();
-    final files = <CloudFile>[];
-    // Resolve real DAV paths in batches, never an info request per photo.
-    for (var start = 0; start < ids.length; start += fileIdLimit) {
-      final batch = ids.skip(start).take(fileIdLimit).toList();
-      files.addAll(await search(account, fileIds: batch, limit: batch.length));
+    if (!resolvePaths) {
+      return [
+        for (final MapEntry(key: id, value: data) in metadata.entries)
+          _memoryFile(id, data),
+      ];
     }
+    final found = await resolveFileIds(account, metadata.keys.toList());
     return [
-      for (final file in files)
-        if (metadata[file.id] case final data?)
-          file.withCaptureDate(
-            DateTime.fromMillisecondsSinceEpoch(
-              (int.tryParse(data['epoch']?.toString() ?? '') ??
-                      (data['dayid'] as int) * 86400) *
-                  1000,
-              isUtc: true,
-            ),
-            data['etag'] as String?,
-            day: data['dayid'] as int,
-          ),
+      for (final MapEntry(key: id, value: data) in metadata.entries)
+        if (found[id] case final file?) withMemoryDate(file, data),
     ];
+  }
+
+  /// Applies the capture date and revision from a Memories day row.
+  static CloudFile withMemoryDate(CloudFile file, Map<String, dynamic> data) =>
+      file.withCaptureDate(
+        DateTime.fromMillisecondsSinceEpoch(
+          (int.tryParse(data['epoch']?.toString() ?? '') ??
+                  (data['dayid'] as int) * 86400) *
+              1000,
+          isUtc: true,
+        ),
+        data['etag'] as String?,
+        day: data['dayid'] as int,
+      );
+
+  /// A grid-ready file built purely from a Memories row; its path is a
+  /// placeholder until [resolveFileIds] finds the real location.
+  static CloudFile _memoryFile(String id, Map<String, dynamic> data) {
+    final name = data['basename']?.toString() ?? id;
+    final video = data['isvideo'] == 1 || data['isvideo'] == true;
+    final type = data['mimetype']?.toString();
+    return withMemoryDate(
+      CloudFile(
+        path: [CloudFile.pendingRoot, id],
+        name: name,
+        isDirectory: false,
+        contentType: type != null && type.contains('/')
+            ? type
+            : video
+            ? 'video/mp4'
+            : 'image/jpeg',
+        size: data['size'] is int ? data['size'] as int : 0,
+        id: id,
+        favorite: data['isfavorite'] == 1 || data['isfavorite'] == true,
+      ),
+      data,
+    );
+  }
+
+  /// Looks up real files for [ids] with a few concurrent search batches,
+  /// never one request per photo.
+  Future<Map<String, CloudFile>> resolveFileIds(
+    Account account,
+    List<String> ids, {
+    int concurrency = 4,
+  }) async {
+    final batches = [
+      for (var start = 0; start < ids.length; start += fileIdLimit)
+        ids.skip(start).take(fileIdLimit).toList(),
+    ];
+    final found = <String, CloudFile>{};
+    var next = 0;
+    Future<void> worker() async {
+      while (next < batches.length) {
+        final batch = batches[next++];
+        for (final file in await search(
+          account,
+          fileIds: batch,
+          limit: batch.length,
+        )) {
+          if (file.id case final id?) found[id] = file;
+        }
+      }
+    }
+
+    await Future.wait([
+      for (var i = 0; i < concurrency && i < batches.length; i++) worker(),
+    ]);
+    return found;
   }
 
   Future<List<MemoryFolder>> memoryFolders(
@@ -1106,8 +1232,10 @@ class NextcloudClient {
     } on http.ClientException {
       throw const CloudException('Preview unavailable. Tap to retry.');
     } finally {
+      // Newest first: after a fast scroll the tiles now on screen were
+      // requested last.
       if (_previewQueue.isNotEmpty) {
-        _previewQueue.removeFirst().complete();
+        _previewQueue.removeLast().complete();
       } else {
         _activePreviews--;
       }

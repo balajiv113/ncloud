@@ -24,7 +24,12 @@ class MediaTile extends StatefulWidget {
 }
 
 class _MediaTileState extends State<MediaTile> {
-  Future<({File? original, Uint8List? bytes})>? _preview;
+  Uint8List? _bytes;
+  File? _original;
+  bool _failed = false;
+  bool _instant = false;
+  bool _waiting = false;
+  int _generation = 0;
 
   @override
   void initState() {
@@ -42,31 +47,81 @@ class _MediaTileState extends State<MediaTile> {
         oldWidget.file.etag != widget.file.etag ||
         oldWidget.previewSize != widget.previewSize ||
         oldWidget.controller != widget.controller) {
-      _preview = null;
-      _load();
+      _release(oldWidget);
+      _load(keep: oldWidget.file.key == widget.file.key);
     }
   }
 
-  void _load({bool retry = false}) {
-    if (widget.file.demoColor == null) {
-      _preview = _source(retry);
-    }
+  @override
+  void dispose() {
+    _release(widget);
+    super.dispose();
   }
 
-  Future<({File? original, Uint8List? bytes})> _source(bool retry) async {
-    if (widget.file.isImage) {
-      final original = await widget.controller.offlineCopy(widget.file);
-      if (original != null) return (original: original, bytes: null);
-    }
-    return (
-      original: null,
-      bytes: await widget.controller.preview(
-        widget.file,
-        retry: retry,
-        size: widget.previewSize,
-      ),
-    );
+  void _release(MediaTile tile) {
+    if (!_waiting) return;
+    _waiting = false;
+    tile.controller.releasePreview(tile.file, size: tile.previewSize);
   }
+
+  /// Paints any cached thumbnail immediately, then fetches only if it is
+  /// missing or from an older revision of the file.
+  void _load({bool retry = false, bool keep = false}) {
+    if (widget.file.demoColor != null) return;
+    final generation = ++_generation;
+    final c = widget.controller;
+    final cached = c.cachedPreview(widget.file, size: widget.previewSize);
+    _bytes = cached ?? (keep ? _bytes : null);
+    _instant = cached != null;
+    _failed = false;
+    _original = null;
+    if (!retry &&
+        cached != null &&
+        c.previewCurrent(widget.file, size: widget.previewSize)) {
+      return;
+    }
+    _waiting = true;
+    c
+        .preview(
+          widget.file,
+          retry: retry,
+          size: widget.previewSize,
+          stale: (bytes) {
+            if (mounted && generation == _generation && _bytes == null) {
+              setState(() => _bytes = bytes);
+            }
+          },
+        )
+        .then(
+          (bytes) {
+            if (!mounted || generation != _generation) return;
+            _waiting = false;
+            if (!identical(bytes, _bytes)) setState(() => _bytes = bytes);
+          },
+          onError: (Object error) {
+            if (!mounted || generation != _generation) return;
+            _waiting = false;
+            if (error is PreviewCancelled) {
+              _load();
+            } else if (_bytes == null) {
+              _useOffline(generation);
+            }
+          },
+        );
+  }
+
+  Future<void> _useOffline(int generation) async {
+    final original = widget.file.isImage
+        ? await widget.controller.offlineCopy(widget.file)
+        : null;
+    if (!mounted || generation != _generation) return;
+    setState(() {
+      _original = original;
+      _failed = original == null;
+    });
+  }
+
+  void _retry() => setState(() => _load(retry: true));
 
   @override
   Widget build(BuildContext context) {
@@ -76,41 +131,60 @@ class _MediaTileState extends State<MediaTile> {
         child: const SizedBox.expand(),
       );
     }
-    if (_preview == null) return _fallback(context, 'Preview unavailable');
-    return FutureBuilder<({File? original, Uint8List? bytes})>(
-      future: _preview,
-      builder: (context, snapshot) {
-        if (snapshot.hasError) {
-          return InkWell(
-            onTap: () => setState(() => _load(retry: true)),
-            child: _fallback(context, 'Preview unavailable. Tap to retry.'),
-          );
-        }
-        if (snapshot.data case final source?) {
-          final ImageProvider image = source.original != null
-              ? FileImage(source.original!)
-              : MemoryImage(source.bytes!);
-          return Image(
-            image: ResizeImage(
-              image,
-              width: widget.previewSize,
-              height: widget.previewSize,
-              policy: ResizeImagePolicy.fit,
-            ),
-            fit: widget.fit,
-            gaplessPlayback: true,
-            errorBuilder: (_, _, _) => InkWell(
-              onTap: () => setState(() => _load(retry: true)),
-              child: _fallback(context, 'Unsupported preview. Tap to retry.'),
-            ),
-          );
-        }
-        return ColoredBox(
-          color: Theme.of(context).colorScheme.surfaceContainerHighest,
-          child: const Center(child: CircularProgressIndicator(strokeWidth: 2)),
-        );
-      },
+    final placeholder = _placeholder(context);
+    if (_failed) {
+      return InkWell(
+        onTap: _retry,
+        child: _fallback(context, 'Preview unavailable. Tap to retry.'),
+      );
+    }
+    final ImageProvider? image = _original != null
+        ? FileImage(_original!)
+        : _bytes != null
+        ? MemoryImage(_bytes!)
+        : null;
+    if (image == null) return placeholder;
+    final instant =
+        _instant || MediaQuery.maybeDisableAnimationsOf(context) == true;
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        placeholder,
+        Image(
+          image: ResizeImage(
+            image,
+            width: widget.previewSize,
+            height: widget.previewSize,
+            policy: ResizeImagePolicy.fit,
+          ),
+          fit: widget.fit,
+          gaplessPlayback: true,
+          frameBuilder: (context, child, frame, synchronous) =>
+              synchronous || instant
+              ? child
+              : AnimatedOpacity(
+                  opacity: frame == null ? 0 : 1,
+                  duration: const Duration(milliseconds: 180),
+                  child: child,
+                ),
+          errorBuilder: (_, _, _) => InkWell(
+            onTap: _retry,
+            child: _fallback(context, 'Unsupported preview. Tap to retry.'),
+          ),
+        ),
+      ],
     );
+  }
+
+  /// Calm tinted tile shown until a thumbnail arrives; never a spinner.
+  Widget _placeholder(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final tint = [
+      colors.surfaceContainerHighest,
+      colors.surfaceContainerHigh,
+      colors.surfaceContainer,
+    ][widget.file.key.hashCode.abs() % 3];
+    return ColoredBox(color: tint);
   }
 
   Widget _fallback(BuildContext context, String label) => ColoredBox(

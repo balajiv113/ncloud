@@ -7,11 +7,16 @@ import 'library_screen.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  // Keep scrolled-past thumbnails decoded so returning to them is instant.
+  PaintingBinding.instance.imageCache
+    ..maximumSize = 3000
+    ..maximumSizeBytes = 256 * 1024 * 1024;
   runApp(
     NcloudApp(
       controller: AppController(
         store: SecureSessionStore(),
         cache: LocalCache.platform(),
+        pathlessTimeline: true,
       ),
     ),
   );

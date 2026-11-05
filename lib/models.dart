@@ -165,6 +165,11 @@ class CloudFile {
     etag: json['etag'] as String?,
   );
 
+  /// Root of placeholder paths for timeline items whose real WebDAV path is
+  /// still being looked up; such files are addressed by [id] only.
+  static const pendingRoot = '\u0001pending';
+  bool get pending => path.length == 2 && path.first == pendingRoot;
+
   String get key => path.map(Uri.encodeComponent).join('/');
   bool get isImage => contentType.startsWith('image/');
   bool get isVideo => contentType.startsWith('video/');

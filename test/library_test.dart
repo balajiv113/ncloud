@@ -84,7 +84,7 @@ void main() {
   );
 
   testWidgets(
-    'floating dock compacts on scroll and restores without moving content',
+    'floating dock stays compact while scrolling without moving content',
     (tester) async {
       tester.view.physicalSize = const Size(412, 915);
       tester.view.devicePixelRatio = 1;
@@ -96,7 +96,8 @@ void main() {
       await tester.tap(find.text('Try demo'));
       await tester.pumpAndSettle();
       final dock = find.byKey(const ValueKey('navigation-dock'));
-      expect(tester.getSize(dock).height, 78);
+      expect(tester.getSize(dock).height, 60);
+      expect(tester.getSize(dock).width, lessThanOrEqualTo(268));
       for (final tab in [0, 4, 1]) {
         final size = tester.getSize(find.byKey(ValueKey('navigate-$tab')));
         expect(size.width, greaterThanOrEqualTo(48));
@@ -118,7 +119,7 @@ void main() {
       );
       await tester.drag(find.byType(CustomScrollView), const Offset(0, 180));
       await tester.pumpAndSettle();
-      expect(tester.getSize(dock).height, 78);
+      expect(tester.getSize(dock).height, 60);
       await tester.tap(find.byTooltip('Timeline'));
       await tester.pumpAndSettle();
       await tester.tap(find.bySemanticsLabel('Alpine morning.jpg'));

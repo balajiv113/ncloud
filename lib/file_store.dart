@@ -94,6 +94,14 @@ class FileStore {
     revision++;
   }
 
+  void removeKeys(Iterable<String> keys) {
+    for (final key in keys) {
+      _files.remove(key);
+      _seen.remove(key);
+    }
+    revision++;
+  }
+
   void removeTree(List<String> path) {
     final keys = _files.values
         .where((f) => pathStartsWith(f.path, path))

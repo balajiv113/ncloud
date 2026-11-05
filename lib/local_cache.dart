@@ -50,24 +50,49 @@ class LocalCache {
   Future<File> _file(String folder, String key, [String suffix = '']) async =>
       File('${(await _folder(folder)).path}/${cacheDigest(key)}$suffix');
 
-  Future<Uint8List?> readThumbnail(String key) async {
+  static const _thumbMagic = [0x4e, 0x43, 0x54, 0x31]; // NCT1
+
+  /// Cached thumbnail and the file version (etag) it was rendered from, so
+  /// it can be shown instantly and refreshed only if the file changed.
+  Future<({Uint8List bytes, String version})?> readThumbnail(String key) async {
     try {
       final file = await _file('thumbs', key);
       if (!await file.exists()) return null;
-      final bytes = await file.readAsBytes();
-      if (bytes.isEmpty) return null;
+      final data = await file.readAsBytes();
       unawaited(file.setLastModified(DateTime.now()).catchError((_) {}));
-      return bytes;
+      var version = '';
+      var start = 0;
+      if (data.length > 5 &&
+          List.generate(4, (i) => data[i]).join() == _thumbMagic.join()) {
+        final length = data[4];
+        if (data.length < 5 + length) return null;
+        version = utf8.decode(data.sublist(5, 5 + length));
+        start = 5 + length;
+      }
+      if (data.length <= start) return null;
+      return (bytes: Uint8List.sublistView(data, start), version: version);
     } on Object {
       return null;
     }
   }
 
-  Future<void> writeThumbnail(String key, Uint8List bytes) async {
+  Future<void> writeThumbnail(
+    String key,
+    Uint8List bytes, {
+    String version = '',
+  }) async {
     try {
+      var tag = utf8.encode(version);
+      if (tag.length > 255) tag = tag.sublist(0, 255);
       final file = await _file('thumbs', key);
       final temp = File('${file.path}.part');
-      await temp.writeAsBytes(bytes, flush: false);
+      final sink = temp.openWrite();
+      sink
+        ..add(_thumbMagic)
+        ..add([tag.length])
+        ..add(tag)
+        ..add(bytes);
+      await sink.close();
       await temp.rename(file.path);
       if (++_writesSinceTrim >= 200) {
         _writesSinceTrim = 0;

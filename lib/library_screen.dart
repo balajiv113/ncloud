@@ -51,9 +51,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
   bool _showNative = false;
   bool _albumsExpanded = false;
   int _prefetchBudget = 2;
-  bool _dockCompact = false;
-  bool _dockUserScroll = false;
-  double _dockTravel = 0;
   String _query = '';
   AppController get c => widget.controller;
   bool get _album => c.tab == 4;
@@ -145,9 +142,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
   }
 
   void _reset({bool keepAlbumSection = false}) {
-    _dockCompact = false;
-    _dockTravel = 0;
-    _dockUserScroll = false;
     _search.clear();
     _selected.clear();
     _query = '';
@@ -168,30 +162,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
     setState(_reset);
     if (_scroll.hasClients) _scroll.jumpTo(0);
     c.selectTab(tab);
-  }
-
-  void _updateDock(ScrollNotification notification) {
-    if (notification.depth != 0 ||
-        notification.metrics.axis != Axis.vertical ||
-        _selecting) {
-      return;
-    }
-    if (notification is ScrollStartNotification) {
-      _dockUserScroll = notification.dragDetails != null;
-      _dockTravel = 0;
-    } else if (notification is ScrollEndNotification) {
-      _dockUserScroll = false;
-    } else if (notification is ScrollUpdateNotification && _dockUserScroll) {
-      final delta = notification.scrollDelta ?? 0;
-      if (delta.sign != _dockTravel.sign) _dockTravel = 0;
-      _dockTravel += delta;
-      final compact = notification.metrics.pixels < 40 || _dockTravel < -16
-          ? false
-          : notification.metrics.pixels > 80 && _dockTravel > 32
-          ? true
-          : _dockCompact;
-      if (compact != _dockCompact) setState(() => _dockCompact = compact);
-    }
   }
 
   void _back() {
@@ -403,7 +373,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
                   onPointerCancel: (event) => _pointers.remove(event.pointer),
                   child: NotificationListener<ScrollNotification>(
                     onNotification: (notification) {
-                      _updateDock(notification);
                       if ((notification is ScrollUpdateNotification &&
                               notification.dragDetails != null) ||
                           (notification is OverscrollNotification &&
@@ -416,6 +385,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
                     child: CustomScrollView(
                       controller: _scroll,
                       physics: const AlwaysScrollableScrollPhysics(),
+                      // Builds and fetches roughly a screen ahead so tiles
+                      // are painted before they scroll into view.
+                      cacheExtent: 1200,
                       slivers: [
                         SliverAppBar(
                           floating: true,
@@ -669,7 +641,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
                     controller: _scroll,
                     labelAt: _labelAt,
                     markers: _yearMarkers,
-                    onTap: _chooseMonth,
                   ),
                 ),
             ],
@@ -704,7 +675,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
         ? Duration.zero
         : const Duration(milliseconds: 240);
     final fullWidth = (MediaQuery.sizeOf(context).width - 40).clamp(0.0, 440.0);
-    final width = _dockCompact ? fullWidth.clamp(0.0, 268.0) : fullWidth;
+    final width = fullWidth.clamp(0.0, 268.0);
     return SafeArea(
       top: false,
       child: SizedBox(
@@ -718,7 +689,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
               duration: duration,
               curve: Curves.easeOutCubic,
               width: width,
-              height: _dockCompact ? 60 : 78,
+              height: 60,
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(30),
                 boxShadow: [
@@ -745,9 +716,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                       padding: const EdgeInsets.all(6),
                       child: LayoutBuilder(
                         builder: (context, constraints) {
-                          final selectedWidth =
-                              constraints.maxWidth *
-                              (_dockCompact ? .46 : 1 / 3);
+                          final selectedWidth = constraints.maxWidth * .46;
                           final otherWidth =
                               (constraints.maxWidth - selectedWidth) / 2;
                           return Stack(
@@ -770,9 +739,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                                 children: [
                                   for (final (tab, label, icon) in destinations)
                                     Expanded(
-                                      flex: _dockCompact
-                                          ? (active == tab ? 46 : 27)
-                                          : 1,
+                                      flex: active == tab ? 46 : 27,
                                       child: Tooltip(
                                         message: label,
                                         child: Semantics(
@@ -789,10 +756,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                                                 ? null
                                                 : () => _navigate(tab),
                                             child: SizedBox.expand(
-                                              child: Flex(
-                                                direction: _dockCompact
-                                                    ? Axis.horizontal
-                                                    : Axis.vertical,
+                                              child: Row(
                                                 mainAxisAlignment:
                                                     MainAxisAlignment.center,
                                                 children: [
@@ -805,19 +769,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
                                                         : colors
                                                               .onSurfaceVariant,
                                                   ),
-                                                  if (!_dockCompact ||
-                                                      active == tab) ...[
-                                                    SizedBox(
-                                                      width: _dockCompact
-                                                          ? 6
-                                                          : 0,
-                                                      height: _dockCompact
-                                                          ? 0
-                                                          : 4,
-                                                    ),
+                                                  if (active == tab) ...[
+                                                    const SizedBox(width: 6),
                                                     Flexible(
                                                       child: Text(
-                                                        _dockCompact && tab == 0
+                                                        tab == 0
                                                             ? 'Photos'
                                                             : label,
                                                         maxLines: 1,
@@ -2053,16 +2009,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
                       update(() {});
                     },
                   ),
-                if (!_drive && !_albumHome)
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.calendar_month_outlined),
-                    title: const Text('Jump to month'),
-                    onTap: () {
-                      Navigator.pop(sheetContext);
-                      _chooseMonth();
-                    },
-                  ),
                 if (_albumHome)
                   ListTile(
                     contentPadding: EdgeInsets.zero,
@@ -2089,47 +2035,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
         ),
       ),
     );
-  }
-
-  Future<void> _chooseMonth() async {
-    final months = <DateTime>{
-      for (final stop in _dateStops)
-        if (stop.date case final date?) DateTime(date.year, date.month),
-    }.toList()..sort((a, b) => b.compareTo(a));
-    if (months.isEmpty) return;
-    final month = await showModalBottomSheet<DateTime>(
-      context: context,
-      showDragHandle: true,
-      builder: (context) => SafeArea(
-        child: ListView(
-          shrinkWrap: true,
-          children: [
-            const ListTile(title: Text('Jump to month')),
-            for (final date in months)
-              ListTile(
-                title: Text(
-                  MaterialLocalizations.of(context).formatMonthYear(date),
-                ),
-                onTap: () => Navigator.pop(context, date),
-              ),
-          ],
-        ),
-      ),
-    );
-    if (!mounted || month == null || !_scroll.hasClients) return;
-    final stop = _dateStops
-        .where(
-          (s) => s.date?.year == month.year && s.date?.month == month.month,
-        )
-        .firstOrNull;
-    if (stop != null) {
-      _scroll.jumpTo(
-        (_timelineStart + stop.offset).clamp(
-          0,
-          _scroll.position.maxScrollExtent,
-        ),
-      );
-    }
   }
 
   Widget _selectionBar() => SafeArea(
@@ -2263,13 +2168,11 @@ class _TimelineScrubber extends StatefulWidget {
     required this.controller,
     required this.labelAt,
     required this.markers,
-    required this.onTap,
   });
 
   final ScrollController controller;
   final String? Function(double offset) labelAt;
   final List<({double offset, String label})> Function() markers;
-  final VoidCallback onTap;
 
   @override
   State<_TimelineScrubber> createState() => _TimelineScrubberState();
@@ -2414,7 +2317,6 @@ class _TimelineScrubberState extends State<_TimelineScrubber> {
                         child: GestureDetector(
                           key: const ValueKey('timeline-scrubber'),
                           behavior: HitTestBehavior.opaque,
-                          onTap: widget.onTap,
                           onVerticalDragStart: (details) {
                             _hide?.cancel();
                             setState(() => _dragging = true);
