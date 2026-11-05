@@ -324,9 +324,12 @@ void main() {
       expect(find.widgetWithText(ChoiceChip, 'Travel'), findsNothing);
       expect(find.text('Empty folder'), findsNothing);
       expect(c.nativeAlbums.single.name, 'Best days');
-      await tester.ensureVisible(
+      await tester.scrollUntilVisible(
         find.byKey(const ValueKey('View all Nextcloud albums')),
+        200,
+        scrollable: find.byType(Scrollable).first,
       );
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('View all Nextcloud albums')));
       await tester.pumpAndSettle();
       expect(find.text('Best days'), findsOneWidget);
