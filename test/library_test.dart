@@ -248,6 +248,8 @@ void main() {
     expect(find.text('Smart albums'), findsOneWidget);
     expect(find.text('Empty folder'), findsNothing);
     expect(find.text('Japan'), findsNothing);
+    await tester.ensureVisible(find.text('Kyoto'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Kyoto'));
     await tester.pumpAndSettle();
     expect(c.tab, 4);

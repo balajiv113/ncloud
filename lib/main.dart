@@ -61,10 +61,17 @@ class _NcloudAppState extends State<NcloudApp> {
 }
 
 ThemeData _theme(Brightness brightness) {
-  final scheme = ColorScheme.fromSeed(
+  final base = ColorScheme.fromSeed(
     seedColor: const Color(0xFF386749),
     brightness: brightness,
   );
+  final scheme = brightness == Brightness.light
+      ? base.copyWith(
+          primary: const Color(0xFF386749),
+          primaryContainer: const Color(0xFFE4EEDF),
+          onPrimaryContainer: const Color(0xFF285D3B),
+        )
+      : base;
   return ThemeData(
     colorScheme: scheme,
     useMaterial3: true,
@@ -75,6 +82,13 @@ ThemeData _theme(Brightness brightness) {
       centerTitle: false,
       elevation: 0,
       scrolledUnderElevation: 0,
+    ),
+    chipTheme: ChipThemeData(
+      shape: const StadiumBorder(),
+      side: BorderSide(color: scheme.outlineVariant),
+      selectedColor: scheme.primaryContainer,
+      showCheckmark: false,
+      labelStyle: const TextStyle(fontSize: 12),
     ),
     navigationBarTheme: NavigationBarThemeData(
       height: 72,

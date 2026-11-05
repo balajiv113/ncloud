@@ -215,10 +215,16 @@ void main() {
       expect(files.first, same(photo));
       expect(files.last.name, 'Shared.jpg');
       expect(files.last.readOnly, isTrue);
-      expect(
-        client.fileUri(account, files.last).path,
-        '/nextcloud/remote.php/dav/photos/alice/albums/Trip%20%26%20friends/99',
-      );
+      expect(client.fileUri(account, files.last).pathSegments, [
+        'nextcloud',
+        'remote.php',
+        'dav',
+        'photos',
+        'alice',
+        'albums',
+        'Trip & friends',
+        '99',
+      ]);
     },
   );
 
@@ -272,4 +278,32 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets('timeline is content-first and view controls stay on demand', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(412, 915);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(
+      NcloudApp(controller: AppController(store: MemoryStore())),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Try demo'));
+    await tester.pumpAndSettle();
+    final first = find.bySemanticsLabel('Alpine morning.jpg');
+    expect(tester.getTopLeft(first).dy, lessThan(915 * .30));
+    expect(find.textContaining('Load more'), findsNothing);
+    expect(find.widgetWithText(ChoiceChip, 'Videos'), findsNothing);
+    await tester.tap(find.byTooltip('View options'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(ChoiceChip, 'Videos'));
+    await tester.pumpAndSettle();
+    await tester.tapAt(const Offset(15, 20));
+    await tester.pumpAndSettle();
+    expect(find.bySemanticsLabel('Wild coast.mp4'), findsOneWidget);
+    expect(find.bySemanticsLabel('Alpine morning.jpg'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
 }

@@ -336,6 +336,7 @@ class NextcloudClient {
           contentType: type,
           id: id.isEmpty ? null : id,
           size: int.tryParse(value('getcontentlength')) ?? 0,
+          modified: _parseModified(value('getlastmodified')),
           albumDavPath: [...album.davPath, segments.last],
           favorite: value('favorite', 'http://owncloud.org/ns') == '1',
         ),
@@ -677,39 +678,6 @@ class NextcloudClient {
       }
 
       if (props.isEmpty) continue;
-      final modified = value('getlastmodified');
-      DateTime? date;
-      if (modified.isNotEmpty) {
-        // HTTP dates are not ISO-8601; parse their fixed RFC 1123 components.
-        final parts = modified.split(' ');
-        const months = [
-          'Jan',
-          'Feb',
-          'Mar',
-          'Apr',
-          'May',
-          'Jun',
-          'Jul',
-          'Aug',
-          'Sep',
-          'Oct',
-          'Nov',
-          'Dec',
-        ];
-        if (parts.length == 6) {
-          final month = months.indexOf(parts[2]) + 1;
-          final day = int.tryParse(parts[1]);
-          final year = int.tryParse(parts[3]);
-          final time = parts[4].split(':').map(int.tryParse).toList();
-          if (month > 0 &&
-              day != null &&
-              year != null &&
-              time.length == 3 &&
-              !time.contains(null)) {
-            date = DateTime.utc(year, month, day, time[0]!, time[1]!, time[2]!);
-          }
-        }
-      }
       files.add(
         CloudFile(
           path: path,
@@ -720,7 +688,7 @@ class NextcloudClient {
           ),
           contentType: value('getcontenttype'),
           size: int.tryParse(value('getcontentlength')) ?? 0,
-          modified: date,
+          modified: _parseModified(value('getlastmodified')),
           id: value('fileid', 'http://owncloud.org/ns').isEmpty
               ? null
               : value('fileid', 'http://owncloud.org/ns'),
@@ -729,6 +697,37 @@ class NextcloudClient {
       );
     }
     return files;
+  }
+
+  static DateTime? _parseModified(String modified) {
+    final parts = modified.split(' ');
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
+    if (parts.length != 6) return null;
+    final month = months.indexOf(parts[2]) + 1;
+    final day = int.tryParse(parts[1]);
+    final year = int.tryParse(parts[3]);
+    final time = parts[4].split(':').map(int.tryParse).toList();
+    if (month > 0 &&
+        day != null &&
+        year != null &&
+        time.length == 3 &&
+        !time.contains(null)) {
+      return DateTime.utc(year, month, day, time[0]!, time[1]!, time[2]!);
+    }
+    return null;
   }
 
   Future<void> createFolder(Account account, List<String> path) async {
