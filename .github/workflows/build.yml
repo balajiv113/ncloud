@@ -37,13 +37,7 @@ jobs:
           channel: stable
           cache: true
       - run: flutter pub get
-      - run: dart format lib test
-      - uses: actions/upload-artifact@v4
-        with:
-          name: formatted-source
-          path: |
-            lib/
-            test/
+      - run: dart format --output=none --set-exit-if-changed lib test
       - run: flutter analyze
       - run: flutter test
       - run: flutter test test/ui_capture_test.dart --dart-define=CAPTURE_UI=true
