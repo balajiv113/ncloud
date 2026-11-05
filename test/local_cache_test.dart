@@ -192,11 +192,16 @@ void main() {
           ),
         ),
       );
-      await tester.runAsync(() async {
-        await Future<void>.delayed(const Duration(milliseconds: 100));
-      });
-      await tester.pumpAndSettle();
+      for (var attempt = 0; attempt < 30; attempt++) {
+        await tester.runAsync(() async {
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+        });
+        await tester.pump();
+        if (find.byType(Image).evaluate().isNotEmpty) break;
+      }
       expect(find.byType(Image), findsOneWidget);
+      final image = tester.widget<Image>(find.byType(Image));
+      expect((image.image as ResizeImage).imageProvider, isA<FileImage>());
       expect(networkCalls, 1);
       expect(tester.takeException(), isNull);
       await tester.runAsync(() async {

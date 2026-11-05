@@ -88,7 +88,6 @@ ThemeData _theme(Brightness brightness) {
       side: BorderSide(color: scheme.outlineVariant),
       selectedColor: scheme.primaryContainer,
       showCheckmark: false,
-      labelStyle: const TextStyle(fontSize: 12),
     ),
     navigationBarTheme: NavigationBarThemeData(
       height: 72,
