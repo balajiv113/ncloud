@@ -46,8 +46,7 @@ class FileStore {
   }
 
   List<CloudFile> resolve(Iterable<String> keys) => [
-    for (final key in keys)
-      if (_files[key] case final file?) file,
+    for (final key in keys) ?_files[key],
   ];
 
   /// Records the direct children of [path], as returned by the server.
