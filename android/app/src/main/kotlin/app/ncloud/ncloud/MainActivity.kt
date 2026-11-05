@@ -13,6 +13,8 @@ import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
+import java.io.FileNotFoundException
+import java.io.IOException
 import java.util.concurrent.Executors
 
 class MainActivity : FlutterActivity() {
@@ -25,7 +27,7 @@ class MainActivity : FlutterActivity() {
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "app.ncloud/folder_sync")
             .setMethodCallHandler { call, result ->
-                if (call.method == "pick") {
+                dispatchFolderMethod(call.method, pick = {
                     if (picker != null) {
                         result.error("busy", "A folder picker is already open.", null)
                     } else {
@@ -41,24 +43,22 @@ class MainActivity : FlutterActivity() {
                             picker = null
                             result.error("folder_access", "Could not open the system folder picker.", null)
                         }
-                        if (call.method == "conditions") {
-                            val connectivity = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
-                            val network = connectivity.getNetworkCapabilities(connectivity.activeNetwork)
-                            val battery = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
-                            val status = battery?.getIntExtra(BatteryManager.EXTRA_STATUS, -1)
-                            result.success(mapOf(
-                                "wifi" to (network?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true),
-                                "charging" to (status == BatteryManager.BATTERY_STATUS_CHARGING ||
-                                    status == BatteryManager.BATTERY_STATUS_FULL)))
-                            return@setMethodCallHandler
-                        }
                     }
-                    return@setMethodCallHandler
-                }
-                if (call.method !in listOf("list", "export", "stage", "import", "discard")) {
-                    result.notImplemented()
-                    return@setMethodCallHandler
-                }
+                }, conditions = {
+                    try {
+                        val connectivity = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
+                        val network = connectivity.getNetworkCapabilities(connectivity.activeNetwork)
+                        val battery = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+                        val status = battery?.getIntExtra(BatteryManager.EXTRA_STATUS, -1)
+                        result.success(mapOf(
+                            "wifi" to (network?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true),
+                            "charging" to (status == BatteryManager.BATTERY_STATUS_CHARGING ||
+                                status == BatteryManager.BATTERY_STATUS_FULL)))
+                    } catch (error: SecurityException) {
+                        result.error("conditions_permission",
+                            "Could not check network conditions. Update ncloud and retry; folder permission is unchanged.", null)
+                    }
+                }, transfer = {
                 worker.execute {
                     try {
                         val output: Any? = when (call.method) {
@@ -100,6 +100,7 @@ class MainActivity : FlutterActivity() {
                                             temp.delete()
                                             throw error
                                         }
+                                        }, unsupported = { result.notImplemented() })
                                     }
                                     else -> {
                                         check(path.isNotEmpty())
@@ -153,7 +154,13 @@ class MainActivity : FlutterActivity() {
                         runOnUiThread { result.success(output) }
                     } catch (error: Exception) {
                         runOnUiThread {
-                            result.error("folder_access", "Folder access or transfer failed. Check permission and free space.", null)
+                            val code = when (error) {
+                                is SecurityException -> "folder_permission"
+                                is FileNotFoundException -> "folder_unavailable"
+                                is IOException -> "folder_io"
+                                else -> "folder_transfer"
+                            }
+                            result.error(code, "The selected folder operation failed.", null)
                         }
                     }
                 }

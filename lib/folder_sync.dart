@@ -458,6 +458,7 @@ class FolderSyncController extends ChangeNotifier {
     );
     await journal.save(updated);
     pairs[pairs.indexWhere((value) => value.id == pair.id)] = updated;
+    error = null;
     _notify();
   }
 
@@ -539,10 +540,37 @@ class FolderSyncController extends ChangeNotifier {
       error = switch (e) {
         CloudException() => e.message,
         FormatException() => e.message,
-        PlatformException() =>
-          'Folder access or transfer failed. Check permission and free space; reselect the folder if needed.',
+        MissingPluginException() =>
+          'The native folder-sync service is unavailable. Install the latest ncloud build '
+              'and fully restart the app. Reconnecting the folder will not fix this.',
+        PlatformException() => switch (e.code) {
+          'folder_permission' =>
+            'Access to the selected folder was denied. Use Reconnect device folder '
+                'to select the same folder again.',
+          'folder_unavailable' =>
+            'The selected folder or file is unavailable. Check its Files provider '
+                'or connected device, then retry.',
+          'folder_io' =>
+            'The folder provider could not read or write the transfer. '
+                'Check device space and whether the file is available offline.',
+          'conditions_permission' =>
+            'Android could not check Wi-Fi/charging conditions. '
+                'Update ncloud and retry; folder permission is unchanged.',
+          _ =>
+            'The device folder operation failed (${e.code}). '
+                'Existing files were not overwritten. Check the selected folder provider.',
+        },
+        DatabaseException() =>
+          'Could not save sync progress (SQLite ${e.getResultCode() ?? 'unknown'}). '
+              'Check device storage. Completed transfers may be copied again on retry.',
+        FileSystemException() =>
+          'Could not access a temporary transfer file. Check free device space.',
+        SocketException() =>
+          'The connection was interrupted. Retry when connected.',
+        TimeoutException() => 'The transfer timed out. Retry when connected.',
         _ =>
-          'Sync stopped. Check storage and connection, then run again. Existing files are unchanged.',
+          'Sync failed (${e.runtimeType}) during $phase. '
+              'Existing files were not overwritten.',
       };
       phase = 'Needs attention';
     } finally {
@@ -595,12 +623,14 @@ class FolderSyncController extends ChangeNotifier {
 
   Future<void> _sync(Account session, FolderPair pair) async {
     _check(pair);
+    phase = 'Checking Wi-Fi and charging conditions';
+    _notify();
     await _conditions(pair);
     final local = <String, (List<String>, DeviceEntry)>{};
     final remote = <String, (List<String>, CloudFile)>{};
     final directories = <List<String>>[[]];
     var scanned = 0;
-    phase = 'Checking selected folders';
+    phase = 'Reading selected device folder';
     _notify();
     // A complete, successful inventory precedes transfers; a permission error
     // must not be interpreted as an empty source or a deletion.
@@ -633,6 +663,8 @@ class FolderSyncController extends ChangeNotifier {
       }
     }
     directories.add([]);
+    phase = 'Reading Nextcloud destination';
+    _notify();
     while (directories.isNotEmpty) {
       _check(pair);
       if (++scanned > 200000) {

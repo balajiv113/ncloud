@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:ncloud/folder_sync.dart';
@@ -26,6 +27,8 @@ class DeviceFolders implements FolderAccess {
   int exports = 0;
   int count = 0;
   int conditionChecks = 0;
+  int picks = 0;
+  Object? conditionsError;
   void Function()? beforeImport;
 
   File file(List<String> path) => File('${root.path}/${path.join('/')}');
@@ -48,8 +51,10 @@ class DeviceFolders implements FolderAccess {
   }
 
   @override
-  Future<DeviceFolder?> pick() async =>
-      const DeviceFolder('grant', 'Selected', 'folder-id');
+  Future<DeviceFolder?> pick() async {
+    picks++;
+    return const DeviceFolder('grant', 'Selected', 'folder-id');
+  }
 
   @override
   Future<List<DeviceEntry>> list(String token, List<String> path) async {
@@ -102,6 +107,7 @@ class DeviceFolders implements FolderAccess {
   @override
   Future<SyncConditions> conditions() async {
     conditionChecks++;
+    if (conditionsError case final error?) throw error;
     return SyncConditions(wifi: wifi, charging: charging);
   }
 }
@@ -447,6 +453,99 @@ void main() {
       await sync.run(value);
       expect(sync.error, isNull);
       expect(cloud.uploads, 1);
+    },
+  );
+
+  test(
+    'missing native policy handler does not request or blame folder permission',
+    () async {
+      await device.put('file.txt', 'source');
+      final value = await pair(SyncMode.backup);
+      device.conditionsError = MissingPluginException('conditions');
+      await sync.run(value);
+      expect(sync.error, contains('native folder-sync service'));
+      expect(sync.error, contains('Reconnecting the folder will not fix this'));
+      expect(device.picks, 0);
+      expect(cloud.uploads, 0);
+      device.conditionsError = null;
+      await sync.run(value);
+      expect(sync.error, isNull);
+      expect(cloud.uploads, 1);
+      expect(device.picks, 0);
+    },
+  );
+
+  test(
+    'native bridge reuses the saved grant on repeated sync without opening picker',
+    () async {
+      await device.put('file.txt', 'source');
+      final calls = <String>[];
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(NativeFolderAccess.channel, (
+        call,
+      ) async {
+        calls.add(call.method);
+        final args = (call.arguments as Map?)?.cast<String, dynamic>();
+        switch (call.method) {
+          case 'conditions':
+            return {'wifi': true, 'charging': true};
+          case 'list':
+            expect(args!['token'], 'grant');
+            return [
+              for (final entry in await device.list(
+                'grant',
+                (args['path'] as List).cast<String>(),
+              ))
+                {
+                  'name': entry.name,
+                  'directory': entry.directory,
+                  'size': entry.size,
+                  'modified': entry.modified,
+                },
+            ];
+          case 'export':
+            expect(args!['token'], 'grant');
+            return (await device.export(
+              'grant',
+              (args['path'] as List).cast<String>(),
+              DeviceEntry(
+                'file.txt',
+                false,
+                args['size'] as int,
+                args['modified'] as int,
+              ),
+            )).path;
+          case 'discard':
+            await device.discard(File(args!['staged'] as String));
+            return null;
+          default:
+            fail('Unexpected native call: ${call.method}');
+        }
+      });
+      addTearDown(
+        () => messenger.setMockMethodCallHandler(
+          NativeFolderAccess.channel,
+          null,
+        ),
+      );
+      sync.dispose();
+      sync = FolderSyncController(
+        client: cloud,
+        account: () => session,
+        access: NativeFolderAccess(),
+        journal: SyncJournal(path: journalPath),
+        android: true,
+      );
+      final value = await pair(SyncMode.backup);
+      await sync.run(value);
+      expect(sync.error, isNull);
+      await sync.run(value);
+      expect(sync.error, isNull);
+      expect(cloud.uploads, 1);
+      expect(calls.where((method) => method == 'conditions'), hasLength(3));
+      expect(calls, isNot(contains('pick')));
+      expect(device.picks, 0);
     },
   );
 

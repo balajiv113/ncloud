@@ -122,6 +122,9 @@ jobs:
           echo "Release APK build: ${elapsed}s"
           echo "### Android release APK" >> "$GITHUB_STEP_SUMMARY"
           echo "Build time: **${elapsed} seconds** (excluding tests and cache restore/save)." >> "$GITHUB_STEP_SUMMARY"
+      - name: Verify native Android folder sync routing
+        working-directory: android
+        run: ./gradlew :app:testDebugUnitTest --no-daemon --console=plain
       - name: Verify APK uses the cached preview signer
         run: |
           set -euo pipefail
@@ -170,7 +173,7 @@ jobs:
           gh release create "v0.5.5-preview.${{ github.run_number }}" ncloud-android.apk \
             --target "${{ github.sha }}" --prerelease \
             --title "ncloud Android preview #${{ github.run_number }}" \
-            --notes "ncloud 0.5.5: Adds non-destructive Folder sync under Your space: backup, download and additive two-way merge. Never propagates deletions or overwrites; conflicts keep separate copies. Android supports saved folder grants and optional repeat while the app is open. iPhone supports reusable Files-folder access and manual runs, not Apple Photos backup or unattended background sync. Wi-Fi-only defaults on, charging-only is optional, and completed files are checkpointed outside the browsing cache. Includes the Android SQLite 0 fix, cache-first library, People and Map. Updates reuse the cached development signer."
+            --notes "ncloud 0.5.5: Fixes Android Sync now failing its native Wi-Fi/charging check. Saved folder grants are reused without reopening the picker. Sync errors now distinguish missing native services, denied access, unavailable files, transfer I/O and journal failures. Adds native Android routing regression tests. Retains non-destructive backup, download and keep-both merge: no deletions or overwrites. Android repeat is foreground-only; iPhone Files syncing remains manual, not Apple Photos backup. Updates reuse the cached development signer."
 
   ios:
     if: github.event_name == 'workflow_dispatch' && inputs.build_ios
