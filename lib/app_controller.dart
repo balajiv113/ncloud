@@ -94,6 +94,7 @@ class AppController extends ChangeNotifier {
   String? catalogueError;
   final List<SmartAlbum> sharedAlbums = [];
   String? sharedAlbumError;
+  bool loadingSharedAlbums = false;
   DateTime? _sharedAlbumsUpdated;
   Future<void>? _sharedAlbumsTask;
   int _sharedAlbumsVersion = 0;
@@ -141,6 +142,7 @@ class AppController extends ChangeNotifier {
     }
     if (connected) {
       unawaited(_prepareAlbums());
+      unawaited(_prepareSharedAlbums(refresh: false));
       await load(refresh: false);
     }
   }
@@ -244,6 +246,7 @@ class AppController extends ChangeNotifier {
       tab = 0;
       directory = [];
       unawaited(_prepareAlbums());
+      unawaited(_prepareSharedAlbums(refresh: false));
       await load();
     } finally {
       _savingAccount = false;
@@ -284,6 +287,7 @@ class AppController extends ChangeNotifier {
       _catalogueSession = null;
       sharedAlbums.clear();
       sharedAlbumError = null;
+      loadingSharedAlbums = false;
       _sharedAlbumsUpdated = null;
       _sharedAlbumsTask = null;
       _sharedAlbumsVersion++;
@@ -429,13 +433,16 @@ class AppController extends ChangeNotifier {
         }
         return;
       }
+      if (session == null) return;
       if (sharedAlbumHome) {
         await _prepareSharedAlbums(refresh: refresh);
         return;
       }
-      if (session == null) return;
       if (albumHome) {
-        await _prepareAlbums(refresh: refresh);
+        await Future.wait([
+          _prepareAlbums(refresh: refresh),
+          _prepareSharedAlbums(refresh: refresh),
+        ]);
         return;
       }
       _MediaListing? previous = listingKey == null
@@ -665,6 +672,8 @@ class AppController extends ChangeNotifier {
     final task = () async {
       final key = 'incoming-albums-v1|${session.server}|${session.userId}';
       sharedAlbumError = null;
+      loadingSharedAlbums = true;
+      notifyListeners();
       try {
         if (_sharedAlbumsUpdated == null) {
           final saved = await cache?.readDocument(key);
@@ -735,7 +744,11 @@ class AppController extends ChangeNotifier {
     try {
       await task;
     } finally {
-      if (identical(_sharedAlbumsTask, task)) _sharedAlbumsTask = null;
+      if (identical(_sharedAlbumsTask, task)) {
+        _sharedAlbumsTask = null;
+        loadingSharedAlbums = false;
+        notifyListeners();
+      }
     }
   }
 
@@ -945,6 +958,7 @@ class AppController extends ChangeNotifier {
     _sharedAlbumsUpdated = null;
     _sharedAlbumsVersion++;
     _sharedAlbumsTask = null;
+    loadingSharedAlbums = false;
     discoveringAlbums = false;
     _initialDays = null;
     await cache?.clearDocuments();

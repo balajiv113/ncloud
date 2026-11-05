@@ -314,6 +314,8 @@ void main() {
       await tester.tap(find.byTooltip('Albums'));
       await tester.pumpAndSettle();
       expect(find.byTooltip('Library'), findsNothing);
+      expect(find.text('Shared'), findsNothing);
+      expect(find.text('Shared with you'), findsOneWidget);
       expect(find.text('Travel'), findsOneWidget);
       expect(find.text('Kyoto'), findsNothing);
       expect(find.text('Favorites'), findsOneWidget);

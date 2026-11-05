@@ -24,6 +24,13 @@ http.Response jsonResponse(Object value) => http.Response(
 List<Map<String, int>> index() =>
     List.generate(30, (i) => {'dayid': 21000 - i, 'count': 60});
 
+http.Response emptyIncoming() => jsonResponse({
+  'ocs': {
+    'meta': {'status': 'ok'},
+    'data': [],
+  },
+});
+
 http.Response davForIds(http.Request request) {
   final ids = RegExp(
     r'<d:literal>(\d+)</d:literal>',
@@ -59,6 +66,7 @@ void main() {
         store: MemoryStore(),
         client: NextcloudClient(
           transport: MockClient((request) async {
+            if (request.url.path.endsWith('/shares')) return emptyIncoming();
             if (request.method == 'PROPFIND') return http.Response('', 404);
             final folder = request.url.queryParameters['folder'];
             visited.add('${request.url.pathSegments.last}:$folder');
@@ -115,6 +123,9 @@ void main() {
               store: MemoryStore(),
               client: NextcloudClient(
                 transport: MockClient((request) async {
+                  if (request.url.path.endsWith('/shares')) {
+                    return emptyIncoming();
+                  }
                   if (request.url.path.contains('/dav/photos/')) {
                     return http.Response('', 404);
                   }
@@ -194,6 +205,7 @@ void main() {
         client: NextcloudClient(
           transport: MockClient((request) async {
             calls.add(request);
+            if (request.url.path.endsWith('/shares')) return emptyIncoming();
             if (request.method == 'PROPFIND') return http.Response('', 404);
             if (request.method == 'SEARCH') return davForIds(request);
             if (request.url.path.endsWith('/folders/sub')) {
@@ -273,6 +285,10 @@ void main() {
       final root = await Directory.systemTemp.createTemp('ncloud-hot-albums-');
       addTearDown(() => root.delete(recursive: true));
       final cache = LocalCache(() async => root);
+      await cache.writeDocument(
+        'incoming-albums-v1|${account.server}|${account.userId}',
+        {'updated': DateTime.now().toIso8601String(), 'albums': []},
+      );
       await cache.writeDocument(
         'album-source|${account.server}|${account.userId}',
         {
@@ -354,6 +370,7 @@ void main() {
         store: MemoryStore(),
         client: NextcloudClient(
           transport: MockClient((request) async {
+            if (request.url.path.endsWith('/shares')) return emptyIncoming();
             if (request.method == 'PROPFIND') return http.Response('', 404);
             if (request.url.path.endsWith('/folders/sub')) {
               folderCalls++;
@@ -678,6 +695,7 @@ void main() {
         store: MemoryStore(),
         client: NextcloudClient(
           transport: MockClient((request) async {
+            if (request.url.path.endsWith('/shares')) return emptyIncoming();
             if (request.method == 'PROPFIND') {
               return http.Response(multistatus(''), 207);
             }
@@ -713,6 +731,7 @@ void main() {
         client: NextcloudClient(
           transport: MockClient((request) async {
             calls.add(request);
+            if (request.url.path.endsWith('/shares')) return emptyIncoming();
             if (request.method == 'PROPFIND') return http.Response('', 404);
             expect(request.method, 'GET');
             if (request.url.path.endsWith('/folders/sub')) {
@@ -963,6 +982,10 @@ void main() {
                       },
                     });
                   }
+                  if (request.method == 'PROPFIND' &&
+                      request.url.path.endsWith('/Photos')) {
+                    return http.Response(multistatus(''), 207);
+                  }
                   if (request.method != 'SEARCH') return http.Response('', 404);
                   searches++;
                   if (request.body.contains('/Shared/Empty')) {
@@ -981,7 +1004,7 @@ void main() {
                 }),
               ),
             )
-            ..account = account
+            ..account = account.withPhotoRoot(['Photos'])
             ..tab = 5
             ..memoriesAvailable = false;
       await tester.pumpWidget(NcloudApp(controller: c));
@@ -1004,6 +1027,19 @@ void main() {
       expect(c.sharedAlbumHome, isTrue);
       expect(find.text('Trip'), findsOneWidget);
       expect(searches, 3, reason: 'Shared album catalogue is hot cached');
+      await tester.tap(find.byTooltip('Back'));
+      await tester.pumpAndSettle();
+      expect(c.tab, 4);
+      expect(find.text('Shared'), findsNothing);
+      expect(find.text('Shared with you'), findsOneWidget);
+      expect(find.text('Trip'), findsOneWidget);
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('View all Shared with you')),
+      );
+      await tester.tap(find.byKey(const ValueKey('View all Shared with you')));
+      await tester.pumpAndSettle();
+      expect(c.sharedAlbumHome, isTrue);
+      expect(searches, 3);
       expect(tester.takeException(), isNull);
     },
   );

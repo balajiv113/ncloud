@@ -986,12 +986,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
       child: ListView.separated(
         padding: const EdgeInsets.symmetric(horizontal: 16),
         scrollDirection: Axis.horizontal,
-        itemCount: 4,
+        itemCount: 3,
         separatorBuilder: (_, _) => const SizedBox(width: 8),
         itemBuilder: (context, index) {
           final (label, icon, tab) = [
             ('Favorites', Icons.favorite_border, 2),
-            ('Shared', Icons.people_outline, 5),
             ('Offline', Icons.offline_bolt_outlined, 6),
             ('Bin', Icons.restore_from_trash_outlined, 3),
           ][index];
@@ -1128,6 +1127,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
               a.name.toLowerCase().contains(_query.toLowerCase()),
         )
         .toList();
+    final sharedCards = _sharedCards();
     final smartCards = albums
         .map(
           (a) => (
@@ -1198,6 +1198,34 @@ class _LibraryScreenState extends State<LibraryScreen> {
                     : c.discoveringAlbums
                     ? 'Discovering your photo folders...'
                     : 'No photo albums yet. Choose a photo source in View options.',
+              ),
+            ),
+          ),
+        _albumSectionHeading(
+          'Shared with you',
+          expand: () => _openCollection(5),
+        ),
+        if (sharedCards.isNotEmpty)
+          _albumPreview(sharedCards)
+        else
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+              child: Text(
+                c.loadingSharedAlbums
+                    ? 'Loading folders shared with you...'
+                    : 'Incoming photo folders appear here.',
+              ),
+            ),
+          ),
+        if (c.sharedAlbumError case final error?)
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: MessageCard(
+                message: error,
+                isError: true,
+                onRetry: c.load,
               ),
             ),
           ),
@@ -1358,14 +1386,29 @@ class _LibraryScreenState extends State<LibraryScreen> {
     ),
   );
 
+  List<_AlbumCard> _sharedCards() => c.sharedAlbums
+      .where(
+        (a) =>
+            _query.isEmpty ||
+            a.name.toLowerCase().contains(_query.toLowerCase()),
+      )
+      .map(
+        (a) => (
+          name: a.name,
+          subtitle: 'Shared with you',
+          count: '',
+          cover: a.files.first,
+          open: () {
+            setState(_reset);
+            if (_scroll.hasClients) _scroll.jumpTo(0);
+            c.openSharedAlbum(a.path);
+          },
+        ),
+      )
+      .toList();
+
   List<Widget> _sharedAlbumSlivers() {
-    final albums = c.sharedAlbums
-        .where(
-          (a) =>
-              _query.isEmpty ||
-              a.name.toLowerCase().contains(_query.toLowerCase()),
-        )
-        .toList();
+    final albums = _sharedCards();
     return [
       SliverToBoxAdapter(
         child: Padding(
@@ -1387,23 +1430,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
             ),
           ),
         ),
-      _albumCards(
-        albums
-            .map(
-              (a) => (
-                name: a.name,
-                subtitle: 'Shared with you',
-                count: '',
-                cover: a.files.first,
-                open: () {
-                  setState(_reset);
-                  if (_scroll.hasClients) _scroll.jumpTo(0);
-                  c.openSharedAlbum(a.path);
-                },
-              ),
-            )
-            .toList(),
-      ),
+      _albumCards(albums),
     ];
   }
 
