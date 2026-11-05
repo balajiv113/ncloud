@@ -1141,6 +1141,7 @@ void main() {
     expect(max, greaterThan(scroll.position.viewportDimension * 10));
     scroll.position.jumpTo(40);
     await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
     final thumb = find.byKey(const ValueKey('timeline-scrubber'));
     expect(thumb, findsOneWidget);
     final semantics = tester.ensureSemantics();
