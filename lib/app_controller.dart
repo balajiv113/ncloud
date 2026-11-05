@@ -8,6 +8,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'demo.dart';
+import 'discovery_models.dart';
 import 'file_store.dart';
 import 'local_cache.dart';
 import 'models.dart';
@@ -109,7 +110,18 @@ class AppController extends ChangeNotifier {
   Future<void>? _catalogueTask;
   Account? _catalogueSession;
   bool get albumHome =>
-      tab == 4 && !smartAlbumOpen && activeNativeAlbum == null;
+      tab == 4 &&
+      !smartAlbumOpen &&
+      activeNativeAlbum == null &&
+      activePerson == null;
+  List<RecognizedPerson> people = [];
+  RecognizedPerson? activePerson;
+  bool loadingPeople = false;
+  bool? peopleAvailable;
+  String? peopleError;
+  DateTime? _peopleUpdated;
+  Future<void>? _peopleTask;
+  int _peopleVersion = 0;
   List<MemoryDay> get indexedDays => _activeListing?.days ?? [];
   List<CloudFile> _libraryFiles = [];
   List<NativeAlbum> nativeAlbums = [];
@@ -184,6 +196,7 @@ class AppController extends ChangeNotifier {
     if (connected) {
       final preparation = _prepareLibrary(refresh: false);
       unawaited(_prepareAlbums());
+      unawaited(loadPeople());
       unawaited(_prepareSharedAlbums(refresh: false));
       await preparation;
     }
@@ -289,6 +302,7 @@ class AppController extends ChangeNotifier {
       directory = [];
       final preparation = _prepareLibrary();
       unawaited(_prepareAlbums());
+      unawaited(loadPeople());
       unawaited(_prepareSharedAlbums(refresh: false));
       await preparation;
     } finally {
@@ -497,6 +511,14 @@ class AppController extends ChangeNotifier {
       _detectingMemories = null;
       nativeAlbums = [];
       activeNativeAlbum = null;
+      activePerson = null;
+      people = [];
+      loadingPeople = false;
+      peopleAvailable = null;
+      peopleError = null;
+      _peopleUpdated = null;
+      _peopleTask = null;
+      _peopleVersion++;
       smartAlbumOpen = false;
       _demoPhotoRoot = null;
       _autoPhotoRoot = null;
@@ -517,6 +539,7 @@ class AppController extends ChangeNotifier {
     tab = value;
     directory = [];
     activeNativeAlbum = null;
+    activePerson = null;
     smartAlbumOpen = false;
     await load(refresh: false);
   }
@@ -524,6 +547,7 @@ class AppController extends ChangeNotifier {
   Future<void> openFolder(CloudFile folder) async {
     tab = 1;
     activeNativeAlbum = null;
+    activePerson = null;
     smartAlbumOpen = false;
     directory = [...folder.path];
     await load(refresh: false);
@@ -532,6 +556,7 @@ class AppController extends ChangeNotifier {
   Future<void> goTo(List<String> path) async {
     directory = [...path];
     activeNativeAlbum = null;
+    activePerson = null;
     smartAlbumOpen = false;
     await load(refresh: false);
   }
@@ -540,6 +565,7 @@ class AppController extends ChangeNotifier {
     tab = 4;
     directory = [...path];
     activeNativeAlbum = null;
+    activePerson = null;
     smartAlbumOpen = true;
     await load(refresh: false);
   }
@@ -550,16 +576,27 @@ class AppController extends ChangeNotifier {
   /// The main timeline resolves paths on demand; albums need paths for their
   /// sub-folder chips.
   bool _pathless(int currentTab) =>
-      pathlessTimeline && currentTab == 0 && activeNativeAlbum == null;
+      (activePerson != null || (pathlessTimeline && currentTab == 0)) &&
+      activeNativeAlbum == null;
 
   /// Metadata-only batches are cheap, so the timeline asks for many more
   /// photos per request than views that must look up paths.
   int _dayBatchLimit(int currentTab) => _pathless(currentTab) ? 1500 : 200;
 
   bool _recursiveMedia(int currentTab, List<String> path) =>
-      currentTab != 4 || !listEquals(path, photoRoot);
+      activePerson != null || currentTab != 4 || !listEquals(path, photoRoot);
+
+  Future<void> openPerson(RecognizedPerson person) async {
+    activePerson = person;
+    activeNativeAlbum = null;
+    smartAlbumOpen = false;
+    tab = 4;
+    directory = [];
+    await load(refresh: false);
+  }
 
   Future<void> openNativeAlbum(NativeAlbum album) async {
+    activePerson = null;
     activeNativeAlbum = album;
     smartAlbumOpen = false;
     tab = 4;
@@ -571,6 +608,7 @@ class AppController extends ChangeNotifier {
     tab = 5;
     directory = [...path];
     activeNativeAlbum = null;
+    activePerson = null;
     smartAlbumOpen = false;
     await load(refresh: false);
   }
@@ -599,6 +637,7 @@ class AppController extends ChangeNotifier {
     final currentTab = tab;
     final path = [...directory];
     final native = activeNativeAlbum;
+    final person = activePerson;
     final listingKey = _listingKey();
     final keepItems = listingKey != null && listingKey == _visibleListingKey;
     loading = true;
@@ -658,6 +697,7 @@ class AppController extends ChangeNotifier {
         await Future.wait([
           _prepareAlbums(refresh: refresh),
           _prepareSharedAlbums(refresh: refresh),
+          loadPeople(refresh: refresh),
         ]);
         return;
       }
@@ -715,6 +755,11 @@ class AppController extends ChangeNotifier {
       } else {
         if (currentTab != 5) await _ensureMemories(session);
         if (version != _loadVersion) return;
+        if (person != null && memoriesAvailable != true) {
+          throw const CloudException(
+            'Browsing people requires Memories and Recognize on your server.',
+          );
+        }
         if (memoriesAvailable == true && currentTab != 5) {
           listing.days = currentTab == 0 && _initialDays != null
               ? _initialDays
@@ -723,6 +768,7 @@ class AppController extends ChangeNotifier {
                   path: path,
                   favorites: currentTab == 2,
                   recursive: _recursiveMedia(currentTab, path),
+                  person: person,
                 );
           _initialDays = null;
         }
@@ -751,6 +797,7 @@ class AppController extends ChangeNotifier {
             listing.more = days.any((d) => !listing.loaded.contains(d.id));
           }
         }
+        if (version != _loadVersion) return;
         if (listing.loaded.isEmpty) {
           await _fetchPage(listing, session, currentTab, path);
         }
@@ -773,7 +820,9 @@ class AppController extends ChangeNotifier {
   /// Files the shared store already knows for a view, shown instantly while
   /// the server confirms the authoritative list.
   List<CloudFile> _seed(int tab, List<String> path, NativeAlbum? native) {
-    if (native != null || tab == 3 || tab == 6) return [];
+    if (native != null || activePerson != null || tab == 3 || tab == 6) {
+      return [];
+    }
     if (tab == 1) return fileStore.folder(path, fresh: false) ?? [];
     final recursive = _recursiveMedia(tab, path);
     return fileStore.where(
@@ -894,6 +943,7 @@ class AppController extends ChangeNotifier {
         favorites: currentTab == 2,
         recursive: recursive,
         resolvePaths: !_pathless(currentTab),
+        person: activePerson,
       );
       return (files: files, days: ids, scanned: files.length);
     }
@@ -1120,6 +1170,7 @@ class AppController extends ChangeNotifier {
           favorites: currentTab == 2,
           recursive: _recursiveMedia(currentTab, path),
           resolvePaths: !_pathless(currentTab),
+          person: activePerson,
         );
         if (version != _loadVersion ||
             _disposed ||
@@ -1144,7 +1195,140 @@ class AppController extends ChangeNotifier {
     final session = account;
     if (demo || session == null || tab == 3) return null;
     return 'browse-v4|${session.server}|${session.userId}|$tab|$smartAlbumOpen|'
-        '${directory.join('/')}|${activeNativeAlbum?.davPath.join('/') ?? ''}';
+        '${directory.join('/')}|${activeNativeAlbum?.davPath.join('/') ?? ''}'
+        '${activePerson == null ? '' : '|person:${activePerson!.id}'}';
+  }
+
+  Future<void> loadPeople({bool refresh = false}) async {
+    final session = account;
+    if (demo || session == null || _disposed) return;
+    if (_peopleTask case final pending?) return pending;
+    if (!refresh &&
+        _peopleUpdated != null &&
+        DateTime.now().difference(_peopleUpdated!) <
+            const Duration(minutes: 5)) {
+      return;
+    }
+    final generation = ++_peopleVersion;
+    final key = 'people-v1|${session.server}|${session.userId}';
+    bool current() =>
+        !_disposed &&
+        generation == _peopleVersion &&
+        account?.server == session.server &&
+        account?.userId == session.userId;
+    loadingPeople = true;
+    peopleError = null;
+    notifyListeners();
+    final task = () async {
+      try {
+        if (people.isEmpty) {
+          final saved = await cache?.readDocument(key);
+          if (!current()) return;
+          if (saved != null) {
+            try {
+              final rows = saved['people'];
+              if (rows is! List) {
+                throw const FormatException('Unsupported cached people list.');
+              }
+              people = [
+                for (final row in rows)
+                  if (row is Map<String, dynamic>)
+                    RecognizedPerson.fromJson(row)
+                  else
+                    throw const FormatException('Unsupported cached person.'),
+              ]..sort(RecognizedPerson.compareByCount);
+            } on FormatException {
+              notice =
+                  'The saved People list was damaged. Reloading from Nextcloud.';
+            }
+            notifyListeners();
+          }
+        }
+        final result = await client.memoryPeople(session, optional: true);
+        if (!current()) return;
+        peopleAvailable = result != null;
+        people = result ?? [];
+        _peopleUpdated = DateTime.now();
+        await cache?.writeDocument(key, {
+          'people': [for (final person in people) person.toJson()],
+        });
+      } catch (e) {
+        if (current()) peopleError = errorMessage(e);
+      } finally {
+        if (current()) {
+          loadingPeople = false;
+          notifyListeners();
+        }
+      }
+    }();
+    _peopleTask = task;
+    try {
+      await task;
+    } finally {
+      if (identical(_peopleTask, task)) _peopleTask = null;
+    }
+  }
+
+  String? _personPreviewKey(RecognizedPerson person) {
+    final session = account;
+    return session == null
+        ? null
+        : 'face-v1|${session.server}|${session.userId}|${person.id}';
+  }
+
+  String _personPreviewVersion(RecognizedPerson person) =>
+      '${person.cover ?? ''}|${person.coverEtag ?? ''}';
+
+  Uint8List? cachedPersonPreview(RecognizedPerson person) =>
+      _thumbs[_personPreviewKey(person)]?.bytes;
+
+  Future<Uint8List?> restorePersonPreview(RecognizedPerson person) async {
+    final generation = _peopleVersion;
+    final key = _personPreviewKey(person);
+    if (key == null) return null;
+    if (_thumbs[key] case final saved?) return saved.bytes;
+    final saved = await cache?.readThumbnail(key);
+    if (saved == null ||
+        generation != _peopleVersion ||
+        key != _personPreviewKey(person) ||
+        _disposed) {
+      return null;
+    }
+    _rememberPreview(key, saved.bytes, saved.version);
+    return saved.bytes;
+  }
+
+  Future<Uint8List> personPreview(RecognizedPerson person) async {
+    final session = account;
+    final generation = _peopleVersion;
+    final key = _personPreviewKey(person);
+    if (session == null || key == null) {
+      throw const CloudException('Sign in to load people.');
+    }
+    final version = _personPreviewVersion(person);
+    if (_thumbs[key] case final saved? when saved.version == version) {
+      return saved.bytes;
+    }
+    final loadKey = '$key|$version';
+    if (_previewLoads[loadKey] case final pending?) return pending;
+    final task = () async {
+      final bytes = await client.personPreview(session, person);
+      if (generation == _peopleVersion &&
+          key == _personPreviewKey(person) &&
+          !_disposed) {
+        _rememberPreview(key, bytes, version);
+        await cache?.writeThumbnail(key, bytes, version: version);
+      }
+      return bytes;
+    }();
+    _previewLoads[loadKey] = task;
+    try {
+      return await task;
+    } finally {
+      if (identical(_previewLoads[loadKey], task)) {
+        _previewLoads.remove(loadKey);
+      }
+    }
   }
 
   Future<void> _prepareAlbums({bool refresh = false}) async {
@@ -1478,6 +1662,10 @@ class AppController extends ChangeNotifier {
     _catalogueSession = null;
     if (_sharedAlbumsUpdated != null) _sharedAlbumsUpdated = epoch;
     _sharedAlbumsVersion++;
+    _peopleVersion++;
+    _peopleTask = null;
+    _peopleUpdated = null;
+    loadingPeople = false;
     _sharedAlbumsTask = null;
     loadingSharedAlbums = false;
     discoveringAlbums = false;
@@ -2204,6 +2392,7 @@ class AppController extends ChangeNotifier {
     _thumbnailWarmupTimer?.cancel();
     _catalogueVersion++;
     _sharedAlbumsVersion++;
+    _peopleVersion++;
     _loadVersion++;
     _loginVersion++;
     client.close();

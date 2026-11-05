@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:xml/xml.dart';
 
 import 'models.dart';
+import 'discovery_models.dart';
 
 class CloudException implements Exception {
   const CloudException(this.message);
@@ -459,6 +460,7 @@ class NextcloudClient {
     List<String> endpoint,
     Map<String, String> query, {
     bool optional = false,
+    String? disabledMessage,
   }) async {
     final response = await _request(
       'GET',
@@ -476,12 +478,130 @@ class NextcloudClient {
         (response.statusCode == 404 || response.statusCode == 405)) {
       return null;
     }
+    if (response.statusCode == 412 && disabledMessage != null) {
+      throw CloudException(disabledMessage);
+    }
     _expect(response, {200});
     final json = jsonDecode(response.body);
     if (json is! List) {
       throw const FormatException('Unsupported Memories API response.');
     }
     return json;
+  }
+
+  Future<List<RecognizedPerson>?> memoryPeople(
+    Account account, {
+    List<String> path = const [],
+    bool optional = false,
+  }) async {
+    final rows = await _memories(
+      account,
+      ['clusters', 'recognize'],
+      {'folder': '/${path.join('/')}', 'recursive': '1'},
+      optional: optional,
+      disabledMessage:
+          'Recognize is not enabled or needs an update on this server.',
+    );
+    if (rows == null) return null;
+    final people = [
+      for (final row in rows)
+        if (row is Map<String, dynamic>)
+          RecognizedPerson.fromJson(row)
+        else
+          throw const FormatException('Unsupported Recognize person record.'),
+    ];
+    people.sort(RecognizedPerson.compareByCount);
+    return people;
+  }
+
+  Future<Uint8List> personPreview(
+    Account account,
+    RecognizedPerson person,
+  ) async {
+    final response = await _request(
+      'GET',
+      serverEndpoint(
+        account.server,
+        [
+          'index.php',
+          'apps',
+          'memories',
+          'api',
+          'clusters',
+          'recognize',
+          'preview',
+        ],
+        {
+          'name': '${person.id}',
+          if (person.cover != null) 'cover': '${person.cover}',
+          if (person.coverEtag != null) 'cover_etag': person.coverEtag!,
+        },
+      ),
+      account: account,
+      headers: {'Accept': 'image/*'},
+    );
+    _expect(response, {200});
+    if (response.bodyBytes.isEmpty) {
+      throw const CloudException(
+        'No face preview is available for this person.',
+      );
+    }
+    return response.bodyBytes;
+  }
+
+  Future<PhotoLocation?> memoryMapPosition(Account account) async {
+    final response = await _request(
+      'GET',
+      serverEndpoint(account.server, [
+        'index.php',
+        'apps',
+        'memories',
+        'api',
+        'map',
+        'init',
+      ]),
+      account: account,
+      headers: {'Accept': 'application/json', 'OCS-APIRequest': 'true'},
+    );
+    _expect(response, {200});
+    final data = jsonDecode(response.body);
+    if (data is! Map<String, dynamic> || !data.containsKey('pos')) {
+      throw const FormatException('Unsupported map position response.');
+    }
+    final position = data['pos'];
+    if (position == null) return null;
+    if (position is! Map<String, dynamic>) {
+      throw const FormatException('Unsupported map position response.');
+    }
+    return PhotoLocation.fromJson(position);
+  }
+
+  Future<List<PhotoMapCluster>> memoryMapClusters(
+    Account account, {
+    required PhotoMapBounds bounds,
+    required int zoom,
+    List<String> path = const [],
+  }) async {
+    if (zoom < 0 || zoom > 22) {
+      throw const FormatException('Map zoom must be between 0 and 22.');
+    }
+    final rows = await _memories(
+      account,
+      ['map', 'clusters'],
+      {
+        'bounds': bounds.query,
+        'zoom': '$zoom',
+        'folder': '/${path.join('/')}',
+        'recursive': '1',
+      },
+    );
+    return [
+      for (final row in rows!)
+        if (row is Map<String, dynamic>)
+          PhotoMapCluster.fromJson(row)
+        else
+          throw const FormatException('Unsupported photo map cluster.'),
+    ];
   }
 
   /// Thumbnails for many files in one streamed Memories request. Files whose
@@ -557,6 +677,8 @@ class NextcloudClient {
     bool favorites = false,
     bool optional = false,
     bool existenceOnly = false,
+    RecognizedPerson? person,
+    PhotoMapBounds? mapBounds,
   }) async {
     final rows = await _memories(
       account,
@@ -567,6 +689,8 @@ class NextcloudClient {
         if (favorites) 'fav': '1',
         'nopreload': '1',
         if (existenceOnly) 'limit': '1',
+        if (person != null) 'recognize': '${account.userId}/${person.id}',
+        if (mapBounds != null) 'mapbounds': mapBounds.query,
       },
       optional: optional,
     );
@@ -584,6 +708,8 @@ class NextcloudClient {
     bool favorites = false,
     bool recursive = true,
     bool resolvePaths = true,
+    RecognizedPerson? person,
+    PhotoMapBounds? mapBounds,
   }) async {
     if (dayIds.isEmpty) return [];
     final rows = await _memories(
@@ -594,6 +720,8 @@ class NextcloudClient {
         if (recursive) 'recursive': '1',
         if (favorites) 'fav': '1',
         'nopreload': '1',
+        if (person != null) 'recognize': '${account.userId}/${person.id}',
+        if (mapBounds != null) 'mapbounds': mapBounds.query,
       },
     );
     final metadata = <String, Map<String, dynamic>>{};

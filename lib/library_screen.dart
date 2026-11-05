@@ -7,9 +7,11 @@ import 'package:flutter/services.dart';
 
 import 'app_controller.dart';
 import 'asset_viewer.dart';
+import 'discovery_models.dart';
 import 'library_actions.dart';
 import 'media_tile.dart';
 import 'models.dart';
+import 'people_bubble.dart';
 import 'screens.dart';
 import 'timeline_layout.dart';
 
@@ -51,6 +53,7 @@ class _LibraryScreenState extends State<LibraryScreen>
   double _timelineStart = 0;
   bool _searching = false;
   bool _showNative = false;
+  bool _showPeople = false;
   bool _albumsExpanded = false;
   Object? _visibleKey;
   List<CloudFile> _visibleFiles = [];
@@ -63,7 +66,8 @@ class _LibraryScreenState extends State<LibraryScreen>
       _album &&
       !c.smartAlbumOpen &&
       c.directory.isEmpty &&
-      c.activeNativeAlbum == null;
+      c.activeNativeAlbum == null &&
+      c.activePerson == null;
   bool get _collection => const [2, 5, 6].contains(c.tab);
   bool get _sharedHome => c.sharedAlbumHome;
   bool get _selecting => _selected.isNotEmpty;
@@ -187,6 +191,7 @@ class _LibraryScreenState extends State<LibraryScreen>
     _searching = false;
     if (!keepAlbumSection) {
       _showNative = false;
+      _showPeople = false;
       _albumsExpanded = false;
     }
     _prefetchBudget = 2;
@@ -369,6 +374,7 @@ class _LibraryScreenState extends State<LibraryScreen>
         (_albumHome && _albumsExpanded) ||
         (!_albumHome && (_album || _collection));
     final title =
+        c.activePerson?.label ??
         c.activeNativeAlbum?.name ??
         (_collection
             ? switch (c.tab) {
@@ -379,7 +385,11 @@ class _LibraryScreenState extends State<LibraryScreen>
             : _album
             ? (_albumHome
                   ? (_albumsExpanded
-                        ? (_showNative ? 'Nextcloud albums' : 'Smart albums')
+                        ? (_showPeople
+                              ? 'People'
+                              : _showNative
+                              ? 'Nextcloud albums'
+                              : 'Smart albums')
                         : 'Albums')
                   : c.directory.lastOrNull ?? 'Photos')
             : _drive
@@ -637,7 +647,8 @@ class _LibraryScreenState extends State<LibraryScreen>
                           SliverToBoxAdapter(child: _breadcrumbs()),
                         if ((_album || (c.tab == 5 && !_sharedHome)) &&
                             !_albumHome &&
-                            c.activeNativeAlbum == null)
+                            c.activeNativeAlbum == null &&
+                            c.activePerson == null)
                           SliverToBoxAdapter(child: _albumContext()),
                         if (c.loading &&
                             c.items.isEmpty &&
@@ -956,6 +967,103 @@ class _LibraryScreenState extends State<LibraryScreen>
     if (_scroll.hasClients) _scroll.jumpTo(0);
   }
 
+  void _openPerson(RecognizedPerson person) {
+    setState(() => _reset(keepAlbumSection: true));
+    if (_scroll.hasClients) _scroll.jumpTo(0);
+    c.openPerson(person);
+  }
+
+  void _expandPeople() {
+    setState(() {
+      _reset();
+      _albumsExpanded = true;
+      _showPeople = true;
+    });
+    if (_scroll.hasClients) _scroll.jumpTo(0);
+  }
+
+  List<Widget> _peopleSlivers({bool expanded = false}) {
+    final people = c.people
+        .where((p) => p.label.toLowerCase().contains(_query.toLowerCase()))
+        .toList();
+    final height =
+        (expanded ? 124 : 100) +
+        MediaQuery.textScalerOf(context).scale(14) * 1.5 +
+        MediaQuery.textScalerOf(context).scale(12) * 1.5;
+    Widget bubble(int index) => PeopleBubble(
+      key: ValueKey('person-${people[index].id}'),
+      person: people[index],
+      controller: c,
+      diameter: expanded ? 96 : 72,
+      onTap: () => _openPerson(people[index]),
+    );
+    return [
+      if (!expanded) _albumSectionHeading('People', expand: _expandPeople),
+      if (expanded)
+        const SliverToBoxAdapter(
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(18, 0, 18, 12),
+            child: Text('Recognize · most photos first'),
+          ),
+        ),
+      if (people.isNotEmpty)
+        if (expanded)
+          SliverPadding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            sliver: SliverGrid.builder(
+              gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+                maxCrossAxisExtent: 220,
+                mainAxisExtent: height,
+                crossAxisSpacing: 8,
+                mainAxisSpacing: 12,
+              ),
+              itemCount: people.length,
+              itemBuilder: (_, index) => bubble(index),
+            ),
+          )
+        else
+          SliverToBoxAdapter(
+            child: SizedBox(
+              height: height,
+              child: ListView.separated(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                scrollDirection: Axis.horizontal,
+                itemCount: people.length.clamp(0, 8),
+                itemBuilder: (_, index) =>
+                    SizedBox(width: 88, child: bubble(index)),
+                separatorBuilder: (_, _) => const SizedBox(width: 8),
+              ),
+            ),
+          )
+      else if (c.peopleError == null)
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+            child: Text(
+              _query.isNotEmpty
+                  ? 'No matching people.'
+                  : c.loadingPeople
+                  ? 'Loading people from Recognize...'
+                  : c.peopleAvailable == false
+                  ? 'People requires Memories and Recognize on your Nextcloud.'
+                  : 'People appear here after Recognize groups your photos.',
+            ),
+          ),
+        ),
+      if (c.peopleError case final error?)
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: MessageCard(
+              message: error,
+              isError: true,
+              onRetry: () => c.loadPeople(refresh: true),
+            ),
+          ),
+        ),
+    ];
+  }
+
   Widget _albumSectionHeading(String title, {VoidCallback? expand}) =>
       SliverToBoxAdapter(
         child: Padding(
@@ -1101,6 +1209,9 @@ class _LibraryScreenState extends State<LibraryScreen>
   );
 
   List<Widget> _albumHomeSlivers() {
+    if (_albumsExpanded && _showPeople) {
+      return _peopleSlivers(expanded: true);
+    }
     final root = c.photoRoot;
     final smartAlbums = c.smartAlbums;
     var albums = smartAlbums
@@ -1208,6 +1319,7 @@ class _LibraryScreenState extends State<LibraryScreen>
               ),
             ),
           ),
+        ..._peopleSlivers(),
         _albumSectionHeading(
           'Shared with you',
           expand: () => _openCollection(5),
@@ -1988,6 +2100,8 @@ class _LibraryScreenState extends State<LibraryScreen>
                 ? 'Save originals from a file menu or video player to access them offline.'
                 : c.tab == 5
                 ? 'Photos you share from Nextcloud will appear here.'
+                : c.activePerson != null
+                ? 'This Recognize group has no photos here. Refresh People to check for changes.'
                 : _query.isNotEmpty || _filter != MediaFilter.all
                 ? 'Try another search or view option.'
                 : 'Add files in Drive to start your collection.',
@@ -2056,21 +2170,28 @@ class _LibraryScreenState extends State<LibraryScreen>
                 ],
                 const SizedBox(height: 12),
                 const Text('Sort'),
-                for (final (value, label) in [
-                  (LibrarySort.newest, 'Newest first'),
-                  (LibrarySort.oldest, 'Oldest first'),
-                  (LibrarySort.name, 'Name A-Z'),
-                  if (!_albumHome) (LibrarySort.size, 'Largest first'),
-                ])
-                  ListTile(
+                if (_albumHome && _showPeople)
+                  const ListTile(
                     contentPadding: EdgeInsets.zero,
-                    title: Text(label),
-                    trailing: _sort == value ? const Icon(Icons.check) : null,
-                    onTap: () {
-                      setState(() => _sort = value);
-                      update(() {});
-                    },
+                    title: Text('Most photos first'),
+                    trailing: Icon(Icons.check),
                   ),
+                if (!(_albumHome && _showPeople))
+                  for (final (value, label) in [
+                    (LibrarySort.newest, 'Newest first'),
+                    (LibrarySort.oldest, 'Oldest first'),
+                    (LibrarySort.name, 'Name A-Z'),
+                    if (!_albumHome) (LibrarySort.size, 'Largest first'),
+                  ])
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(label),
+                      trailing: _sort == value ? const Icon(Icons.check) : null,
+                      onTap: () {
+                        setState(() => _sort = value);
+                        update(() {});
+                      },
+                    ),
                 if (_albumHome)
                   ListTile(
                     contentPadding: EdgeInsets.zero,

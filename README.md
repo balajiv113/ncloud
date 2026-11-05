@@ -15,6 +15,14 @@ Every successful `main` build publishes an APK to a private prerelease and retai
 
 **Upgrading from 0.1:** uninstall that preview before installing 0.2 or later; its signing key differs. This clears your saved login and app cache, not files on Nextcloud. Later builds reuse the cached signer while it remains available, and CI verifies each APK against it.
 
+## People and Map (feature branch)
+
+On `feature/people-map`, Albums shows **People directly below Smart albums** as round face bubbles with names and photo counts, sorted by most photos first (including unnamed groups). **View all** opens a searchable People grid in the same compact navigation. Tapping a person opens the existing lazy photo grid and viewer; Back preserves the expanded People section. People covers and metadata are cache-first, revalidated in the background, and kept visible on refresh failures. People uses your account-wide Recognize results, independently of the Smart albums source folder.
+
+Map is a separate, library-wide feature: **all photos with saved coordinates**, not a map per person. Its typed API groundwork supports the suggested map position and viewport-only clusters, without downloading the whole location index. Map UI and a tile provider are still pending; no third-party tile requests have been introduced.
+
+An empty result, missing endpoint, disabled Recognize installation and authentication/server failure remain distinct. Geographic data and server responses are validated; map bounds use `south,north,west,east` and callers must split views crossing the antimeridian. The integration targets Memories' Recognize backend, not the separate Face Recognition app. API-contract tests use mocked responses based on Memories 7.8.2; live Recognize/Map verification is still pending. No new recognition jobs, face uploads, renaming or GPS edits are performed.
+
 ## 0.5.5: instant timeline
 
 The app has three destinations: **Timeline**, **Albums**, and **Drive**. Compact floating headers, a tight edge-to-edge timeline, lightweight date headers and a floating navigation pill keep content in focus. Search lives in the header; filters, sort and 2–6-column density live in **View options**. Pinching keeps the current photo row in view. A Google Photos-style scrubber appears while scrolling: hold and drag it through the entire library with a month bubble and year markers, and release to land on that month.

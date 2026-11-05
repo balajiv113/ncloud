@@ -349,6 +349,9 @@ void main() {
         client: NextcloudClient(
           transport: MockClient((request) async {
             calls++;
+            if (request.url.path.endsWith('/clusters/recognize')) {
+              return jsonResponse([]);
+            }
             expect(request.url.path, endsWith('/days'));
             return timeline.future;
           }),
@@ -368,7 +371,11 @@ void main() {
       await c.selectTab(4);
       expect(c.loading, isFalse);
       expect(c.smartAlbums.single.name, 'Travel');
-      expect(calls, 1, reason: 'only the Timeline index needs the network');
+      expect(
+        calls,
+        2,
+        reason: 'Timeline and People each fetch one small index',
+      );
       timeline.complete(jsonResponse([]));
       await initializing;
       expect(c.tab, 4);
@@ -758,6 +765,9 @@ void main() {
             calls.add(request);
             if (request.url.path.endsWith('/shares')) return emptyIncoming();
             if (request.method == 'PROPFIND') return http.Response('', 404);
+            if (request.url.path.endsWith('/clusters/recognize')) {
+              return jsonResponse([]);
+            }
             expect(request.method, 'GET');
             final folder = request.url.queryParameters['folder'];
             if (request.url.path.endsWith('/folders/sub')) {

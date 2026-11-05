@@ -315,7 +315,6 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byTooltip('Library'), findsNothing);
       expect(find.text('Shared'), findsNothing);
-      expect(find.text('Shared with you'), findsOneWidget);
       expect(find.text('Kyoto'), findsOneWidget);
       expect(find.text('Travel'), findsNothing);
       expect(find.text('Japan'), findsNothing);
@@ -325,6 +324,12 @@ void main() {
       expect(find.widgetWithText(ChoiceChip, 'Kyoto'), findsNothing);
       expect(find.text('Empty folder'), findsNothing);
       expect(c.nativeAlbums.single.name, 'Best days');
+      await tester.scrollUntilVisible(
+        find.text('Shared with you'),
+        150,
+        scrollable: find.byType(Scrollable).first,
+      );
+      expect(find.text('Shared with you'), findsOneWidget);
       await tester.scrollUntilVisible(
         find.byKey(const ValueKey('View all Nextcloud albums')),
         200,
