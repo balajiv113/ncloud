@@ -61,8 +61,8 @@ class AppController extends ChangeNotifier {
     this.pathlessTimeline = false,
   }) : client = client ?? NextcloudClient();
 
-  /// Paints the Timeline straight from Memories rows and looks file paths up
-  /// in the background, so scrolling never waits on WebDAV searches.
+  /// Paints the Timeline straight from Memories rows and resolves real paths
+  /// only when an action needs them.
   final bool pathlessTimeline;
 
   final SessionStore store;
@@ -170,6 +170,7 @@ class AppController extends ChangeNotifier {
     try {
       final saved = await store.read();
       if (saved != null) account = Account.decode(saved);
+      warming = connected;
     } catch (e) {
       error = 'Could not restore the saved account. ${errorMessage(e)}';
     } finally {
@@ -177,9 +178,10 @@ class AppController extends ChangeNotifier {
       notifyListeners();
     }
     if (connected) {
+      final preparation = _prepareLibrary(refresh: false);
       unawaited(_prepareAlbums());
       unawaited(_prepareSharedAlbums(refresh: false));
-      await load(refresh: false);
+      await preparation;
     }
   }
 
@@ -281,20 +283,10 @@ class AppController extends ChangeNotifier {
       demo = false;
       tab = 0;
       directory = [];
+      final preparation = _prepareLibrary();
       unawaited(_prepareAlbums());
       unawaited(_prepareSharedAlbums(refresh: false));
-      final warmKey = 'warm-v1|${result.server}|${result.userId}';
-      if (cache != null && await cache!.readDocument(warmKey) == null) {
-        warming = true;
-        warmProgress = 0;
-        warmPhase = 0;
-        warmIndex = '';
-        warmDone = warmTotal = 0;
-        unawaited(cache!.writeDocument(warmKey, {'at': '${DateTime.now()}'}));
-        unawaited(_warmUp());
-        return;
-      }
-      await load();
+      await preparation;
     } finally {
       _savingAccount = false;
     }
@@ -310,16 +302,50 @@ class AppController extends ChangeNotifier {
   int warmDone = 0;
   int warmTotal = 0;
   int _warmVersion = 0;
+  Timer? _warmTimer;
   static const warmBudget = Duration(seconds: 30);
   static const warmYears = 3;
+
+  Future<void> _prepareLibrary({bool refresh = true}) async {
+    final session = account!;
+    final key = 'warm-v2|${session.server}|${session.userId}';
+    warming = true;
+    warmProgress = 0;
+    warmPhase = 0;
+    warmIndex = '';
+    warmDone = warmTotal = 0;
+    notifyListeners();
+    final prepared = await cache?.readDocument(key);
+    if (_disposed || account != session) return;
+    if (prepared?['complete'] == true) {
+      skipWarmUp();
+      await load(refresh: refresh);
+      return;
+    }
+    await _warmUp();
+    if (!_disposed &&
+        account == session &&
+        error == null &&
+        warmDone == warmTotal &&
+        warmPhase == 3) {
+      await _storeWrite;
+      await cache?.writeDocument(key, {'complete': true});
+    }
+  }
 
   /// After the first sign-in, loads the Timeline index, then the metadata of
   /// recent years and the first screen of thumbnails, within [warmBudget].
   /// Skipping only hides the screen; metadata keeps loading quietly.
   Future<void> _warmUp() async {
     final version = ++_warmVersion;
+    final session = account;
     final deadline = DateTime.now().add(warmBudget);
-    bool active() => version == _warmVersion && !_disposed && account != null;
+    _warmTimer?.cancel();
+    _warmTimer = Timer(warmBudget, () {
+      if (version == _warmVersion) skipWarmUp();
+    });
+    bool active() =>
+        version == _warmVersion && !_disposed && account == session;
     void step(double progress, int phase) {
       if (!active() || !warming) return;
       warmProgress = progress;
@@ -329,10 +355,22 @@ class AppController extends ChangeNotifier {
 
     try {
       step(0.03, 0);
-      await load();
+      await load(refresh: false);
       final listing = _activeListing;
       final days = listing?.days;
-      if (!active() || listing == null) return;
+      if (!active() || listing == null || error != null) return;
+      final thumbnails = Future.wait([
+        for (final file in items.where((f) => f.isMedia).take(60))
+          preview(file).then<void>(
+            (_) {},
+            onError: (Object e) {
+              if (active() && e is! PreviewCancelled) {
+                notice =
+                    'Some previews could not be prepared. Tap them to retry.';
+              }
+            },
+          ),
+      ]);
       if (days != null && days.isNotEmpty) {
         final years = [
           for (final day in [
@@ -355,6 +393,7 @@ class AppController extends ChangeNotifier {
             .where((d) => d.id >= today - warmYears * 366)
             .toList();
         final total = recent.fold(0, (sum, d) => sum + d.count);
+        warmTotal = total;
         while (active() &&
             DateTime.now().isBefore(deadline) &&
             identical(listing, _activeListing)) {
@@ -362,28 +401,36 @@ class AppController extends ChangeNotifier {
               .where((d) => !listing.loaded.contains(d.id))
               .fold(0, (sum, d) => sum + d.count);
           warmDone = total - missing;
-          warmTotal = total;
           if (missing == 0) break;
           step(0.1 + 0.7 * warmDone / math.max(1, total), 1);
           final before = listing.loaded.length;
           await loadNextPage();
           if (listing.loaded.length == before) break;
         }
+        warmDone =
+            total -
+            recent
+                .where((d) => !listing.loaded.contains(d.id))
+                .fold(0, (sum, d) => sum + d.count);
       }
-      if (!active() || !warming) return;
+      if (!active()) return;
       step(0.85, 2);
       final left = deadline.difference(DateTime.now());
       if (left > Duration.zero) {
-        await Future.wait([
-          for (final file in items.where((f) => f.isMedia).take(60))
-            preview(file).then<void>((_) {}, onError: (_) {}),
-        ]).timeout(left, onTimeout: () => []);
+        await thumbnails.timeout(left, onTimeout: () => []);
       }
-      step(1, 3);
+      if (active() && warmDone == warmTotal) {
+        warmProgress = 1;
+        warmPhase = 3;
+        notifyListeners();
+      }
     } on Object catch (e) {
       error ??= errorMessage(e);
     } finally {
-      if (version == _warmVersion) skipWarmUp();
+      if (version == _warmVersion) {
+        _warmTimer?.cancel();
+        skipWarmUp();
+      }
     }
   }
 
@@ -882,7 +929,6 @@ class AppController extends ChangeNotifier {
     items = fileStore.resolve(listing.keys);
     hasMore = listing.more;
     if (tab == 0) _libraryFiles = items;
-    _queuePending(items);
     if (key != null) {
       _listings[key] = listing;
       if (_listings.length > 20) _listings.remove(_listings.keys.first);
@@ -1662,7 +1708,6 @@ class AppController extends ChangeNotifier {
       }, 'Upload complete');
 
   void _clearPreviews() {
-    _pendingIds.clear();
     _resolvedIds.clear();
     _thumbs.clear();
     _thumbBytes = 0;
@@ -1678,44 +1723,7 @@ class AppController extends ChangeNotifier {
     _multipreviewFailures = 0;
   }
 
-  final Set<String> _pendingIds = {};
   final Map<String, CloudFile> _resolvedIds = {};
-  bool _resolvingPaths = false;
-
-  void _queuePending(Iterable<CloudFile> files) {
-    var added = false;
-    for (final file in files) {
-      if (file.pending && _pendingIds.add(file.id!)) added = true;
-    }
-    if (added && !_resolvingPaths) {
-      _resolvingPaths = true;
-      unawaited(_resolvePending());
-    }
-  }
-
-  /// Looks real paths up for placeholder timeline items, newest first, and
-  /// swaps them into every listing without touching their thumbnails.
-  Future<void> _resolvePending() async {
-    try {
-      while (_pendingIds.isNotEmpty && !_disposed) {
-        final session = account;
-        if (session == null) break;
-        final batch = _pendingIds.take(400).toList();
-        _pendingIds.removeAll(batch);
-        final Map<String, CloudFile> found;
-        try {
-          found = await client.resolveFileIds(session, batch);
-        } on Object {
-          // Retried on demand by [resolve] and on the next publish.
-          break;
-        }
-        if (_disposed || !identical(session, account)) break;
-        _applyResolved(batch, found);
-      }
-    } finally {
-      _resolvingPaths = false;
-    }
-  }
 
   void _applyResolved(List<String> ids, Map<String, CloudFile> found) {
     final renamed = <String, String>{};
@@ -2108,6 +2116,7 @@ class AppController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _warmTimer?.cancel();
     _catalogueVersion++;
     _sharedAlbumsVersion++;
     _loadVersion++;

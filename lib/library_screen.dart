@@ -11,6 +11,7 @@ import 'library_actions.dart';
 import 'media_tile.dart';
 import 'models.dart';
 import 'screens.dart';
+import 'timeline_layout.dart';
 
 enum MediaFilter { all, photos, videos, favorites }
 
@@ -51,6 +52,8 @@ class _LibraryScreenState extends State<LibraryScreen>
   bool _searching = false;
   bool _showNative = false;
   bool _albumsExpanded = false;
+  Object? _visibleKey;
+  List<CloudFile> _visibleFiles = [];
   int _prefetchBudget = 2;
   String _query = '';
   AppController get c => widget.controller;
@@ -224,6 +227,17 @@ class _LibraryScreenState extends State<LibraryScreen>
   }
 
   List<CloudFile> get _visible {
+    final key = (
+      c.items,
+      _query,
+      _subfolder,
+      _filter,
+      _sort,
+      _drive,
+      _collection,
+    );
+    if (key == _visibleKey) return _visibleFiles;
+    _visibleKey = key;
     final files = c.items.where((f) {
       if (_query.isNotEmpty &&
           !f.name.toLowerCase().contains(_query.toLowerCase())) {
@@ -261,7 +275,7 @@ class _LibraryScreenState extends State<LibraryScreen>
       };
       return order == 0 ? a.key.compareTo(b.key) : order;
     });
-    return files;
+    return _visibleFiles = files;
   }
 
   void _toggle(CloudFile file) {
@@ -1674,12 +1688,13 @@ class _LibraryScreenState extends State<LibraryScreen>
         addToSection(file.timelineDate?.toLocal(), [file], 1, null);
       }
     }
+    double? layoutWidth;
+    late TimelineGridLayout layout;
+    final visibleSections = sections.where((s) => s.expected[0] > 0).toList();
     return [
       SliverLayoutBuilder(
         builder: (context, constraints) {
           _timelineStart = constraints.precedingScrollExtent;
-          _dateStops.clear();
-          _rowPositions.clear();
           final columns = constraints.crossAxisExtent > 650
               ? _density + 2
               : _density;
@@ -1687,70 +1702,60 @@ class _LibraryScreenState extends State<LibraryScreen>
               (constraints.crossAxisExtent - (columns - 1) * 2) / columns;
           final headerExtent =
               44.0 + MediaQuery.textScalerOf(context).scale(13) - 13;
-          final rows =
-              <
-                ({
-                  String? label,
-                  List<CloudFile> files,
-                  int placeholders,
-                  int section,
-                })
-              >[];
-          var offset = 0.0;
-          for (final (index, section) in sections.indexed) {
-            final expected = section.expected[0];
-            if (expected == 0) continue;
-            _dateStops.add((
-              offset: offset,
-              label: section.label,
-              date: section.date,
-            ));
-            rows.add((
-              label: section.label,
-              files: section.files,
-              placeholders: 0,
-              section: index,
-            ));
-            offset += headerExtent;
-            for (var start = 0; start < expected; start += columns) {
-              final row = section.files.skip(start).take(columns).toList();
-              final slots = expected - start < columns
-                  ? expected - start
-                  : columns;
-              if (row.isNotEmpty) {
-                _rowPositions.add((offset: offset, files: row));
-              }
-              rows.add((
-                label: null,
-                files: row,
-                placeholders: slots - row.length,
-                section: index,
+          if (layoutWidth != constraints.crossAxisExtent) {
+            layoutWidth = constraints.crossAxisExtent;
+            layout = TimelineGridLayout(
+              counts: [
+                for (final section in visibleSections) section.expected[0],
+              ],
+              columns: columns,
+              tileExtent: tileExtent,
+              headerExtent: headerExtent,
+              reverseCrossAxis: Directionality.of(context) == TextDirection.rtl,
+            );
+            _dateStops.clear();
+            _rowPositions.clear();
+            for (final (index, section) in visibleSections.indexed) {
+              _dateStops.add((
+                offset: layout.offsets[index],
+                label: section.label,
+                date: section.date,
               ));
-              offset += tileExtent + 2;
+              for (
+                var start = 0;
+                start < section.files.length;
+                start += columns
+              ) {
+                final end = (start + columns).clamp(0, section.files.length);
+                _rowPositions.add((
+                  offset:
+                      layout.offsets[index] +
+                      headerExtent +
+                      (start ~/ columns) * (tileExtent + 2),
+                  files: section.files.sublist(start, end),
+                ));
+              }
             }
           }
           final placeholder = Theme.of(
             context,
           ).colorScheme.surfaceContainerHighest;
-          return SliverVariedExtentList.builder(
-            itemCount: rows.length,
-            itemExtentBuilder: (index, _) => index >= rows.length
-                ? null
-                : rows[index].label == null
-                ? tileExtent + 2
-                : headerExtent,
-            itemBuilder: (context, index) {
-              final row = rows[index];
+          return SliverGrid(
+            gridDelegate: TimelineGridDelegate(layout),
+            delegate: SliverChildBuilderDelegate((context, index) {
+              final sectionIndex = layout.sectionForIndex(index);
+              final section = visibleSections[sectionIndex];
+              final photoIndex = index - layout.starts[sectionIndex] - 1;
               // Request a few sections ahead first so the visible section,
               // requested last, is fetched first.
-              for (var next = row.section + 3; next >= row.section; next--) {
-                if (next < sections.length &&
-                    sections[next].pending.isNotEmpty) {
-                  _wantDays(sections[next].pending);
+              for (var next = sectionIndex + 3; next >= sectionIndex; next--) {
+                if (next < visibleSections.length &&
+                    visibleSections[next].pending.isNotEmpty) {
+                  _wantDays(visibleSections[next].pending);
                 }
               }
-              if (row.label != null) {
-                final all = row.files.every(
+              if (photoIndex < 0) {
+                final all = section.files.every(
                   (f) => _selected.containsKey(f.key),
                 );
                 return Padding(
@@ -1759,7 +1764,7 @@ class _LibraryScreenState extends State<LibraryScreen>
                     children: [
                       Expanded(
                         child: Text(
-                          row.label!,
+                          section.label,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
@@ -1769,12 +1774,12 @@ class _LibraryScreenState extends State<LibraryScreen>
                         ),
                       ),
                       IconButton(
-                        tooltip: 'Select ${row.label}',
+                        tooltip: 'Select ${section.label}',
                         iconSize: 18,
-                        onPressed: row.files.every((f) => f.readOnly)
+                        onPressed: section.files.every((f) => f.readOnly)
                             ? null
                             : () => setState(() {
-                                for (final file in row.files.where(
+                                for (final file in section.files.where(
                                   (f) => !f.readOnly,
                                 )) {
                                   if (all) {
@@ -1796,25 +1801,11 @@ class _LibraryScreenState extends State<LibraryScreen>
               }
               return Padding(
                 padding: const EdgeInsets.only(bottom: 2),
-                child: Row(
-                  children: [
-                    for (var i = 0; i < columns; i++) ...[
-                      if (i > 0) const SizedBox(width: 2),
-                      Expanded(
-                        child: i < row.files.length
-                            ? _mediaTile(row.files[i], media)
-                            : i < row.files.length + row.placeholders
-                            ? AspectRatio(
-                                aspectRatio: 1,
-                                child: ColoredBox(color: placeholder),
-                              )
-                            : const SizedBox.shrink(),
-                      ),
-                    ],
-                  ],
-                ),
+                child: photoIndex < section.files.length
+                    ? _mediaTile(section.files[photoIndex], media)
+                    : ColoredBox(color: placeholder),
               );
-            },
+            }, childCount: layout.itemCount),
           );
         },
       ),

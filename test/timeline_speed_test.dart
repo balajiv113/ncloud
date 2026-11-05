@@ -88,7 +88,7 @@ void main() {
   );
 
   test(
-    'the pathless Timeline paints from Memories rows and finds paths in the background',
+    'the pathless Timeline loads metadata without path lookups until an action needs one',
     () async {
       final calls = <http.Request>[];
       final c = AppController(
@@ -107,18 +107,15 @@ void main() {
       expect(c.items, hasLength(1500));
       expect(c.items.first.name, 'photo.jpg');
       expect(c.items.first.captureDay, 21000);
+      expect(calls.where((r) => r.method == 'SEARCH'), isEmpty);
       final first = c.items.first;
       final resolved = await c.resolve(first);
       expect(resolved.path, ['Photos', 'photo-${first.id}.jpg']);
-      await settle(() => c.items.every((f) => !f.pending));
-      expect(c.items.where((f) => f.pending), isEmpty);
+      expect(c.items.where((f) => f.pending), hasLength(1499));
       expect(c.items, hasLength(1500));
       expect(c.items.first.captureDay, 21000);
       expect(c.items.first.etag, 'revision-21000');
-      expect(
-        calls.where((r) => r.method == 'SEARCH').length,
-        inInclusiveRange(15, 17),
-      );
+      expect(calls.where((r) => r.method == 'SEARCH').length, 1);
     },
   );
 

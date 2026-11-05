@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'app_controller.dart';
 import 'media_tile.dart';
 
-/// One-time welcome after signing in while recent years are preloaded.
+/// Library preparation for new and previously unprepared saved sessions.
 class WarmStartScreen extends StatelessWidget {
   const WarmStartScreen({super.key, required this.controller});
   final AppController controller;
@@ -90,9 +90,9 @@ class WarmStartScreen extends StatelessWidget {
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      'Fetching the last ${AppController.warmYears} years so '
-                      'scrolling is instant.\nThis happens once — later opens '
-                      'are immediate.',
+                      'Preparing up to the last ${AppController.warmYears} years '
+                      'and recent thumbnails.\nYour cached library is reused '
+                      'the next time you open the app.',
                       textAlign: TextAlign.center,
                       style: theme.textTheme.bodyMedium?.copyWith(
                         color: colors.onSurfaceVariant,
