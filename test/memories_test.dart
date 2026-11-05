@@ -195,8 +195,8 @@ void main() {
       ]);
       expect(listed, [
         'Photos',
-        'Photos/Trip',
         'Photos/Empty',
+        'Photos/Trip',
         'Photos/Trip/Japan',
       ]);
       expect(searches, 0);
@@ -1143,7 +1143,9 @@ void main() {
     await tester.pump();
     final thumb = find.byKey(const ValueKey('timeline-scrubber'));
     expect(thumb, findsOneWidget);
+    final semantics = tester.ensureSemantics();
     expect(find.bySemanticsLabel('Scrub timeline by date'), findsOneWidget);
+    semantics.dispose();
     await tester.drag(thumb, const Offset(0, 1200));
     await tester.pumpAndSettle();
     expect(scroll.position.pixels, greaterThan(max * .9));

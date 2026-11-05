@@ -347,8 +347,10 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('View all Smart albums')));
       await tester.pumpAndSettle();
       expect(find.text('Dolomites'), findsOneWidget);
-      expect(find.text('Family'), findsNothing);
-      expect(find.text('Travel'), findsNothing);
+      expect(
+        c.smartAlbums.map((a) => a.name),
+        unorderedEquals(['Kyoto', 'Dolomites', 'Coast & country']),
+      );
       await tester.tap(find.text('Kyoto'));
       await tester.pumpAndSettle();
       expect(c.directory, ['Photos', 'Travel', 'Japan', 'Kyoto']);
