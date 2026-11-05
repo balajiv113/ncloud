@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -279,10 +280,115 @@ class AppController extends ChangeNotifier {
       directory = [];
       unawaited(_prepareAlbums());
       unawaited(_prepareSharedAlbums(refresh: false));
+      final warmKey = 'warm-v1|${result.server}|${result.userId}';
+      if (cache != null && await cache!.readDocument(warmKey) == null) {
+        warming = true;
+        warmProgress = 0;
+        warmPhase = 0;
+        warmIndex = '';
+        warmDone = warmTotal = 0;
+        unawaited(cache!.writeDocument(warmKey, {'at': '${DateTime.now()}'}));
+        unawaited(_warmUp());
+        return;
+      }
       await load();
     } finally {
       _savingAccount = false;
     }
+  }
+
+  /// True while the one-time welcome screen preloads recent years.
+  bool warming = false;
+  double warmProgress = 0;
+
+  /// 0 day index, 1 recent metadata, 2 thumbnails, 3 ready.
+  int warmPhase = 0;
+  String warmIndex = '';
+  int warmDone = 0;
+  int warmTotal = 0;
+  int _warmVersion = 0;
+  static const warmBudget = Duration(seconds: 30);
+  static const warmYears = 3;
+
+  /// After the first sign-in, loads the Timeline index, then the metadata of
+  /// recent years and the first screen of thumbnails, within [warmBudget].
+  /// Skipping only hides the screen; metadata keeps loading quietly.
+  Future<void> _warmUp() async {
+    final version = ++_warmVersion;
+    final deadline = DateTime.now().add(warmBudget);
+    bool active() => version == _warmVersion && !_disposed && account != null;
+    void step(double progress, int phase) {
+      if (!active() || !warming) return;
+      warmProgress = progress;
+      warmPhase = phase;
+      notifyListeners();
+    }
+
+    try {
+      step(0.03, 0);
+      await load();
+      final listing = _activeListing;
+      final days = listing?.days;
+      if (!active() || listing == null) return;
+      if (days != null && days.isNotEmpty) {
+        final years = [
+          for (final day in [
+            days.map((d) => d.id).reduce(math.min),
+            days.map((d) => d.id).reduce(math.max),
+          ])
+            DateTime.fromMillisecondsSinceEpoch(
+              day * 86400000,
+              isUtc: true,
+            ).year,
+        ];
+        final count = days.fold(0, (sum, d) => sum + d.count);
+        warmIndex =
+            '$count photos · '
+            '${years.first == years.last ? years.first : years.join('–')}';
+      }
+      if (days != null) {
+        final today = DateTime.now().toUtc().millisecondsSinceEpoch ~/ 86400000;
+        final recent = days
+            .where((d) => d.id >= today - warmYears * 366)
+            .toList();
+        final total = recent.fold(0, (sum, d) => sum + d.count);
+        while (active() &&
+            DateTime.now().isBefore(deadline) &&
+            identical(listing, _activeListing)) {
+          final missing = recent
+              .where((d) => !listing.loaded.contains(d.id))
+              .fold(0, (sum, d) => sum + d.count);
+          warmDone = total - missing;
+          warmTotal = total;
+          if (missing == 0) break;
+          step(0.1 + 0.7 * warmDone / math.max(1, total), 1);
+          final before = listing.loaded.length;
+          await loadNextPage();
+          if (listing.loaded.length == before) break;
+        }
+      }
+      if (!active() || !warming) return;
+      step(0.85, 2);
+      final left = deadline.difference(DateTime.now());
+      if (left > Duration.zero) {
+        await Future.wait([
+          for (final file in items.where((f) => f.isMedia).take(60))
+            preview(file).then<void>((_) {}, onError: (_) {}),
+        ]).timeout(left, onTimeout: () => []);
+      }
+      step(1, 3);
+    } on Object catch (e) {
+      error ??= errorMessage(e);
+    } finally {
+      if (version == _warmVersion) skipWarmUp();
+    }
+  }
+
+  /// Leaves the welcome screen; loading continues in the background.
+  void skipWarmUp() {
+    if (!warming) return;
+    warming = false;
+    notifyListeners();
   }
 
   Future<void> signOut() async {
@@ -306,6 +412,8 @@ class AppController extends ChangeNotifier {
       _clearPreviews();
       _covers.clear();
       _demoTrash.clear();
+      _warmVersion++;
+      warming = false;
       account = null;
       demo = false;
       _demo = [];
@@ -445,6 +553,7 @@ class AppController extends ChangeNotifier {
     hasMore = false;
     error = null;
     _activeListing = null;
+    _timelineChanges = null;
     _pendingDays.clear();
     if (!keepItems) items = [];
     _visibleListingKey = listingKey;
@@ -820,6 +929,86 @@ class AppController extends ChangeNotifier {
   /// Loads specific indexed days, such as those the timeline scrolled or was
   /// scrubbed to. The most recently requested days load first and requests
   /// left far behind by a fast scrub are dropped.
+  ({List<MemoryDay> days, Set<int> changed, int added})? _timelineChanges;
+  bool _checkingChanges = false;
+
+  /// True when the server's Timeline differs from what is on screen.
+  bool get timelineChanged => _timelineChanges != null;
+
+  /// Photos added on the server since the Timeline was shown.
+  int get newPhotos => _timelineChanges?.added ?? 0;
+
+  /// Compares the server's day index with the one on screen. One small
+  /// request; nothing is downloaded unless a day's count changed.
+  Future<bool> checkForChanges() async {
+    final listing = _activeListing;
+    final session = account;
+    final shown = listing?.days;
+    if (_checkingChanges ||
+        demo ||
+        session == null ||
+        shown == null ||
+        tab != 0 ||
+        activeNativeAlbum != null ||
+        loading) {
+      return false;
+    }
+    _checkingChanges = true;
+    try {
+      final path = [...directory];
+      final days = await client.memoryDays(
+        session,
+        path: path,
+        recursive: _recursiveMedia(0, path),
+      );
+      if (days == null || !identical(listing, _activeListing)) return false;
+      final before = {for (final day in shown) day.id: day.count};
+      final after = {for (final day in days) day.id: day.count};
+      final changed = {
+        for (final id in {...before.keys, ...after.keys})
+          if (before[id] != after[id]) id,
+      };
+      if (changed.isEmpty) return false;
+      int total(Map<int, int> counts) => counts.values.fold(0, (a, b) => a + b);
+      _timelineChanges = (
+        days: days,
+        changed: changed,
+        added: math.max(0, total(after) - total(before)),
+      );
+      notifyListeners();
+      return true;
+    } on Object {
+      return false;
+    } finally {
+      _checkingChanges = false;
+    }
+  }
+
+  /// Shows the changes found by [checkForChanges], reloading only the
+  /// affected days that were already on screen.
+  void applyChanges() {
+    final changes = _timelineChanges;
+    final listing = _activeListing;
+    _timelineChanges = null;
+    if (changes == null || listing == null || listing.days == null) {
+      notifyListeners();
+      return;
+    }
+    final reload = changes.changed.where(listing.loaded.contains).toList();
+    listing.loaded.removeAll(changes.changed);
+    listing.replace(const {}, {
+      for (final key in listing.keys)
+        if (changes.changed.contains(fileStore[key]?.captureDay)) key,
+    });
+    listing.days = changes.days;
+    listing.more = changes.days.any((d) => !listing.loaded.contains(d.id));
+    listing.updated = DateTime.now();
+    unawaited(_publishListing(listing, _listingKey()));
+    notifyListeners();
+    final present = {for (final day in changes.days) day.id};
+    ensureDays(reload.where(present.contains));
+  }
+
   void ensureDays(Iterable<int> days) {
     final listing = _activeListing;
     if (listing?.days == null || account == null) return;
@@ -1543,8 +1732,13 @@ class AppController extends ChangeNotifier {
         gone.add(key);
         continue;
       }
-      final day = placeholder?.captureDay;
-      final file = placeholder != null && day != null
+      if (placeholder == null) {
+        // Already swapped by an on-demand [resolve]; keep its timeline date.
+        _resolvedIds[id] ??= real;
+        continue;
+      }
+      final day = placeholder.captureDay;
+      final file = day != null
           ? real.withCaptureDate(
               placeholder.taken ?? real.modified ?? DateTime.now(),
               placeholder.etag ?? real.etag,
@@ -1791,10 +1985,11 @@ class AppController extends ChangeNotifier {
   Future<File?> offlineCopy(CloudFile file) async {
     final session = account;
     if (cache == null || session == null) return null;
-    try {
-      file = await resolve(file);
-    } on Object {
-      return null;
+    if (file.pending) {
+      // Never block a tile on a path lookup; unresolved items have no copy.
+      final known = _resolvedIds[file.id];
+      if (known == null) return null;
+      file = known;
     }
     final copy = await cache!.original(_originalKey(session, file), file.name);
     return await copy.exists() ? copy : null;

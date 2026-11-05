@@ -31,7 +31,8 @@ class LibraryScreen extends StatefulWidget {
   State<LibraryScreen> createState() => _LibraryScreenState();
 }
 
-class _LibraryScreenState extends State<LibraryScreen> {
+class _LibraryScreenState extends State<LibraryScreen>
+    with WidgetsBindingObserver {
   final _search = TextEditingController();
   final _scroll = ScrollController();
   final Map<String, CloudFile> _selected = {};
@@ -67,17 +68,52 @@ class _LibraryScreenState extends State<LibraryScreen> {
       ? (_pointers.values.first - _pointers.values.last).distance
       : 0;
 
+  Timer? _changePoll;
+  bool _foreground = true;
+
   @override
   void initState() {
     super.initState();
     _scroll.addListener(_prefetch);
+    WidgetsBinding.instance.addObserver(this);
+    _changePoll = Timer.periodic(
+      const Duration(seconds: 60),
+      (_) => _checkForChanges(),
+    );
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _changePoll?.cancel();
     _search.dispose();
     _scroll.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _foreground = state == AppLifecycleState.resumed;
+    if (_foreground) _checkForChanges();
+  }
+
+  /// Picks up photos added or removed in Nextcloud while the Timeline is
+  /// open: applied in place at the top, otherwise offered as a pill.
+  Future<void> _checkForChanges() async {
+    if (!_foreground || c.tab != 0 || _selecting) return;
+    if (!await c.checkForChanges() || !mounted) return;
+    if (!_scroll.hasClients || _scroll.offset < 120) c.applyChanges();
+  }
+
+  void _showChanges() {
+    c.applyChanges();
+    if (_scroll.hasClients) {
+      _scroll.animateTo(
+        0,
+        duration: const Duration(milliseconds: 450),
+        curve: Curves.easeOutCubic,
+      );
+    }
   }
 
   /// Month shown in the scrubber bubble for a scroll offset.
@@ -610,7 +646,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                               child: _empty(),
                             ),
                         ],
-                        if (c.loadingMore)
+                        if (c.loadingMore && !_indexedLayout)
                           const SliverToBoxAdapter(
                             child: Padding(
                               padding: EdgeInsets.all(16),
@@ -641,6 +677,27 @@ class _LibraryScreenState extends State<LibraryScreen> {
                     controller: _scroll,
                     labelAt: _labelAt,
                     markers: _yearMarkers,
+                  ),
+                ),
+              if (c.tab == 0 && c.timelineChanged && !_selecting)
+                Positioned(
+                  top: MediaQuery.paddingOf(context).top + 72,
+                  left: 0,
+                  right: 0,
+                  child: Center(
+                    child: FilledButton.icon(
+                      onPressed: _showChanges,
+                      style: FilledButton.styleFrom(
+                        shape: const StadiumBorder(),
+                        elevation: 4,
+                      ),
+                      icon: const Icon(Icons.arrow_upward, size: 18),
+                      label: Text(switch (c.newPhotos) {
+                        0 => 'Timeline updated',
+                        1 => '1 new photo',
+                        final n => '$n new photos',
+                      }),
+                    ),
                   ),
                 ),
             ],

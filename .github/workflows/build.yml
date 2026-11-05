@@ -167,10 +167,10 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           mv app-release.apk ncloud-android.apk
-          gh release create "v0.5.4-preview.${{ github.run_number }}" ncloud-android.apk \
+          gh release create "v0.5.5-preview.${{ github.run_number }}" ncloud-android.apk \
             --target "${{ github.sha }}" --prerelease \
             --title "ncloud Android preview #${{ github.run_number }}" \
-            --notes "ncloud 0.5.4: Smart albums are back to one album per first folder containing media (e.g. Kyoto, Dolomites), fixing the regression that collapsed albums into one parent folder. New unified file cache: Timeline, Albums, Shared and Drive share one normalized on-device store, so folders listed by album discovery open instantly in Drive and favorites/moves/deletes patch every view without reloads. Timeline now lays out the full Memories day index up front with placeholders and loads only the days you scroll or scrub to, removing the stall every few days. Google Photos-style draggable scrubber with month bubble and year markers; tap it to jump to any month. Updates reuse the cached development signer."
+            --notes "ncloud 0.5.5: Instant timeline. Thumbnails are cache-first: cached ones paint on the first frame with no spinner, and a changed photo keeps showing its previous thumbnail until the new one arrives. Visible thumbnails are fetched in one Memories multipreview request instead of one request per tile. The Timeline paints straight from Memories metadata in batches of up to 1,500 photos and resolves file paths in the background. New one-time welcome screen after sign-in preloads the last 3 years (skippable, at most 30 s). Live refresh: changes in Nextcloud are detected on resume and every minute and slide in at the top, or show a new-photos pill while scrolled. Dock stays compact; the scrubber is hold-and-drag only. Updates reuse the cached development signer."
 
   ios:
     if: github.event_name == 'workflow_dispatch' && inputs.build_ios

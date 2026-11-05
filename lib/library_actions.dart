@@ -650,7 +650,7 @@ class SettingsScreen extends StatelessWidget {
           ),
           const ListTile(
             leading: Icon(Icons.info_outline),
-            title: Text('ncloud 0.5.4 · Unified cache & smooth timeline'),
+            title: Text('ncloud 0.5.5 · Instant timeline'),
             subtitle: Text(
               'Keep the app open during transfers. Public links are read-only. Server permissions and retention rules apply.',
             ),

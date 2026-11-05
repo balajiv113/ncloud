@@ -4,6 +4,7 @@ import 'app_controller.dart';
 import 'local_cache.dart';
 import 'screens.dart';
 import 'library_screen.dart';
+import 'warm_start_screen.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -56,6 +57,9 @@ class _NcloudAppState extends State<NcloudApp> {
           return const Scaffold(
             body: Center(child: CircularProgressIndicator()),
           );
+        }
+        if (widget.controller.warming) {
+          return WarmStartScreen(controller: widget.controller);
         }
         return widget.controller.connected
             ? LibraryScreen(controller: widget.controller)

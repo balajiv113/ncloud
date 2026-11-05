@@ -80,6 +80,23 @@ class _MediaTileState extends State<MediaTile> {
         c.previewCurrent(widget.file, size: widget.previewSize)) {
       return;
     }
+    if (!retry && cached == null && widget.file.isImage && c.cache != null) {
+      // A saved original replays without any network request.
+      c.offlineCopy(widget.file).then((copy) {
+        if (!mounted || generation != _generation) return;
+        if (copy != null) {
+          setState(() => _original = copy);
+        } else {
+          _request(generation, retry);
+        }
+      });
+      return;
+    }
+    _request(generation, retry);
+  }
+
+  void _request(int generation, bool retry) {
+    final c = widget.controller;
     _waiting = true;
     c
         .preview(
