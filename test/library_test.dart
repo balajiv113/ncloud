@@ -254,12 +254,12 @@ void main() {
     expect(find.text('Smart albums'), findsOneWidget);
     expect(find.text('Empty folder'), findsNothing);
     expect(find.text('Japan'), findsNothing);
-    await tester.ensureVisible(find.text('Kyoto'));
+    await tester.ensureVisible(find.text('Travel'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Kyoto'));
+    await tester.tap(find.text('Travel'));
     await tester.pumpAndSettle();
     expect(c.tab, 4);
-    expect(c.directory, ['Photos', 'Travel', 'Japan', 'Kyoto']);
+    expect(c.directory, ['Photos', 'Travel']);
     final image = find.bySemanticsLabel('Alpine morning.jpg');
     await tester.longPress(image);
     await tester.pumpAndSettle();
@@ -269,10 +269,10 @@ void main() {
     expect(find.text('1 selected'), findsNothing);
     await tester.tap(image);
     await tester.pumpAndSettle();
-    expect(find.text('1 of 4'), findsOneWidget);
+    expect(find.text('1 of 8'), findsOneWidget);
     await tester.drag(find.byType(PageView), const Offset(-700, 0));
     await tester.pumpAndSettle();
-    expect(find.text('2 of 4'), findsOneWidget);
+    expect(find.text('2 of 8'), findsOneWidget);
     await tester.tap(find.byTooltip('Back to library'));
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);

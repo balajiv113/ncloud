@@ -19,6 +19,38 @@ class MemoryStore implements SessionStore {
 }
 
 void main() {
+  testWidgets('Nextcloud blue theme stays readable in light and dark modes', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      NcloudApp(controller: AppController(store: MemoryStore())),
+    );
+    await tester.pumpAndSettle();
+    addTearDown(tester.platformDispatcher.clearPlatformBrightnessTestValue);
+    for (final brightness in Brightness.values) {
+      tester.platformDispatcher.platformBrightnessTestValue = brightness;
+      await tester.pumpAndSettle();
+      final scheme = Theme.of(
+        tester.element(find.byType(Scaffold).first),
+      ).colorScheme;
+      expect(
+        scheme.primary,
+        ColorScheme.fromSeed(
+          seedColor: const Color(0xFF0082C9),
+          brightness: brightness,
+        ).primary,
+      );
+      expect(scheme.primary.b, greaterThan(scheme.primary.r));
+      final foreground = scheme.onPrimary.computeLuminance();
+      final background = scheme.primary.computeLuminance();
+      final contrast = foreground > background
+          ? (foreground + .05) / (background + .05)
+          : (background + .05) / (foreground + .05);
+      expect(contrast, greaterThanOrEqualTo(4.5));
+      expect(tester.takeException(), isNull);
+    }
+  });
+
   test(
     'app-password sign-in persists credentials and restores the session',
     () async {

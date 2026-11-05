@@ -639,7 +639,7 @@ class SettingsScreen extends StatelessWidget {
           ),
           const ListTile(
             leading: Icon(Icons.info_outline),
-            title: Text('ncloud 0.5.1 · Photo-first albums'),
+            title: Text('ncloud 0.5.2 · Nextcloud blue & parent albums'),
             subtitle: Text(
               'Keep the app open during transfers. Public links are read-only. Server permissions and retention rules apply.',
             ),

@@ -50,7 +50,7 @@ class NextcloudClient {
     final request = http.Request(method, uri)
       ..followRedirects = false
       ..headers.addAll({
-        'User-Agent': 'ncloud/0.5.1',
+        'User-Agent': 'ncloud/0.5.2',
         if (account != null) 'Authorization': account.authorization,
         ...headers,
       });
@@ -943,7 +943,7 @@ class NextcloudClient {
         'Authorization': account.authorization,
         'Content-Type': 'application/octet-stream',
         'If-None-Match': '*',
-        'User-Agent': 'ncloud/0.5.1',
+        'User-Agent': 'ncloud/0.5.2',
       });
     try {
       final response = await http.Response.fromStream(

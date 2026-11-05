@@ -38,7 +38,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
   final List<({double offset, List<CloudFile> files})> _rowPositions = [];
   MediaFilter _filter = MediaFilter.all;
   LibrarySort _sort = LibrarySort.newest;
-  List<String>? _group;
   List<String>? _subfolder;
   int _density = 3;
   int _pinchBase = 3;
@@ -122,7 +121,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
     }
     _prefetchBudget = 2;
     _filter = MediaFilter.all;
-    _group = null;
     _subfolder = null;
     _floatingDate.value = null;
     _dateStops.clear();
@@ -974,11 +972,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
     var albums = smartAlbums
         .where(
           (a) =>
-              (_group == null || pathStartsWith(a.path, _group!)) &&
               (_query.isEmpty ||
-                  '${a.name} ${a.path.join(' ')}'.toLowerCase().contains(
-                    _query.toLowerCase(),
-                  )),
+              '${a.name} ${a.path.join(' ')}'.toLowerCase().contains(
+                _query.toLowerCase(),
+              )),
         )
         .toList();
     if (_sort == LibrarySort.newest || _sort == LibrarySort.oldest) {
@@ -1143,26 +1140,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
           ),
         ),
       if (!_showNative) ...[
-        if (_group != null)
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(18, 0, 12, 10),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      _group!.last,
-                      style: Theme.of(context).textTheme.titleSmall,
-                    ),
-                  ),
-                  TextButton(
-                    onPressed: () => _openSmart(_group!),
-                    child: const Text('View all photos'),
-                  ),
-                ],
-              ),
-            ),
-          ),
         if (albums.isEmpty)
           SliverToBoxAdapter(
             child: Padding(
@@ -1712,19 +1689,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
   );
 
   Future<void> _viewOptions() async {
-    final albumGroups = <String, List<String>>{};
-    if (_albumHome && !_showNative) {
-      for (final album in c.smartAlbums) {
-        for (
-          var depth = c.photoRoot.length + 1;
-          depth < album.path.length;
-          depth++
-        ) {
-          final path = album.path.take(depth).toList();
-          albumGroups[path.map(Uri.encodeComponent).join('/')] = path;
-        }
-      }
-    }
     await showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
@@ -1742,35 +1706,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
                   style: Theme.of(context).textTheme.titleLarge,
                 ),
                 const SizedBox(height: 14),
-                if (_albumHome && !_showNative && albumGroups.isNotEmpty) ...[
-                  const Text('Group'),
-                  Wrap(
-                    spacing: 8,
-                    children: [
-                      ChoiceChip(
-                        label: const Text('All'),
-                        selected: _group == null,
-                        onSelected: (_) {
-                          setState(() => _group = null);
-                          update(() {});
-                        },
-                      ),
-                      for (final path in albumGroups.values)
-                        ChoiceChip(
-                          label: Text(
-                            path.skip(c.photoRoot.length).join(' / '),
-                          ),
-                          selected:
-                              _group != null && listPathEquals(_group!, path),
-                          onSelected: (_) {
-                            setState(() => _group = path);
-                            update(() {});
-                          },
-                        ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                ],
                 if (!_drive && !_albumHome) ...[
                   const Text('Show'),
                   Wrap(

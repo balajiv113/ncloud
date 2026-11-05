@@ -83,7 +83,7 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('View all Smart albums')));
       await tester.pumpAndSettle();
       await capture('albums-expanded');
-      await tester.tap(find.text('Kyoto'));
+      await tester.tap(find.text('Travel'));
       await tester.pumpAndSettle();
       await capture('smart-album');
       await tester.tap(find.byTooltip('Back'));

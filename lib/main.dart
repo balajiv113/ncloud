@@ -61,23 +61,16 @@ class _NcloudAppState extends State<NcloudApp> {
 }
 
 ThemeData _theme(Brightness brightness) {
-  final base = ColorScheme.fromSeed(
-    seedColor: const Color(0xFF386749),
+  final scheme = ColorScheme.fromSeed(
+    seedColor: const Color(0xFF0082C9),
     brightness: brightness,
   );
-  final scheme = brightness == Brightness.light
-      ? base.copyWith(
-          primary: const Color(0xFF386749),
-          primaryContainer: const Color(0xFFE4EEDF),
-          onPrimaryContainer: const Color(0xFF285D3B),
-        )
-      : base;
   return ThemeData(
     colorScheme: scheme,
     useMaterial3: true,
     scaffoldBackgroundColor: brightness == Brightness.light
-        ? const Color(0xFFFBFCF9)
-        : const Color(0xFF111813),
+        ? const Color(0xFFF8FBFF)
+        : const Color(0xFF101418),
     appBarTheme: const AppBarTheme(
       centerTitle: false,
       elevation: 0,

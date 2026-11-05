@@ -55,48 +55,48 @@ void main() {
     expect(formatBytes(1048576), '1.0 MB');
   });
 
-  test(
-    'Smart albums stop at the first media folder and include nested media within it',
-    () {
-      CloudFile photo(List<String> path) => CloudFile(
-        path: path,
-        name: path.last,
+  test('Smart albums use top-level parents even when all media is nested', () {
+    CloudFile photo(List<String> path) => CloudFile(
+      path: path,
+      name: path.last,
+      isDirectory: false,
+      contentType: 'image/jpeg',
+    );
+    final files = [
+      const CloudFile(
+        path: ['Photos', 'Empty'],
+        name: 'Empty',
+        isDirectory: true,
+      ),
+      const CloudFile(
+        path: ['Photos', 'Docs', 'notes.pdf'],
+        name: 'notes.pdf',
         isDirectory: false,
-        contentType: 'image/jpeg',
-      );
-      final files = [
-        const CloudFile(
-          path: ['Photos', 'Empty'],
-          name: 'Empty',
-          isDirectory: true,
-        ),
-        const CloudFile(
-          path: ['Photos', 'Docs', 'notes.pdf'],
-          name: 'notes.pdf',
-          isDirectory: false,
-          contentType: 'application/pdf',
-        ),
-        photo(['Photos', 'Travel', 'Japan', 'Kyoto', 'a.jpg']),
-        photo(['Photos', 'Travel', 'Japan', 'Kyoto', 'Temples', 'b.jpg']),
-        photo(['Photos', 'Family', 'Kyoto', 'c.jpg']),
-        photo(['Other', 'Excluded', 'd.jpg']),
-      ];
-      final albums = buildSmartAlbums(files, ['Photos']);
-      expect(albums.map((a) => a.name), ['Kyoto', 'Kyoto']);
-      expect(
-        albums.where((a) => a.path.contains('Japan')).first.files,
-        hasLength(2),
-      );
-      expect(albums.map((a) => a.key).toSet(), hasLength(2));
-      expect(
-        albums.any(
-          (a) =>
-              ['Photos', 'Travel', 'Japan', 'Empty', 'Docs'].contains(a.name),
-        ),
-        isFalse,
-      );
-    },
-  );
+        contentType: 'application/pdf',
+      ),
+      photo(['Photos', 'Travel', 'Japan', 'Kyoto', 'a.jpg']),
+      photo(['Photos', 'Travel', 'Japan', 'Kyoto', 'Temples', 'b.jpg']),
+      photo(['Photos', 'Family', 'Kyoto', 'c.jpg']),
+      photo(['Other', 'Excluded', 'd.jpg']),
+    ];
+    final albums = buildSmartAlbums(files, ['Photos']);
+    expect(albums.map((a) => a.name), ['Family', 'Travel']);
+    expect(albums.where((a) => a.name == 'Travel').single.files, hasLength(2));
+    expect(albums.map((a) => a.key).toSet(), hasLength(2));
+    expect(
+      albums.any(
+        (a) => [
+          'Photos',
+          'Kyoto',
+          'Japan',
+          'Temples',
+          'Empty',
+          'Docs',
+        ].contains(a.name),
+      ),
+      isFalse,
+    );
+  });
 
   test(
     'photo source survives account persistence without changing credentials',

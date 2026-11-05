@@ -52,7 +52,7 @@ http.Response davForIds(http.Request request) {
 
 void main() {
   test(
-    'indexed album discovery never requests subfolders once direct media is found',
+    'indexed parent albums need no per-child metadata or subfolder requests',
     () async {
       final visited = <String>[];
       final c = AppController(
@@ -92,13 +92,14 @@ void main() {
       expect(c.error, isNull);
       expect(c.smartAlbums.map((a) => a.name), ['Trip']);
       expect(visited.where((path) => path.startsWith('sub:')), ['sub:/Photos']);
+      expect(visited.any((path) => path.endsWith(':/Photos/Trip')), isFalse);
       expect(c.discoveredFolders, 2);
       expect(c.smartAlbums.single.files.single.id, '42');
     },
   );
 
   test(
-    'WebDAV album discovery also stops at the first media folder per branch',
+    'WebDAV parent albums use one recursive cover check per child without listing descendants',
     () async {
       final paths = <String>[];
       String directory(String path) =>
@@ -116,9 +117,9 @@ void main() {
                   if (request.url.path.contains('/dav/photos/')) {
                     return http.Response('', 404);
                   }
-                  expect(request.method, 'PROPFIND');
-                  paths.add(request.url.path);
-                  if (request.url.path.endsWith('/Photos')) {
+                  if (request.method == 'PROPFIND') {
+                    expect(request.url.path, endsWith('/Photos'));
+                    paths.add('root');
                     return http.Response(
                       multistatus(
                         directory('Photos/Trip') + directory('Photos/Empty'),
@@ -126,19 +127,22 @@ void main() {
                       207,
                     );
                   }
-                  if (request.url.path.endsWith('/Trip')) {
+                  expect(request.method, 'SEARCH');
+                  expect(request.body, contains('<d:nresults>1</d:nresults>'));
+                  if (request.body.contains('/files/alice/Photos/Trip')) {
+                    paths.add('Trip');
                     return http.Response(
                       multistatus(
                         responseEntry(
-                              href:
-                                  '/nextcloud/remote.php/dav/files/alice/Photos/Trip/a.jpg',
-                            ) +
-                            directory('Photos/Trip/Nested'),
+                          href:
+                              '/nextcloud/remote.php/dav/files/alice/Photos/Trip/Nested/a.jpg',
+                        ),
                       ),
                       207,
                     );
                   }
-                  expect(request.url.path, endsWith('/Empty'));
+                  expect(request.body, contains('/files/alice/Photos/Empty'));
+                  paths.add('Empty');
                   return http.Response(multistatus(''), 207);
                 }),
               ),
@@ -433,7 +437,7 @@ void main() {
   );
 
   test(
-    'album catalogue walks indexed folders, hides grouping/empty folders, and fetches no photo collections',
+    'album catalogue keeps grouping parents and hides empty branches without walking descendants',
     () async {
       final calls = <http.Request>[];
       final c = AppController(
@@ -456,15 +460,6 @@ void main() {
                   },
                   {'name': 'Empty', 'fileid': 2, 'previews': []},
                 ],
-                '/Photos/Travel' => [
-                  {
-                    'name': 'Kyoto',
-                    'fileid': 3,
-                    'previews': [
-                      {'fileid': 42},
-                    ],
-                  },
-                ],
                 _ => [],
               });
             }
@@ -472,20 +467,14 @@ void main() {
             final query = request.url.queryParameters;
             if (query['limit'] == null) return jsonResponse(index());
             expect(query.containsKey('recursive'), isFalse);
-            return jsonResponse(
-              query['folder'] == '/Photos/Travel/Kyoto'
-                  ? [
-                      {'dayid': 21000, 'count': 4},
-                    ]
-                  : [],
-            );
+            return jsonResponse([]);
           }),
         ),
       )..account = account.withPhotoRoot(['Photos']);
       addTearDown(c.dispose);
       await c.selectTab(4);
-      expect(c.smartAlbums.map((a) => a.name), ['Kyoto']);
-      expect(c.discoveredFolders, 3);
+      expect(c.smartAlbums.map((a) => a.name), ['Travel']);
+      expect(c.discoveredFolders, 2);
       expect(
         calls.any((r) => RegExp(r'/days/\d').hasMatch(r.url.path)),
         isFalse,
@@ -495,7 +484,7 @@ void main() {
         calls
             .where((r) => r.url.path.endsWith('/folders/sub'))
             .map((r) => r.url.queryParameters['folder']),
-        ['/Photos', '/Photos/Travel'],
+        ['/Photos'],
       );
       final count = calls.length;
       await c.selectTab(4);

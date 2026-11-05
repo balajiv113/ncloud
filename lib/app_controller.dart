@@ -621,7 +621,7 @@ class AppController extends ChangeNotifier {
       return;
     }
     final generation = ++_catalogueVersion;
-    final key = 'album-catalogue-v2|$rootKey';
+    final key = 'album-catalogue-v3|$rootKey';
     if (_catalogueRoot != rootKey) {
       _catalogue.clear();
       _catalogueUpdated = null;
@@ -677,7 +677,12 @@ class AppController extends ChangeNotifier {
         final folder = queue.removeAt(0);
         List<MemoryFolder> children;
         List<CloudFile> covers;
-        if (memoriesAvailable == true) {
+        if (folder.path.length > root.length) {
+          covers = memoriesAvailable == true
+              ? folder.previews
+              : await client.search(session, path: folder.path, limit: 1);
+          children = [];
+        } else if (memoriesAvailable == true) {
           final direct = await client.memoryDays(
             session,
             path: folder.path,
