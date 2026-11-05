@@ -323,7 +323,7 @@ void main() {
       expect(find.text('Your albums'), findsNothing);
       expect(find.widgetWithText(ChoiceChip, 'Travel'), findsNothing);
       expect(find.text('Empty folder'), findsNothing);
-      expect(find.text('Best days'), findsOneWidget);
+      expect(c.nativeAlbums.single.name, 'Best days');
       await tester.ensureVisible(
         find.byKey(const ValueKey('View all Nextcloud albums')),
       );
