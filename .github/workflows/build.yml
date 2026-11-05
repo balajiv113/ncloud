@@ -64,6 +64,7 @@ jobs:
             nextcloud:32-apache
           for attempt in $(seq 1 90); do
             if curl -fsS http://127.0.0.1:8080/status.php | grep -q '"installed":true'; then
+              docker exec --user www-data ncloud-nextcloud php occ app:enable photos
               exit 0
             fi
             sleep 2
@@ -139,10 +140,10 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           mv app-release.apk ncloud-android.apk
-          gh release create "v0.3.0-preview.${{ github.run_number }}" ncloud-android.apk \
+          gh release create "v0.4.0-preview.${{ github.run_number }}" ncloud-android.apk \
             --target "${{ github.sha }}" --prerelease \
             --title "ncloud Android preview #${{ github.run_number }}" \
-            --notes "ncloud 0.3: instant video streaming with buffering, scrubbing and save-offline replay; persistent thumbnail and library cache for fast reopen; faster, more reliable thumbnails; On this day memories, pinch-to-zoom grid and fast scrubber. Includes the 0.2 timeline, folder albums, Drive, sharing and trash. Updates install over earlier 0.2/0.3 previews signed with the same development key; uninstall 0.1 first. See README for details and the non-AI roadmap."
+            --notes "ncloud 0.4: a content-first three-tab redesign with compact headers, an edge-to-edge timeline and floating navigation. Automatic loading with no Load more buttons. Smart albums surface nested photo folders directly, hide empty/grouping folders, and open all descendant photos with optional grouping filters. Choose your photo source; native Nextcloud Photos albums stay separate with their original membership. Favorites, shared photos, offline originals and trash live under Albums. Streaming video and persistent caching retained. No Memories server app required. Updates install over 0.2/0.3 previews using the same cached development signer; uninstall 0.1 first. See README for limitations."
 
   ios:
     if: github.event_name == 'workflow_dispatch' && inputs.build_ios

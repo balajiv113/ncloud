@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:ncloud/nextcloud_client.dart';
+import 'package:ncloud/models.dart';
 
 void main() {
   const enabled = bool.fromEnvironment('LIVE_NEXTCLOUD');
@@ -56,6 +57,51 @@ void main() {
       expect(favorites.any((f) => f.key == photo.key), isTrue);
       final photos = await client.search(account);
       expect(photos.any((f) => f.key == photo.key), isTrue);
+      final nativeName =
+          'ncloud album ${DateTime.now().microsecondsSinceEpoch}';
+      final nativeUri = serverEndpoint(server, [
+        'remote.php',
+        'dav',
+        'photos',
+        account.userId,
+        'albums',
+        nativeName,
+      ]);
+      final nativeTransport = http.Client();
+      addTearDown(nativeTransport.close);
+      final createAlbum = http.Request('MKCOL', nativeUri)
+        ..headers['Authorization'] = account.authorization;
+      final created = await nativeTransport.send(createAlbum);
+      await created.stream.drain<void>();
+      expect(created.statusCode, 201);
+      addTearDown(() async {
+        final cleanup = await nativeTransport.delete(
+          nativeUri,
+          headers: {'Authorization': account.authorization},
+        );
+        expect(cleanup.statusCode, 204);
+      });
+      final emptyNative = (await client.albums(
+        account,
+      )).singleWhere((a) => a.name == nativeName);
+      expect(emptyNative.count, 0);
+      final addMember = http.Request('COPY', client.davUri(account, photo.path))
+        ..headers.addAll({
+          'Authorization': account.authorization,
+          'Destination': serverEndpoint(server, [
+            'remote.php',
+            'dav',
+            ...emptyNative.davPath,
+            photo.id!,
+          ]).toString(),
+          'Depth': '0',
+        });
+      final added = await nativeTransport.send(addMember);
+      await added.stream.drain<void>();
+      expect(added.statusCode, anyOf(201, 204));
+      final nativeFiles = await client.albumFiles(account, emptyNative, photos);
+      expect(nativeFiles, hasLength(1));
+      expect(nativeFiles.single.key, photo.key);
       expect(await client.preview(account, photo), isNotEmpty);
       final download = await client.download(account, photo);
       expect(await download.stream.toBytes(), bytes);

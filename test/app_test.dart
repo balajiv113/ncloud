@@ -99,9 +99,9 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Try demo'));
       await tester.pumpAndSettle();
-      expect(find.text('Your timeline'), findsOneWidget);
+      expect(find.byTooltip('Timeline'), findsOneWidget);
       expect(find.text('DEMO'), findsOneWidget);
-      await tester.tap(find.text('Drive'));
+      await tester.tap(find.byTooltip('Drive'));
       await tester.pumpAndSettle();
       await tester.tap(find.byTooltip('Search loaded items'));
       await tester.pumpAndSettle();
@@ -143,7 +143,7 @@ void main() {
     await tester.tap(find.text('Try demo'));
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
-    await tester.tap(find.text('Drive'));
+    await tester.tap(find.byTooltip('Drive'));
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('Add files'));
     await tester.pumpAndSettle();

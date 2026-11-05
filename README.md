@@ -15,10 +15,23 @@ Every successful `main` build publishes an APK to a private prerelease and retai
 
 **Upgrading from 0.1:** uninstall that preview before installing 0.2 or later; its signing key differs. This clears your saved login and app cache, not files on Nextcloud. Later builds reuse the cached signer while it remains available, and CI verifies each APK against it.
 
-## 0.3: streaming, offline cache and faster browsing
+## 0.4: content-first browsing and Smart albums
+
+The app has three destinations: **Timeline**, **Albums**, and **Drive**. Compact floating headers, a tight edge-to-edge timeline, lightweight date headers and a floating navigation pill keep content in focus. Search lives in the header; filters, sort and 2–6-column density live in **View options**. Pinching keeps the current photo row in view. A floating date control supports scrubbing and jumping to loaded months.
+
+- **Seamless loading:** timeline, favorites, shared photos and recursive Smart album views fetch successive pages automatically while showing the first results immediately. There is no Load more button. Full successful listings are cached; cached older items remain visible until a refresh completes, then removed server items disappear. Failures are shown with retry, and navigating away cancels publication of stale results. Very large libraries still take time to enumerate.
+- **Smart albums:** photo-containing folders appear directly at any nesting depth; empty, document-only and grouping-only folders are not album cards. Each card opens all media beneath its folder, including subfolders. Optional parent-folder filters narrow the album grid, and **View all photos** opens an entire grouping without drilling down. Duplicate folder names retain their relative parent path. Files are never moved or duplicated.
+- **Photo source:** Albums defaults to `Photos` when present, otherwise your drive root. Use the folder icon to choose a different root; the choice is stored securely with your account. Wrapper folders are hidden, while media stored directly at the selected root appears in **Photos at root**. The timeline remains account-wide.
+- **Nextcloud albums:** a separate selector shows owned and shared albums from the Nextcloud Photos WebDAV API, preserving their names and membership, including empty native albums. These are not inferred from folders. Servers without this API still support Smart albums. External album members can be viewed/downloaded but are intentionally view-only in ncloud; album creation, membership edits and collaboration remain in Nextcloud.
+- **Collections inside Albums:** Favorites, Shared (photos under paths you have shared), Offline originals and Recently deleted. Settings and cache management are under the profile avatar. Offline originals can be saved from file menus or the video player; evicted/cleared copies disappear from Offline.
+- **Drive:** keeps the exact server folder hierarchy, including empty folders, with breadcrumbs, upload/create and file actions.
+
+No Memories app, custom backend or AI service is required. Dates still use file modification time, not EXIF capture dates.
+
+### Streaming and local cache
 
 - **Instant video streaming** with buffering indicator, scrubbing, mute and optional save-offline replay.
-- **Persistent local cache**: thumbnails (up to 256 MiB, least recently used evicted) and the first page of each timeline, favorites, album and Drive listing are stored on device. Reopening the app shows cached content instantly and refreshes it in the background; saved videos are capped at 1 GiB. Settings → Offline cache shows usage and clears it. Disconnecting clears it.
+- **Persistent local cache**: thumbnails (up to 256 MiB, least recently used evicted) and complete successful media/Drive listings are stored on device. Reopening the app shows cached content instantly and refreshes it in the background; saved originals are capped at 1 GiB. Settings → Offline cache shows usage and clears it. Disconnecting clears it.
 - **On this day** memories from earlier years (based on modification dates), a draggable fast-scroll scrubber and **pinch to change grid density** (2–6 columns).
 
 ## iPhone / iPad testing
@@ -37,21 +50,21 @@ In Xcode select **Runner → Signing & Capabilities → your Apple team**, choos
 
 Alternatively, boot an iOS Simulator on the Mac and run `flutter run -d <simulator-id>`. Actions → **Build and test → Run workflow → build_ios** performs an unsigned iOS compile check. Its unsigned `.app` artifact is **not installable on an iPhone**.
 
-## Library redesign (0.2)
+## Available features
 
-The app now has four distinct spaces: **Timeline**, **Albums**, **Drive**, and **Library**. The design is photo-first, with an editorial highlight, compact edge-to-edge grids, sticky day headers, adjustable density, system light/dark colors, and a black distraction-free viewer.
+System light/dark themes and a black distraction-free viewer are supported.
 
 | Surface | Available now |
 |---|---|
-| Timeline | Day grouping, loaded-month jump, photo/video/favorite filters, name filtering, sort order, server pagination beyond the first 200 items |
-| Folder albums | Real Nextcloud folders shown as cover cards; browse nested folders, see their photos, create album folders, upload into the current folder |
+| Timeline | Day/month grouping, date jump/scrubber, photo/video/favorite filters, name filtering, sorting, automatic pagination beyond 200 items |
+| Albums | Flattened Smart albums, parent grouping filters, recursive media browsing, native Nextcloud albums, collections shortcuts |
 | Drive | Separate file/folder list, breadcrumbs, sorting, multi-file upload and per-item actions |
 | Viewer | Swipe between photos, pinch/double-tap zoom, hide controls, slideshow, favorite, delete, original export and in-app video playback |
 | Organize | Long-press selection, select a day, bulk favorites/move/copy/delete, rename, destination-folder picker, overwrite protection |
 | Share | List/create/revoke read-only public links, optional password and expiry, copy or system share; folders can be shared as albums |
 | Recovery | Nextcloud trash listing and restore to original location (requires server trash app) |
 
-Album cards come from folder listings, **not** from guessing albums from the first timeline page. Covers use the most recently modified media anywhere under the folder, while opening an album shows its immediate media and subfolders. Empty/non-media folders remain visible with a folder cover. Drive remains a complete file view including photos; it does not duplicate or move files simply by changing tabs.
+Smart albums are derived progressively from the automatically loaded media inventory, not from only the first page. Native albums use Nextcloud Photos' `/remote.php/dav/photos/{user}/albums` and `sharedalbums` collections. Drive remains the complete file view.
 
 Selection operations run sequentially and report how many completed if a later item fails; they are not atomic. Deletion affects server originals and folder contents, not just the current view. Trash recovery depends on server configuration/retention. Nextcloud handles restore conflicts by choosing a new name; if the original folder is unavailable, it may restore to your root folder. There is intentionally no permanent-delete or empty-trash button in this preview.
 

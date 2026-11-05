@@ -54,4 +54,66 @@ void main() {
     expect(formatBytes(1024), '1.0 KB');
     expect(formatBytes(1048576), '1.0 MB');
   });
+
+  test(
+    'Smart albums skip empty and grouping folders and keep nested collections',
+    () {
+      CloudFile photo(List<String> path) => CloudFile(
+        path: path,
+        name: path.last,
+        isDirectory: false,
+        contentType: 'image/jpeg',
+      );
+      final files = [
+        const CloudFile(
+          path: ['Photos', 'Empty'],
+          name: 'Empty',
+          isDirectory: true,
+        ),
+        const CloudFile(
+          path: ['Photos', 'Docs', 'notes.pdf'],
+          name: 'notes.pdf',
+          isDirectory: false,
+          contentType: 'application/pdf',
+        ),
+        photo(['Photos', 'Travel', 'Japan', 'Kyoto', 'a.jpg']),
+        photo(['Photos', 'Travel', 'Japan', 'Kyoto', 'Temples', 'b.jpg']),
+        photo(['Photos', 'Family', 'Kyoto', 'c.jpg']),
+        photo(['Other', 'Excluded', 'd.jpg']),
+      ];
+      final albums = buildSmartAlbums(files, ['Photos']);
+      expect(albums.map((a) => a.name), ['Kyoto', 'Kyoto', 'Temples']);
+      expect(
+        albums.where((a) => a.path.contains('Japan')).first.files,
+        hasLength(2),
+      );
+      expect(albums.map((a) => a.key).toSet(), hasLength(3));
+      expect(
+        albums.any(
+          (a) =>
+              ['Photos', 'Travel', 'Japan', 'Empty', 'Docs'].contains(a.name),
+        ),
+        isFalse,
+      );
+    },
+  );
+
+  test(
+    'photo source survives account persistence without changing credentials',
+    () {
+      final original = Account(
+        server: Uri.parse('https://cloud.example.com'),
+        loginName: 'user',
+        appPassword: 'app-password',
+        userId: 'uid',
+        displayName: 'User',
+      );
+      final updated = Account.decode(
+        original.withPhotoRoot(['Photos', 'Family']).encode(),
+      );
+      expect(updated.photoRoot, ['Photos', 'Family']);
+      expect(updated.authorization, original.authorization);
+      expect(Account.decode(original.encode()).photoRoot, isNull);
+    },
+  );
 }

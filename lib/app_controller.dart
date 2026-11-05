@@ -69,7 +69,20 @@ class AppController extends ChangeNotifier {
   bool busy = false;
   bool loadingMore = false;
   bool hasMore = false;
-  int _offset = 0;
+  List<CloudFile> _libraryFiles = [];
+  List<NativeAlbum> nativeAlbums = [];
+  NativeAlbum? activeNativeAlbum;
+  bool smartAlbumOpen = false;
+  String? nativeAlbumError;
+  List<String>? _demoPhotoRoot;
+  List<CloudFile> get libraryFiles => _libraryFiles;
+  List<String> get photoRoot =>
+      (demo ? _demoPhotoRoot : account?.photoRoot) ??
+      (_libraryFiles.any((f) => f.path.firstOrNull == 'Photos')
+          ? ['Photos']
+          : []);
+  List<SmartAlbum> get smartAlbums =>
+      buildSmartAlbums(_libraryFiles, photoRoot);
   int completed = 0;
   int total = 0;
   int tab = 0;
@@ -229,6 +242,11 @@ class AppController extends ChangeNotifier {
       account = null;
       demo = false;
       _demo = [];
+      _libraryFiles = [];
+      nativeAlbums = [];
+      activeNativeAlbum = null;
+      smartAlbumOpen = false;
+      _demoPhotoRoot = null;
       items = [];
       directory = [];
       notice = null;
@@ -245,30 +263,75 @@ class AppController extends ChangeNotifier {
   Future<void> selectTab(int value) async {
     tab = value;
     directory = [];
+    activeNativeAlbum = null;
+    smartAlbumOpen = false;
     await load();
   }
 
   Future<void> openFolder(CloudFile folder) async {
-    if (tab != 4) tab = 1;
+    tab = 1;
+    activeNativeAlbum = null;
+    smartAlbumOpen = false;
     directory = [...folder.path];
     await load();
   }
 
   Future<void> goTo(List<String> path) async {
     directory = [...path];
+    activeNativeAlbum = null;
+    smartAlbumOpen = false;
     await load();
+  }
+
+  Future<void> openSmartAlbum(List<String> path) async {
+    tab = 4;
+    directory = [...path];
+    activeNativeAlbum = null;
+    smartAlbumOpen = true;
+    await load();
+  }
+
+  Future<void> openNativeAlbum(NativeAlbum album) async {
+    activeNativeAlbum = album;
+    smartAlbumOpen = false;
+    tab = 4;
+    directory = [];
+    await load();
+  }
+
+  Future<void> setPhotoRoot(List<String> path) async {
+    if (demo) {
+      _demoPhotoRoot = [...path];
+    } else if (account case final session?) {
+      final updated = session.withPhotoRoot(path);
+      try {
+        await store.write(updated.encode());
+      } catch (e) {
+        error = 'Could not save your photo source. ${errorMessage(e)}';
+        notifyListeners();
+        return;
+      }
+      account = updated;
+    }
+    await selectTab(4);
   }
 
   Future<void> load() async {
     final version = ++_loadVersion;
+    final session = account;
+    final currentTab = tab;
+    final path = [...directory];
+    final native = activeNativeAlbum;
+    final wholeLibrary =
+        (currentTab == 0 || currentTab == 4) && path.isEmpty && native == null;
     _covers.clear();
     loading = true;
     refreshing = false;
     loadingMore = false;
     hasMore = false;
-    _offset = 0;
     error = null;
-    items = [];
+    items = wholeLibrary ? _libraryFiles : [];
+    refreshing = items.isNotEmpty;
     notifyListeners();
     final listingKey = _listingKey();
     if (listingKey != null && cache != null) {
@@ -276,30 +339,42 @@ class AppController extends ChangeNotifier {
       if (version != _loadVersion) return;
       if (cached != null && cached.isNotEmpty) {
         items = cached;
+        if (wholeLibrary) _libraryFiles = cached;
         refreshing = true;
         notifyListeners();
       }
     }
     try {
       final List<CloudFile> result;
-      if (tab == 3) {
+      if (currentTab == 6) {
+        final saved = await cache?.readListing(_offlineListingKey) ?? [];
+        final available = <CloudFile>[];
+        for (final file in saved) {
+          if (await offlineCopy(file) != null) available.add(file);
+        }
+        result = available;
+      } else if (currentTab == 3) {
         result = [];
       } else if (demo) {
-        result = _demo
-            .where(
-              (file) => switch (tab) {
-                0 => file.isMedia,
-                2 => file.favorite,
-                _ =>
-                  file.path.length == directory.length + 1 &&
-                      listEquals(
-                        file.path.take(directory.length).toList(),
-                        directory,
-                      ),
-              },
-            )
-            .toList();
-        if (tab == 1 || tab == 4) {
+        result = native != null
+            ? _demo.where((f) => f.isMedia && f.favorite).toList()
+            : _demo
+                  .where(
+                    (file) => switch (currentTab) {
+                      0 => file.isMedia,
+                      2 => file.favorite,
+                      4 => file.isMedia && pathStartsWith(file.path, path),
+                      5 => false,
+                      _ =>
+                        file.path.length == directory.length + 1 &&
+                            listEquals(
+                              file.path.take(directory.length).toList(),
+                              directory,
+                            ),
+                    },
+                  )
+                  .toList();
+        if (currentTab == 1) {
           result.sort(
             (a, b) => a.isDirectory == b.isDirectory
                 ? a.name.compareTo(b.name)
@@ -308,23 +383,104 @@ class AppController extends ChangeNotifier {
                 : 1,
           );
         }
-      } else if (account case final account?) {
-        result = tab == 1 || tab == 4
-            ? await client.listFiles(account, directory)
-            : await client.search(account, favorites: tab == 2);
+        if (currentTab == 4 && native == null && path.isEmpty) {
+          nativeAlbums = [
+            const NativeAlbum(
+              name: 'Best days',
+              davPath: ['demo-album'],
+              count: 3,
+            ),
+          ];
+        }
+      } else if (session != null) {
+        if (native != null) {
+          result = await client.albumFiles(session, native, _libraryFiles);
+        } else if (currentTab == 1) {
+          result = await client.listFiles(session, path);
+        } else {
+          final fetched = <String, CloudFile>{};
+          final cached = [...items];
+          final sharedPaths = currentTab == 5
+              ? await client.sharedPaths(session)
+              : null;
+          if (version != _loadVersion) return;
+          var offset = 0;
+          while (true) {
+            final page = await client.search(
+              session,
+              favorites: currentTab == 2,
+              path: path,
+              offset: offset,
+            );
+            if (version != _loadVersion || _disposed) return;
+            final before = fetched.length;
+            for (final file in page) {
+              fetched[file.key] = file;
+            }
+            if (page.isNotEmpty && fetched.length == before) {
+              throw const CloudException(
+                'The server repeated a page. Refresh to retry loading your library.',
+              );
+            }
+            offset += page.length;
+            hasMore = page.length == NextcloudClient.photoLimit;
+            final accumulated = [
+              ...fetched.values,
+              if (hasMore) ...cached.where((f) => !fetched.containsKey(f.key)),
+            ];
+            items = sharedPaths == null
+                ? accumulated
+                : accumulated
+                      .where(
+                        (f) =>
+                            sharedPaths.any((p) => pathStartsWith(f.path, p)),
+                      )
+                      .toList();
+            if (wholeLibrary) _libraryFiles = items;
+            loading = false;
+            loadingMore = hasMore;
+            notifyListeners();
+            if (!hasMore) break;
+          }
+          if (currentTab == 5) {
+            result = fetched.values
+                .where(
+                  (f) => sharedPaths!.any((p) => pathStartsWith(f.path, p)),
+                )
+                .toList();
+          } else {
+            result = fetched.values.toList();
+          }
+        }
       } else {
         result = [];
       }
       if (version == _loadVersion) {
         items = result;
-        _offset = result.length;
+        if (wholeLibrary) _libraryFiles = result;
         if (listingKey != null) {
           unawaited(cache?.writeListing(listingKey, result));
         }
-        hasMore =
-            !demo &&
-            (tab == 0 || tab == 2) &&
-            result.length == NextcloudClient.photoLimit;
+        hasMore = false;
+        if (currentTab == 4 &&
+            native == null &&
+            path.isEmpty &&
+            session != null &&
+            !demo) {
+          nativeAlbumError = null;
+          try {
+            final own = await client.albums(session);
+            if (version != _loadVersion) return;
+            final shared = await client.albums(session, shared: true);
+            if (version != _loadVersion) return;
+            nativeAlbums = [...own, ...shared];
+          } catch (e) {
+            if (version == _loadVersion) {
+              nativeAlbumError =
+                  'Could not load Nextcloud albums. ${errorMessage(e)}';
+            }
+          }
+        }
       }
     } catch (e) {
       if (version == _loadVersion) error = errorMessage(e);
@@ -332,6 +488,7 @@ class AppController extends ChangeNotifier {
       if (version == _loadVersion) {
         loading = false;
         refreshing = false;
+        loadingMore = false;
         notifyListeners();
       }
     }
@@ -341,36 +498,7 @@ class AppController extends ChangeNotifier {
     final session = account;
     if (demo || session == null || tab == 3) return null;
     return 'listing|${session.server}|${session.userId}|$tab|'
-        '${directory.join('/')}';
-  }
-
-  Future<void> loadMore() async {
-    if (!hasMore || loading || loadingMore || busy || account == null) {
-      return;
-    }
-    final version = _loadVersion;
-    loadingMore = true;
-    error = null;
-    notifyListeners();
-    try {
-      final page = await client.search(
-        account!,
-        favorites: tab == 2,
-        offset: _offset,
-      );
-      if (version != _loadVersion) return;
-      _offset += page.length;
-      final existing = items.map((f) => f.key).toSet();
-      items = [...items, ...page.where((f) => existing.add(f.key))];
-      hasMore = page.length == NextcloudClient.photoLimit;
-    } catch (e) {
-      if (version == _loadVersion) error = errorMessage(e);
-    } finally {
-      if (version == _loadVersion) {
-        loadingMore = false;
-        notifyListeners();
-      }
-    }
+        '${directory.join('/')}|${activeNativeAlbum?.davPath.join('/') ?? ''}';
   }
 
   Future<List<CloudFile>> folderContents(List<String> path) async {
@@ -416,6 +544,11 @@ class AppController extends ChangeNotifier {
     Object? failure;
     try {
       for (final file in files) {
+        if (file.readOnly) {
+          throw const CloudException(
+            'This album item is view-only. Manage its original in Nextcloud.',
+          );
+        }
         final target = [...?destination, newName ?? file.name];
         if (operation == 'move' ||
             operation == 'copy' ||
@@ -667,7 +800,7 @@ class AppController extends ChangeNotifier {
     final session = account;
     if (demo || session == null) return null;
     return (
-      uri: client.davUri(session, file.path),
+      uri: client.fileUri(session, file),
       headers: {'Authorization': session.authorization},
     );
   }
@@ -682,16 +815,25 @@ class AppController extends ChangeNotifier {
       _originalKey(session, file),
       file.name,
     );
-    if (await target.exists()) return target;
-    final downloaded = await download(file);
-    try {
-      await downloaded.copy(target.path);
-    } finally {
-      await downloaded.parent.delete(recursive: true);
+    if (!await target.exists()) {
+      final downloaded = await download(file);
+      try {
+        await downloaded.copy(target.path);
+      } finally {
+        await downloaded.parent.delete(recursive: true);
+      }
     }
+    final saved = await cache!.readListing(_offlineListingKey) ?? [];
+    await cache!.writeListing(_offlineListingKey, [
+      ...saved.where((f) => f.key != file.key),
+      file,
+    ]);
     unawaited(cache!.trim());
     return target;
   }
+
+  String get _offlineListingKey =>
+      'offline|${account?.server}|${account?.userId}';
 
   Future<int> cacheSize() async => await cache?.size() ?? 0;
 

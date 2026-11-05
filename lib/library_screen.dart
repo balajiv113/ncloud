@@ -23,55 +23,105 @@ class LibraryScreen extends StatefulWidget {
 class _LibraryScreenState extends State<LibraryScreen> {
   final _search = TextEditingController();
   final _scroll = ScrollController();
+  final _floatingDate = ValueNotifier<String?>(null);
   final Map<String, CloudFile> _selected = {};
+  final Map<int, Offset> _pointers = {};
+  final List<({double offset, String label})> _dateStops = [];
+  final List<({double offset, List<CloudFile> files})> _rowPositions = [];
   MediaFilter _filter = MediaFilter.all;
   LibrarySort _sort = LibrarySort.newest;
-  DateTime? _month;
+  List<String>? _group;
+  List<String>? _subfolder;
   int _density = 3;
   int _pinchBase = 3;
   double _pinchStart = 0;
-  final Map<int, Offset> _pointers = {};
-  double get _span => _pointers.length == 2
-      ? (_pointers.values.first - _pointers.values.last).distance
-      : 0;
+  double _timelineStart = 0;
   bool _searching = false;
+  bool _showNative = false;
   String _query = '';
   AppController get c => widget.controller;
   bool get _album => c.tab == 4;
   bool get _drive => c.tab == 1;
-  bool get _library => c.tab == 2;
+  bool get _albumHome =>
+      _album &&
+      !c.smartAlbumOpen &&
+      c.directory.isEmpty &&
+      c.activeNativeAlbum == null;
+  bool get _collection => const [2, 5, 6].contains(c.tab);
   bool get _selecting => _selected.isNotEmpty;
+  double get _span => _pointers.length == 2
+      ? (_pointers.values.first - _pointers.values.last).distance
+      : 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _scroll.addListener(_updateDate);
+  }
 
   @override
   void dispose() {
     _search.dispose();
     _scroll.dispose();
+    _floatingDate.dispose();
     super.dispose();
+  }
+
+  void _updateDate() {
+    String? label;
+    if (_scroll.hasClients &&
+        _scroll.offset > _timelineStart + 80 &&
+        !_albumHome &&
+        !_drive) {
+      for (final stop in _dateStops) {
+        if (stop.offset > _scroll.offset - _timelineStart + 56) break;
+        label = stop.label;
+      }
+    }
+    _floatingDate.value = label;
   }
 
   void _reset() {
     _search.clear();
     _selected.clear();
     _query = '';
-    _month = null;
+    _searching = false;
+    _showNative = false;
     _filter = MediaFilter.all;
+    _group = null;
+    _subfolder = null;
+    _floatingDate.value = null;
+    _dateStops.clear();
+    _rowPositions.clear();
+  }
+
+  void _navigate(int tab) {
+    setState(_reset);
+    if (_scroll.hasClients) _scroll.jumpTo(0);
+    c.selectTab(tab);
+  }
+
+  void _back() {
+    if (_selecting) {
+      setState(() => _selected.clear());
+    } else if (_album || _collection) {
+      _navigate(4);
+    } else {
+      setState(_reset);
+      c.goTo(c.directory.sublist(0, c.directory.length - 1));
+      if (_scroll.hasClients) _scroll.jumpTo(0);
+    }
   }
 
   List<CloudFile> get _visible {
     final files = c.items.where((f) {
       if (_query.isNotEmpty &&
-          !f.name.toLowerCase().contains(_query.toLowerCase())) {
+          !f.name.toLowerCase().contains(_query.toLowerCase()))
         return false;
-      }
-      if (f.isDirectory) return _album || _drive || _library;
-      if (_album && !f.isMedia) return false;
-      final date = f.modified?.toLocal();
-      if (_month != null &&
-          (date == null ||
-              date.year != _month!.year ||
-              date.month != _month!.month)) {
+      if (_subfolder != null && !pathStartsWith(f.path, _subfolder!))
         return false;
-      }
+      if (f.isDirectory) return _drive;
+      if (!_drive && !f.isMedia && !_collection) return false;
       return switch (_filter) {
         MediaFilter.all => true,
         MediaFilter.photos => f.isImage,
@@ -84,7 +134,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
       final newest = (b.modified ?? DateTime(1970)).compareTo(
         a.modified ?? DateTime(1970),
       );
-      final comparison = switch (_sort) {
+      final order = switch (_sort) {
         LibrarySort.newest => newest,
         LibrarySort.oldest => -newest,
         LibrarySort.name => a.name.toLowerCase().compareTo(
@@ -92,12 +142,13 @@ class _LibraryScreenState extends State<LibraryScreen> {
         ),
         LibrarySort.size => b.size.compareTo(a.size),
       };
-      return comparison == 0 ? a.key.compareTo(b.key) : comparison;
+      return order == 0 ? a.key.compareTo(b.key) : order;
     });
     return files;
   }
 
   void _toggle(CloudFile file) {
+    if (file.readOnly) return;
     HapticFeedback.selectionClick();
     setState(() {
       if (_selected.containsKey(file.key)) {
@@ -111,9 +162,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
   void _open(CloudFile file, List<CloudFile> visible) {
     if (_selecting) {
       _toggle(file);
-      return;
-    }
-    if (file.isDirectory) {
+    } else if (file.isDirectory) {
       setState(_reset);
       c.openFolder(file);
       if (_scroll.hasClients) _scroll.jumpTo(0);
@@ -134,703 +183,495 @@ class _LibraryScreenState extends State<LibraryScreen> {
     }
   }
 
+  void _openSmart(List<String> path) {
+    setState(_reset);
+    if (_scroll.hasClients) _scroll.jumpTo(0);
+    c.openSmartAlbum(path);
+  }
+
+  void _changeDensity(int value) {
+    if (value == _density) return;
+    String? anchor;
+    if (_scroll.hasClients && _scroll.offset > _timelineStart) {
+      for (final row in _rowPositions) {
+        if (row.offset > _scroll.offset - _timelineStart) break;
+        anchor = row.files.first.key;
+      }
+    }
+    setState(() => _density = value);
+    if (anchor != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !_scroll.hasClients) return;
+        final row = _rowPositions
+            .where((r) => r.files.any((f) => f.key == anchor))
+            .firstOrNull;
+        if (row != null)
+          _scroll.jumpTo(
+            (_timelineStart + row.offset).clamp(
+              0,
+              _scroll.position.maxScrollExtent,
+            ),
+          );
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final files = _visible;
     final theme = Theme.of(context);
-    final title = _album
-        ? (c.directory.isEmpty ? 'Albums' : c.directory.last)
-        : _drive
-        ? (c.directory.isEmpty ? 'Drive' : c.directory.last)
-        : _library
-        ? 'Library'
-        : 'Your timeline';
+    final detail = !_albumHome && (_album || _collection);
+    final title =
+        c.activeNativeAlbum?.name ??
+        (_collection
+            ? switch (c.tab) {
+                2 => 'Favorites',
+                5 => 'Shared',
+                _ => 'Offline',
+              }
+            : _album
+            ? (_albumHome ? 'Albums' : c.directory.lastOrNull ?? 'Photos')
+            : _drive
+            ? (c.directory.lastOrNull ?? 'Drive')
+            : 'Timeline');
     return PopScope(
-      canPop: !_selecting && c.directory.isEmpty && !c.busy,
+      canPop: !_selecting && !detail && c.directory.isEmpty && !c.busy,
       onPopInvokedWithResult: (didPop, _) {
-        if (didPop || c.busy) return;
-        if (_selecting) {
-          setState(() => _selected.clear());
-        } else if (c.directory.isNotEmpty) {
-          setState(_reset);
-          c.goTo(c.directory.sublist(0, c.directory.length - 1));
-        }
+        if (!didPop && !c.busy) _back();
       },
       child: Scaffold(
+        extendBody: true,
         body: SafeArea(
           bottom: false,
-          child: RefreshIndicator(
-            onRefresh: () async {
-              setState(() => _selected.clear());
-              await c.load();
-            },
-            child: Listener(
-              onPointerDown: (event) {
-                _pointers[event.pointer] = event.position;
-                if (_pointers.length == 2) {
-                  _pinchBase = _density;
-                  _pinchStart = _span;
-                }
-              },
-              onPointerMove: (event) {
-                if (!_pointers.containsKey(event.pointer)) return;
-                _pointers[event.pointer] = event.position;
-                if (_pointers.length != 2 || _drive || _library) return;
-                if (_pinchStart <= 0) return;
-                final scale = _span / _pinchStart;
-                final next = scale > 1.3
-                    ? (_pinchBase - 1).clamp(2, 6).toInt()
-                    : scale < 0.75
-                    ? (_pinchBase + 1).clamp(2, 6).toInt()
-                    : _density;
-                if (next != _density) {
-                  HapticFeedback.selectionClick();
-                  setState(() => _density = next);
-                }
-              },
-              onPointerUp: (event) => _pointers.remove(event.pointer),
-              onPointerCancel: (event) => _pointers.remove(event.pointer),
-              child: Scrollbar(
-                controller: _scroll,
-                interactive: true,
-                thickness: 6,
-                radius: const Radius.circular(8),
-                child: CustomScrollView(
-                  controller: _scroll,
-                  physics: const AlwaysScrollableScrollPhysics(),
-                  slivers: [
-                    SliverAppBar(
-                      pinned: true,
-                      automaticallyImplyLeading: false,
-                      title: _selecting
-                          ? Text('${_selected.length} selected')
-                          : Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  Icons.all_inclusive_rounded,
+          child: Stack(
+            children: [
+              RefreshIndicator(
+                onRefresh: () async {
+                  setState(() => _selected.clear());
+                  await c.load();
+                },
+                child: Listener(
+                  onPointerDown: (event) {
+                    _pointers[event.pointer] = event.position;
+                    if (_pointers.length == 2) {
+                      _pinchBase = _density;
+                      _pinchStart = _span;
+                    }
+                  },
+                  onPointerMove: (event) {
+                    if (!_pointers.containsKey(event.pointer)) return;
+                    _pointers[event.pointer] = event.position;
+                    if (_pointers.length != 2 ||
+                        _drive ||
+                        _albumHome ||
+                        _pinchStart <= 0)
+                      return;
+                    final scale = _span / _pinchStart;
+                    final next = scale > 1.3
+                        ? (_pinchBase - 1).clamp(2, 6)
+                        : scale < .75
+                        ? (_pinchBase + 1).clamp(2, 6)
+                        : _density;
+                    _changeDensity(next);
+                  },
+                  onPointerUp: (event) => _pointers.remove(event.pointer),
+                  onPointerCancel: (event) => _pointers.remove(event.pointer),
+                  child: CustomScrollView(
+                    controller: _scroll,
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    slivers: [
+                      SliverAppBar(
+                        floating: true,
+                        snap: true,
+                        automaticallyImplyLeading: false,
+                        leading: _selecting || detail || c.directory.isNotEmpty
+                            ? IconButton(
+                                tooltip: _selecting
+                                    ? 'Cancel selection'
+                                    : 'Back',
+                                onPressed: c.busy ? null : _back,
+                                icon: Icon(
+                                  _selecting ? Icons.close : Icons.arrow_back,
+                                ),
+                              )
+                            : null,
+                        titleSpacing: 16,
+                        title: _searching
+                            ? TextField(
+                                controller: _search,
+                                autofocus: true,
+                                onChanged: (value) =>
+                                    setState(() => _query = value),
+                                decoration: const InputDecoration(
+                                  hintText: 'Search',
+                                  isDense: true,
+                                  contentPadding: EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 10,
+                                  ),
+                                ),
+                              )
+                            : Text(
+                                _selecting
+                                    ? '${_selected.length} selected'
+                                    : detail
+                                    ? title
+                                    : 'ncloud',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: -.7,
+                                ),
+                              ),
+                        actions: [
+                          if (c.demo && !_searching && !_selecting)
+                            Center(
+                              child: Text(
+                                'DEMO',
+                                style: TextStyle(
+                                  fontSize: 9,
+                                  letterSpacing: 1,
                                   color: theme.colorScheme.primary,
-                                  size: 30,
                                 ),
-                                const SizedBox(width: 8),
-                                const Flexible(
+                              ),
+                            ),
+                          if (!_selecting) ...[
+                            IconButton(
+                              tooltip: 'Search loaded items',
+                              icon: Icon(
+                                _searching ? Icons.close : Icons.search,
+                              ),
+                              onPressed: () => setState(() {
+                                _searching = !_searching;
+                                if (!_searching) {
+                                  _query = '';
+                                  _search.clear();
+                                }
+                              }),
+                            ),
+                            IconButton(
+                              tooltip: 'View options',
+                              onPressed: _viewOptions,
+                              icon: const Icon(Icons.tune_rounded),
+                            ),
+                            if (!detail)
+                              IconButton(
+                                tooltip: 'Settings',
+                                onPressed: () => Navigator.push(
+                                  context,
+                                  MaterialPageRoute<void>(
+                                    builder: (_) =>
+                                        SettingsScreen(controller: c),
+                                  ),
+                                ),
+                                icon: CircleAvatar(
+                                  radius: 15,
+                                  backgroundColor:
+                                      theme.colorScheme.primaryContainer,
                                   child: Text(
-                                    'ncloud',
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
+                                    c.demo
+                                        ? 'N'
+                                        : (c
+                                                      .account
+                                                      ?.displayName
+                                                      .characters
+                                                      .firstOrNull ??
+                                                  'N')
+                                              .toUpperCase(),
                                     style: TextStyle(
-                                      fontWeight: FontWeight.w800,
-                                      letterSpacing: -1,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                      leading: _selecting
-                          ? IconButton(
-                              tooltip: 'Cancel selection',
-                              onPressed: () =>
-                                  setState(() => _selected.clear()),
-                              icon: const Icon(Icons.close),
-                            )
-                          : c.directory.isEmpty
-                          ? null
-                          : IconButton(
-                              tooltip: 'Parent folder',
-                              icon: const Icon(Icons.arrow_back),
-                              onPressed: () {
-                                setState(_reset);
-                                c.goTo(
-                                  c.directory.sublist(
-                                    0,
-                                    c.directory.length - 1,
-                                  ),
-                                );
-                              },
-                            ),
-                      actions: [
-                        if (c.demo && !_selecting)
-                          Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 18),
-                            child: Text(
-                              'DEMO',
-                              style: TextStyle(
-                                fontSize: 10,
-                                letterSpacing: 1.5,
-                                color: theme.colorScheme.primary,
-                              ),
-                            ),
-                          ),
-                        IconButton(
-                          tooltip: 'Search loaded items',
-                          icon: Icon(
-                            _searching ? Icons.search_off : Icons.search,
-                          ),
-                          onPressed: () => setState(() {
-                            _searching = !_searching;
-                            if (!_searching) {
-                              _query = '';
-                              _search.clear();
-                            }
-                          }),
-                        ),
-                        IconButton(
-                          tooltip: 'Settings',
-                          onPressed: () => Navigator.push(
-                            context,
-                            MaterialPageRoute<void>(
-                              builder: (_) => SettingsScreen(controller: c),
-                            ),
-                          ),
-                          icon: CircleAvatar(
-                            radius: 16,
-                            backgroundColor: theme.colorScheme.primaryContainer,
-                            child: Text(
-                              c.demo
-                                  ? 'N'
-                                  : (c
-                                                .account
-                                                ?.displayName
-                                                .characters
-                                                .firstOrNull ??
-                                            'N')
-                                        .toUpperCase(),
-                              style: TextStyle(
-                                fontWeight: FontWeight.w700,
-                                fontSize: 12,
-                                color: theme.colorScheme.primary,
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                      ],
-                    ),
-                    SliverToBoxAdapter(
-                      child: Padding(
-                        padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              _album
-                                  ? 'LIFE, ORGANIZED'
-                                  : _drive
-                                  ? 'ROOM FOR EVERYTHING'
-                                  : _library
-                                  ? 'KEEP IT CLOSE'
-                                  : 'THE EVERYDAY & THE EXTRAORDINARY',
-                              style: theme.textTheme.labelSmall?.copyWith(
-                                letterSpacing: 2,
-                                color: theme.colorScheme.primary,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            Row(
-                              crossAxisAlignment: CrossAxisAlignment.center,
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    title,
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: theme.textTheme.headlineLarge
-                                        ?.copyWith(
-                                          letterSpacing: -1.5,
-                                          fontWeight: FontWeight.w800,
-                                        ),
-                                  ),
-                                ),
-                                if (!_drive && !_library)
-                                  IconButton(
-                                    tooltip: 'Grid density',
-                                    onPressed: () => setState(
-                                      () => _density = _density >= 4
-                                          ? 2
-                                          : _density + 1,
-                                    ),
-                                    icon: Icon(
-                                      _density == 3
-                                          ? Icons.grid_view_rounded
-                                          : Icons.grid_on_rounded,
-                                    ),
-                                  ),
-                                PopupMenuButton<LibrarySort>(
-                                  tooltip: 'Sort items',
-                                  initialValue: _sort,
-                                  icon: const Icon(Icons.sort),
-                                  onSelected: (value) =>
-                                      setState(() => _sort = value),
-                                  itemBuilder: (_) => const [
-                                    PopupMenuItem(
-                                      value: LibrarySort.newest,
-                                      child: Text('Newest modified first'),
-                                    ),
-                                    PopupMenuItem(
-                                      value: LibrarySort.oldest,
-                                      child: Text('Oldest modified first'),
-                                    ),
-                                    PopupMenuItem(
-                                      value: LibrarySort.name,
-                                      child: Text('Name A–Z'),
-                                    ),
-                                    PopupMenuItem(
-                                      value: LibrarySort.size,
-                                      child: Text('Largest first'),
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 6),
-                            Text(
-                              _album
-                                  ? 'Real folders. Beautiful collections.'
-                                  : _drive
-                                  ? 'Your files, without the noise.'
-                                  : _library
-                                  ? 'Favorites, shared moments & second chances.'
-                                  : 'A home for the moments that make you, you.',
-                              style: theme.textTheme.bodyMedium?.copyWith(
-                                color: theme.colorScheme.onSurfaceVariant,
-                              ),
-                            ),
-                            if (_searching)
-                              Padding(
-                                padding: const EdgeInsets.only(top: 16),
-                                child: TextField(
-                                  controller: _search,
-                                  autofocus: true,
-                                  onChanged: (value) =>
-                                      setState(() => _query = value),
-                                  decoration: InputDecoration(
-                                    hintText: _drive
-                                        ? 'Filter this folder'
-                                        : 'Filter loaded items',
-                                    prefixIcon: const Icon(Icons.search),
-                                    suffixIcon: IconButton(
-                                      tooltip: 'Clear search',
-                                      onPressed: () => setState(() {
-                                        _query = '';
-                                        _search.clear();
-                                      }),
-                                      icon: const Icon(Icons.close),
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w700,
+                                      color: theme.colorScheme.primary,
                                     ),
                                   ),
                                 ),
                               ),
                           ],
-                        ),
+                          const SizedBox(width: 4),
+                        ],
                       ),
-                    ),
-                    if (c.busy)
-                      SliverToBoxAdapter(
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 20),
-                          child: Column(
-                            children: [
-                              LinearProgressIndicator(
-                                value: c.total > 0
-                                    ? c.completed / c.total
-                                    : null,
+                      if (c.busy || c.refreshing || c.loadingMore)
+                        SliverToBoxAdapter(
+                          child: LinearProgressIndicator(
+                            minHeight: 2,
+                            value: c.busy && c.total > 0
+                                ? c.completed / c.total
+                                : null,
+                          ),
+                        ),
+                      if (c.error case final error?)
+                        SliverToBoxAdapter(
+                          child: Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: MessageCard(
+                              message: error,
+                              isError: true,
+                              onRetry: c.loading || c.loadingMore || c.busy
+                                  ? null
+                                  : c.load,
+                            ),
+                          ),
+                        ),
+                      if (c.notice case final notice?)
+                        SliverToBoxAdapter(
+                          child: Padding(
+                            padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+                            child: Text(
+                              notice,
+                              style: TextStyle(
+                                color: theme.colorScheme.primary,
                               ),
-                              const SizedBox(height: 8),
-                              const Text(
-                                'Working · keep ncloud open',
-                                style: TextStyle(fontSize: 12),
+                            ),
+                          ),
+                        ),
+                      if (_drive || _albumHome)
+                        SliverToBoxAdapter(
+                          child: Padding(
+                            padding: const EdgeInsets.fromLTRB(18, 8, 12, 12),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    title,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: theme.textTheme.headlineMedium
+                                        ?.copyWith(
+                                          fontWeight: FontWeight.w700,
+                                          letterSpacing: -.8,
+                                        ),
+                                  ),
+                                ),
+                                if (_albumHome)
+                                  IconButton(
+                                    tooltip: 'Choose photo source',
+                                    onPressed: c.busy ? null : _chooseSource,
+                                    icon: const Icon(
+                                      Icons.folder_open_outlined,
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      if (_drive && c.directory.isNotEmpty)
+                        SliverToBoxAdapter(child: _breadcrumbs()),
+                      if (_album && !_albumHome && c.activeNativeAlbum == null)
+                        SliverToBoxAdapter(child: _albumContext()),
+                      if (c.loading && c.items.isEmpty)
+                        const SliverFillRemaining(
+                          hasScrollBody: false,
+                          child: Center(child: CircularProgressIndicator()),
+                        )
+                      else if (_albumHome)
+                        ..._albumHomeSlivers()
+                      else ...[
+                        if (c.tab == 0 &&
+                            !_selecting &&
+                            _query.isEmpty &&
+                            _filter == MediaFilter.all)
+                          if (_memoryGroups(files).isNotEmpty)
+                            SliverToBoxAdapter(child: _memoryStrip(files)),
+                        if (_drive)
+                          _driveSliver(files)
+                        else ...[
+                          ..._timelineSlivers(files),
+                          if (_collection && files.any((f) => !f.isMedia))
+                            _driveSliver(
+                              files.where((f) => !f.isMedia).toList(),
+                            ),
+                        ],
+                        if (files.isEmpty)
+                          SliverFillRemaining(
+                            hasScrollBody: false,
+                            child: _empty(),
+                          ),
+                      ],
+                      const SliverToBoxAdapter(child: SizedBox(height: 130)),
+                    ],
+                  ),
+                ),
+              ),
+              if (!_albumHome && !_drive)
+                ValueListenableBuilder<String?>(
+                  valueListenable: _floatingDate,
+                  builder: (context, date, _) => date == null
+                      ? const SizedBox.shrink()
+                      : Positioned(
+                          right: 6,
+                          top: 100,
+                          child: Row(
+                            children: [
+                              Material(
+                                color: theme.colorScheme.inverseSurface,
+                                borderRadius: BorderRadius.circular(20),
+                                elevation: 3,
+                                child: InkWell(
+                                  onTap: _chooseMonth,
+                                  borderRadius: BorderRadius.circular(20),
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 13,
+                                      vertical: 9,
+                                    ),
+                                    child: Text(
+                                      date,
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color:
+                                            theme.colorScheme.onInverseSurface,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              Semantics(
+                                label: 'Scrub timeline by date',
+                                slider: true,
+                                child: GestureDetector(
+                                  behavior: HitTestBehavior.opaque,
+                                  onVerticalDragUpdate: (event) {
+                                    if (!_scroll.hasClients) return;
+                                    final next =
+                                        _scroll.offset +
+                                        event.delta.dy *
+                                            _scroll.position.maxScrollExtent /
+                                            220;
+                                    _scroll.jumpTo(
+                                      next.clamp(
+                                        0,
+                                        _scroll.position.maxScrollExtent,
+                                      ),
+                                    );
+                                  },
+                                  child: SizedBox(
+                                    width: 28,
+                                    height: 140,
+                                    child: Center(
+                                      child: Container(
+                                        width: 5,
+                                        height: 44,
+                                        decoration: BoxDecoration(
+                                          color: theme.colorScheme.primary,
+                                          borderRadius: BorderRadius.circular(
+                                            8,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
                               ),
                             ],
                           ),
                         ),
-                      ),
-                    if (c.error case final error?)
-                      SliverToBoxAdapter(
-                        child: Padding(
-                          padding: const EdgeInsets.all(16),
-                          child: MessageCard(
-                            message: error,
-                            isError: true,
-                            onRetry: c.loading || c.busy ? null : c.load,
-                          ),
-                        ),
-                      ),
-                    if (c.notice case final notice?)
-                      SliverToBoxAdapter(
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 20,
-                            vertical: 8,
-                          ),
-                          child: Text(
-                            notice,
-                            style: TextStyle(color: theme.colorScheme.primary),
-                          ),
-                        ),
-                      ),
-                    if (_album || _drive)
-                      SliverToBoxAdapter(child: _breadcrumbs()),
-                    if (_library)
-                      SliverToBoxAdapter(child: _libraryShortcuts()),
-                    if (!_drive && !_library)
-                      SliverToBoxAdapter(child: _filters()),
-                    if (!_drive && !_album)
-                      SliverToBoxAdapter(
-                        child: Padding(
-                          padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
-                          child: Text(
-                            c.demo
-                                ? 'Original demo illustrations · changes are temporary'
-                                : '${c.items.length} loaded${c.hasMore ? ' · more available below' : ''} · modification dates',
-                            style: theme.textTheme.labelSmall?.copyWith(
-                              color: theme.colorScheme.onSurfaceVariant,
-                            ),
-                          ),
-                        ),
-                      ),
-                    if (c.refreshing)
-                      const SliverToBoxAdapter(
-                        child: Padding(
-                          padding: EdgeInsets.fromLTRB(20, 0, 20, 8),
-                          child: LinearProgressIndicator(minHeight: 2),
-                        ),
-                      ),
-                    if (c.loading && !c.refreshing)
-                      const SliverFillRemaining(
-                        hasScrollBody: false,
-                        child: Center(child: CircularProgressIndicator()),
-                      )
-                    else ...[
-                      if (!_drive &&
-                          !_library &&
-                          c.directory.isEmpty &&
-                          !_selecting &&
-                          _query.isEmpty &&
-                          _filter == MediaFilter.all &&
-                          _month == null &&
-                          c.tab == 0 &&
-                          files.isNotEmpty)
-                        SliverToBoxAdapter(child: _spotlight(files)),
-                      if (!_drive &&
-                          !_library &&
-                          !_album &&
-                          !_selecting &&
-                          _query.isEmpty &&
-                          _month == null &&
-                          _memories(files).isNotEmpty)
-                        SliverToBoxAdapter(child: _memoryStrip(files)),
-                      if (_album)
-                        ..._albumSlivers(files)
-                      else if (_drive || _library)
-                        _driveSliver(files)
-                      else
-                        ..._timelineSlivers(files),
-                      if (files.isEmpty)
-                        SliverFillRemaining(
-                          hasScrollBody: false,
-                          child: _empty(),
-                        ),
-                      if (c.hasMore)
-                        SliverToBoxAdapter(
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 24,
-                              vertical: 24,
-                            ),
-                            child: OutlinedButton.icon(
-                              onPressed: c.loadingMore || c.busy
-                                  ? null
-                                  : c.loadMore,
-                              icon: c.loadingMore
-                                  ? const SizedBox(
-                                      width: 16,
-                                      height: 16,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                      ),
-                                    )
-                                  : const Icon(Icons.expand_more),
-                              label: Text(
-                                c.loadingMore
-                                    ? 'Loading earlier moments…'
-                                    : 'Load more from Nextcloud',
-                              ),
-                            ),
-                          ),
-                        ),
-                      const SliverToBoxAdapter(child: SizedBox(height: 100)),
-                    ],
-                  ],
                 ),
-              ),
-            ),
+            ],
           ),
         ),
-        floatingActionButton: (_album || _drive) && !_selecting
+        floatingActionButton: _drive && !_selecting
             ? FloatingActionButton(
-                tooltip: _album ? 'Add to album' : 'Add files',
+                tooltip: 'Add files',
                 onPressed: c.busy ? null : _add,
                 child: const Icon(Icons.add),
               )
             : null,
-        bottomNavigationBar: _selecting
-            ? _selectionBar()
-            : NavigationBar(
-                selectedIndex: const [0, 4, 1, 2].indexOf(c.tab).clamp(0, 3),
-                onDestinationSelected: (index) {
-                  setState(_reset);
-                  c.selectTab(const [0, 4, 1, 2][index]);
-                  if (_scroll.hasClients) _scroll.jumpTo(0);
-                },
-                destinations: const [
-                  NavigationDestination(
-                    icon: Icon(Icons.photo_library_outlined),
-                    selectedIcon: Icon(Icons.photo_library_rounded),
-                    label: 'Timeline',
-                  ),
-                  NavigationDestination(
-                    icon: Icon(Icons.collections_bookmark_outlined),
-                    selectedIcon: Icon(Icons.collections_bookmark_rounded),
-                    label: 'Albums',
-                  ),
-                  NavigationDestination(
-                    icon: Icon(Icons.folder_outlined),
-                    selectedIcon: Icon(Icons.folder_rounded),
-                    label: 'Drive',
-                  ),
-                  NavigationDestination(
-                    icon: Icon(Icons.space_dashboard_outlined),
-                    selectedIcon: Icon(Icons.space_dashboard_rounded),
-                    label: 'Library',
-                  ),
-                ],
-              ),
+        bottomNavigationBar: _selecting ? _selectionBar() : _navigation(),
       ),
     );
   }
 
-  Widget _filters() => SingleChildScrollView(
-    scrollDirection: Axis.horizontal,
-    padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
-    child: Row(
-      children: [
-        for (final (value, label, icon) in [
-          (MediaFilter.all, 'All', Icons.apps_rounded),
-          (MediaFilter.photos, 'Photos', Icons.image_outlined),
-          (MediaFilter.videos, 'Videos', Icons.videocam_outlined),
-          (MediaFilter.favorites, 'Favorites', Icons.favorite_border),
-        ])
-          Padding(
-            padding: const EdgeInsets.only(right: 8),
-            child: FilterChip(
-              selected: _filter == value,
-              showCheckmark: false,
-              avatar: Icon(icon, size: 16),
-              label: Text(label),
-              onSelected: (_) => setState(() => _filter = value),
+  Widget _navigation() {
+    final colors = Theme.of(context).colorScheme;
+    final active = _drive
+        ? 1
+        : _album || _collection
+        ? 4
+        : 0;
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(24, 8, 24, 12),
+        child: Material(
+          elevation: 8,
+          shadowColor: Colors.black26,
+          color: colors.surface,
+          shape: StadiumBorder(
+            side: BorderSide(
+              color: colors.outlineVariant.withValues(alpha: .5),
             ),
           ),
-        if (c.tab == 0)
-          ActionChip(
-            avatar: const Icon(Icons.calendar_month_outlined, size: 16),
-            label: Text(
-              _month == null
-                  ? 'By month'
-                  : MaterialLocalizations.of(context).formatMonthYear(_month!),
-            ),
-            onPressed: _chooseMonth,
-          ),
-        if (_month != null)
-          IconButton(
-            tooltip: 'All dates',
-            onPressed: () => setState(() => _month = null),
-            icon: const Icon(Icons.close),
-          ),
-      ],
-    ),
-  );
-
-  Future<void> _chooseMonth() async {
-    final months =
-        c.items
-            .map((f) => f.modified?.toLocal())
-            .nonNulls
-            .map((d) => DateTime(d.year, d.month))
-            .toSet()
-            .toList()
-          ..sort((a, b) => b.compareTo(a));
-    final value = await showModalBottomSheet<DateTime>(
-      context: context,
-      showDragHandle: true,
-      builder: (context) => SafeArea(
-        child: ListView(
-          shrinkWrap: true,
-          children: [
-            const ListTile(
-              title: Text('Jump to a loaded month'),
-              subtitle: Text(
-                'Load more timeline pages to include earlier dates.',
-              ),
-            ),
-            for (final month in months)
-              ListTile(
-                leading: const Icon(Icons.calendar_today_outlined),
-                title: Text(
-                  MaterialLocalizations.of(context).formatMonthYear(month),
-                ),
-                onTap: () => Navigator.pop(context, month),
-              ),
-          ],
-        ),
-      ),
-    );
-    if (mounted && value != null) {
-      setState(() => _month = value);
-      _scroll.animateTo(
-        0,
-        duration: const Duration(milliseconds: 300),
-        curve: Curves.easeOutCubic,
-      );
-    }
-  }
-
-  Widget _breadcrumbs() => SingleChildScrollView(
-    scrollDirection: Axis.horizontal,
-    padding: const EdgeInsets.symmetric(horizontal: 12),
-    child: Row(
-      children: [
-        TextButton.icon(
-          onPressed: () {
-            setState(_reset);
-            c.goTo([]);
-          },
-          icon: Icon(
-            _album ? Icons.collections_bookmark_outlined : Icons.home_outlined,
-            size: 16,
-          ),
-          label: Text(_album ? 'All albums' : 'All files'),
-        ),
-        for (var i = 0; i < c.directory.length; i++) ...[
-          const Icon(Icons.chevron_right, size: 14),
-          TextButton(
-            onPressed: () {
-              final path = c.directory.take(i + 1).toList();
-              setState(_reset);
-              c.goTo(path);
-            },
-            child: Text(c.directory[i]),
-          ),
-        ],
-      ],
-    ),
-  );
-
-  Widget _libraryShortcuts() => Padding(
-    padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Card(
-          margin: EdgeInsets.zero,
-          child: ListTile(
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: 20,
-              vertical: 10,
-            ),
-            leading: const Icon(Icons.restore_from_trash_outlined),
-            title: const Text('Recently deleted'),
-            subtitle: const Text('Give a moment a second chance'),
-            trailing: const Icon(Icons.arrow_forward_rounded),
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute<void>(
-                builder: (_) => TrashScreen(controller: c),
-              ),
-            ),
-          ),
-        ),
-        const SizedBox(height: 24),
-        Text(
-          'Your favorites',
-          style: Theme.of(
-            context,
-          ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
-        ),
-      ],
-    ),
-  );
-
-  Widget _spotlight(List<CloudFile> files) {
-    final file = files.firstWhere((f) => f.isMedia);
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
-      child: GestureDetector(
-        onTap: () => _open(file, files),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(28),
-          child: SizedBox(
-            height: 210,
-            child: Stack(
-              fit: StackFit.expand,
+          child: Padding(
+            padding: const EdgeInsets.all(6),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: [
-                ExcludeSemantics(
-                  child: MediaTile(file: file, controller: c),
-                ),
-                const DecoratedBox(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [Colors.black12, Colors.black87],
-                    ),
-                  ),
-                ),
-                const Positioned(
-                  top: 20,
-                  left: 20,
-                  child: Text(
-                    'RECENT HIGHLIGHT',
-                    style: TextStyle(
-                      color: Colors.white70,
-                      fontSize: 10,
-                      letterSpacing: 2.5,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-                Positioned(
-                  bottom: 24,
-                  left: 20,
-                  right: 20,
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      const Expanded(
-                        child: Text(
-                          'The good\nin the everyday.',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 29,
-                            height: 1.05,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: -.8,
+                for (final (tab, label, icon) in [
+                  (0, 'Timeline', Icons.photo_library_outlined),
+                  (4, 'Albums', Icons.collections_bookmark_outlined),
+                  (1, 'Drive', Icons.folder_outlined),
+                ])
+                  Flexible(
+                    child: Tooltip(
+                      message: label,
+                      child: Semantics(
+                        selected: tab == active,
+                        button: true,
+                        label: label,
+                        excludeSemantics: true,
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(28),
+                          onTap: c.busy ? null : () => _navigate(tab),
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 180),
+                            constraints: const BoxConstraints(
+                              minHeight: 46,
+                              minWidth: 56,
+                            ),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 10,
+                            ),
+                            decoration: BoxDecoration(
+                              color: active == tab
+                                  ? colors.primaryContainer
+                                  : Colors.transparent,
+                              borderRadius: BorderRadius.circular(28),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(
+                                  icon,
+                                  size: 21,
+                                  color: active == tab
+                                      ? colors.onPrimaryContainer
+                                      : colors.onSurfaceVariant,
+                                ),
+                                if (active == tab) ...[
+                                  const SizedBox(width: 7),
+                                  Flexible(
+                                    child: Text(
+                                      label,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w600,
+                                        color: colors.onPrimaryContainer,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
                           ),
                         ),
                       ),
-                      Container(
-                        padding: const EdgeInsets.all(10),
-                        decoration: const BoxDecoration(
-                          color: Colors.white24,
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Icon(
-                          Icons.arrow_outward,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ],
+                    ),
                   ),
-                ),
               ],
             ),
           ),
@@ -839,150 +680,670 @@ class _LibraryScreenState extends State<LibraryScreen> {
     );
   }
 
-  /// Photos taken on this calendar day in earlier years, grouped by year.
-  Map<int, List<CloudFile>> _memories(List<CloudFile> files) {
-    final now = DateTime.now();
-    final years = <int, List<CloudFile>>{};
-    for (final file in files) {
-      final date = file.modified?.toLocal();
-      if (!file.isMedia || date == null || date.year >= now.year) continue;
-      if (date.month == now.month && (date.day - now.day).abs() <= 1) {
-        years.putIfAbsent(date.year, () => []).add(file);
-      }
+  Future<void> _chooseSource() async {
+    final path = await chooseFolder(context, c, []);
+    if (path != null && mounted) {
+      setState(_reset);
+      await c.setPhotoRoot(path);
     }
-    return Map.fromEntries(
-      years.entries.toList()..sort((a, b) => b.key.compareTo(a.key)),
-    );
   }
 
-  Widget _memoryStrip(List<CloudFile> files) {
-    final memories = _memories(files);
-    final now = DateTime.now().year;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+  Widget _breadcrumbs() => SingleChildScrollView(
+    scrollDirection: Axis.horizontal,
+    padding: const EdgeInsets.symmetric(horizontal: 12),
+    child: Row(
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
+        TextButton(
+          onPressed: () {
+            setState(_reset);
+            c.goTo([]);
+          },
+          child: const Text('All files'),
+        ),
+        for (var index = 0; index < c.directory.length; index++) ...[
+          const Icon(Icons.chevron_right, size: 14),
+          TextButton(
+            onPressed: () {
+              final path = c.directory.take(index + 1).toList();
+              setState(_reset);
+              c.goTo(path);
+            },
+            child: Text(c.directory[index]),
+          ),
+        ],
+      ],
+    ),
+  );
+
+  List<Widget> _albumHomeSlivers() {
+    final root = c.photoRoot;
+    var albums = c.smartAlbums
+        .where(
+          (a) =>
+              (_group == null || pathStartsWith(a.path, _group!)) &&
+              (_query.isEmpty ||
+                  '${a.name} ${a.path.join(' ')}'.toLowerCase().contains(
+                    _query.toLowerCase(),
+                  )),
+        )
+        .toList();
+    if (_sort == LibrarySort.newest || _sort == LibrarySort.oldest) {
+      DateTime date(SmartAlbum album) => album.files
+          .map((f) => f.modified ?? DateTime(1970))
+          .reduce((a, b) => a.isAfter(b) ? a : b);
+      albums.sort(
+        (a, b) => _sort == LibrarySort.newest
+            ? date(b).compareTo(date(a))
+            : date(a).compareTo(date(b)),
+      );
+    }
+    final groups = <String, List<String>>{};
+    for (final album in c.smartAlbums) {
+      for (var depth = root.length + 1; depth < album.path.length; depth++) {
+        final path = album.path.take(depth).toList();
+        groups[path.map(Uri.encodeComponent).join('/')] = path;
+      }
+    }
+    final native = c.nativeAlbums
+        .where(
+          (a) =>
+              _query.isEmpty ||
+              a.name.toLowerCase().contains(_query.toLowerCase()),
+        )
+        .toList();
+    return [
+      SliverToBoxAdapter(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(18, 0, 18, 14),
           child: Text(
-            'On this day',
-            style: Theme.of(
-              context,
-            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+            'Photo source: My drive${root.isEmpty ? '' : ' / ${root.join(' / ')}'}',
+            style: Theme.of(context).textTheme.bodySmall,
           ),
         ),
-        SizedBox(
-          height: 168,
-          child: ListView(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 16),
+      ),
+      SliverToBoxAdapter(
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+          child: Row(
             children: [
-              for (final entry in memories.entries)
+              for (final (label, icon, tab) in [
+                ('Favorites', Icons.favorite_border, 2),
+                ('Shared', Icons.people_outline, 5),
+                ('Offline', Icons.offline_bolt_outlined, 6),
+                ('Recently deleted', Icons.restore_from_trash_outlined, 3),
+              ])
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 4),
-                  child: Semantics(
-                    button: true,
-                    label:
-                        '${now - entry.key} years ago, ${entry.value.length} items',
-                    child: GestureDetector(
-                      onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute<void>(
-                          builder: (_) => AssetViewer(
-                            files: entry.value,
-                            initialIndex: 0,
-                            controller: c,
+                  padding: const EdgeInsets.only(right: 8),
+                  child: ActionChip(
+                    avatar: Icon(icon, size: 17),
+                    label: Text(label),
+                    onPressed: () {
+                      if (tab == 3) {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute<void>(
+                            builder: (_) => TrashScreen(controller: c),
                           ),
-                        ),
-                      ),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(18),
-                        child: SizedBox(
-                          width: 120,
-                          child: Stack(
-                            fit: StackFit.expand,
-                            children: [
-                              ExcludeSemantics(
-                                child: MediaTile(
-                                  file: entry.value.first,
-                                  controller: c,
-                                ),
-                              ),
-                              const DecoratedBox(
-                                decoration: BoxDecoration(
-                                  gradient: LinearGradient(
-                                    begin: Alignment.center,
-                                    end: Alignment.bottomCenter,
-                                    colors: [
-                                      Colors.transparent,
-                                      Colors.black87,
-                                    ],
-                                  ),
-                                ),
-                              ),
-                              Positioned(
-                                left: 12,
-                                right: 12,
-                                bottom: 12,
-                                child: ExcludeSemantics(
-                                  child: Text(
-                                    now - entry.key == 1
-                                        ? '1 year ago'
-                                        : '${now - entry.key} years ago',
-                                    maxLines: 2,
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
+                        );
+                      } else {
+                        _navigate(tab);
+                      }
+                    },
                   ),
                 ),
             ],
           ),
         ),
-        const SizedBox(height: 16),
+      ),
+      SliverToBoxAdapter(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+          child: Wrap(
+            spacing: 8,
+            children: [
+              ChoiceChip(
+                label: const Text('Smart albums'),
+                selected: !_showNative,
+                onSelected: (_) => setState(() => _showNative = false),
+              ),
+              ChoiceChip(
+                label: const Text('Nextcloud albums'),
+                selected: _showNative,
+                onSelected: (_) => setState(() => _showNative = true),
+              ),
+            ],
+          ),
+        ),
+      ),
+      if (_showNative) ...[
+        if (native.isEmpty && c.nativeAlbumError == null)
+          const SliverToBoxAdapter(
+            child: Padding(
+              padding: EdgeInsets.all(24),
+              child: Text(
+                'No Nextcloud albums here yet. Albums from the Nextcloud Photos app appear here with their original membership.',
+              ),
+            ),
+          ),
+        _albumCards(
+          native
+              .map(
+                (a) => (
+                  name: a.name,
+                  subtitle: a.shared ? 'Shared album' : 'Nextcloud album',
+                  count: '${a.count} items',
+                  cover: a.coverId == null
+                      ? null
+                      : CloudFile(
+                          path: ['album-cover', ...a.davPath],
+                          name: a.name,
+                          isDirectory: false,
+                          id: a.coverId,
+                          contentType: 'image/jpeg',
+                        ),
+                  open: () {
+                    setState(_reset);
+                    if (_scroll.hasClients) _scroll.jumpTo(0);
+                    c.openNativeAlbum(a);
+                  },
+                ),
+              )
+              .toList(),
+        ),
+      ],
+      if (c.nativeAlbumError case final error?)
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: MessageCard(message: error, isError: true, onRetry: c.load),
+          ),
+        ),
+      if (!_showNative) ...[
+        _section('Your albums', subtitle: 'Across all subfolders'),
+        if (groups.isNotEmpty)
+          SliverToBoxAdapter(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+              child: Row(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.only(right: 7),
+                    child: ChoiceChip(
+                      label: const Text('All'),
+                      selected: _group == null,
+                      onSelected: (_) => setState(() => _group = null),
+                    ),
+                  ),
+                  for (final path in groups.values)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 7),
+                      child: ChoiceChip(
+                        label: Text(path.skip(root.length).join(' / ')),
+                        selected:
+                            _group != null && listPathEquals(_group!, path),
+                        onSelected: (_) => setState(() => _group = path),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        if (_group != null)
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(18, 0, 12, 10),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      _group!.last,
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: () => _openSmart(_group!),
+                    child: const Text('View all photos'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        if (albums.isEmpty)
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Text(
+                _query.isNotEmpty
+                    ? 'No matching Smart albums.'
+                    : c.loadingMore
+                    ? 'Discovering your photo folders...'
+                    : 'No photos or videos in this source. Empty folders stay hidden. Choose another photo source above.',
+              ),
+            ),
+          ),
+        _albumCards(
+          albums
+              .map(
+                (a) => (
+                  name: listPathEquals(a.path, root)
+                      ? 'Photos at root'
+                      : a.name,
+                  subtitle: a.path.length <= root.length + 1
+                      ? ''
+                      : a.path
+                            .skip(root.length)
+                            .take(a.path.length - root.length - 1)
+                            .join(' / '),
+                  count: '${a.files.length} items',
+                  cover: a.files.first,
+                  open: () => _openSmart(a.path),
+                ),
+              )
+              .toList(),
+        ),
+      ],
+    ];
+  }
+
+  Widget _section(String title, {String? subtitle}) => SliverToBoxAdapter(
+    child: Padding(
+      padding: const EdgeInsets.fromLTRB(18, 10, 18, 12),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              title,
+              style: Theme.of(
+                context,
+              ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+            ),
+          ),
+          if (subtitle != null)
+            Flexible(
+              child: Text(
+                subtitle,
+                textAlign: TextAlign.end,
+                style: Theme.of(context).textTheme.labelSmall,
+              ),
+            ),
+        ],
+      ),
+    ),
+  );
+
+  Widget _albumCards(
+    List<
+      ({
+        String name,
+        String subtitle,
+        String count,
+        CloudFile? cover,
+        VoidCallback open,
+      })
+    >
+    albums,
+  ) => SliverPadding(
+    padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
+    sliver: SliverLayoutBuilder(
+      builder: (context, constraints) {
+        final columns = constraints.crossAxisExtent > 650 ? 4 : 2;
+        final width =
+            (constraints.crossAxisExtent - (columns - 1) * 12) / columns;
+        final scale = MediaQuery.textScalerOf(context);
+        final infoHeight = scale.scale(14) + scale.scale(11) * 2 + 23;
+        return SliverGrid(
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: columns,
+            crossAxisSpacing: 12,
+            mainAxisSpacing: 16,
+            mainAxisExtent: width + infoHeight,
+          ),
+          delegate: SliverChildBuilderDelegate((context, index) {
+            final album = albums[index];
+            return Semantics(
+              button: true,
+              label: '${album.name}, ${album.count}',
+              child: InkWell(
+                borderRadius: BorderRadius.circular(14),
+                onTap: album.open,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SizedBox(
+                      height: width,
+                      width: width,
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(14),
+                        child: album.cover == null
+                            ? ColoredBox(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.primaryContainer,
+                                child: const Icon(
+                                  Icons.photo_album_outlined,
+                                  size: 38,
+                                ),
+                              )
+                            : ExcludeSemantics(
+                                child: MediaTile(
+                                  file: album.cover!,
+                                  controller: c,
+                                ),
+                              ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      album.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    if (album.subtitle.isNotEmpty)
+                      Text(
+                        album.subtitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    Text(album.count, style: const TextStyle(fontSize: 11)),
+                  ],
+                ),
+              ),
+            );
+          }, childCount: albums.length),
+        );
+      },
+    ),
+  );
+
+  Widget _albumContext() {
+    final children = <String, List<String>>{};
+    for (final file in c.items.where((f) => f.isMedia)) {
+      if (file.path.length > c.directory.length + 1) {
+        final path = file.path.take(c.directory.length + 1).toList();
+        children[path.last] = path;
+      }
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '${c.items.where((f) => f.isMedia).length} items, including subfolders',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
+              PopupMenuButton<String>(
+                tooltip: 'Album actions',
+                onSelected: (action) {
+                  if (action == 'drive') {
+                    final folder = CloudFile(
+                      path: [...c.directory],
+                      name: c.directory.last,
+                      isDirectory: true,
+                    );
+                    setState(_reset);
+                    c.openFolder(folder);
+                  } else {
+                    fileActions(
+                      context,
+                      c,
+                      CloudFile(
+                        path: [...c.directory],
+                        name: c.directory.last,
+                        isDirectory: true,
+                      ),
+                    );
+                  }
+                },
+                itemBuilder: (_) => const [
+                  PopupMenuItem(value: 'drive', child: Text('Open in Drive')),
+                  PopupMenuItem(
+                    value: 'actions',
+                    child: Text('Folder actions'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        if (children.isNotEmpty)
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+            child: Row(
+              children: [
+                ChoiceChip(
+                  label: const Text('All photos'),
+                  selected: _subfolder == null,
+                  onSelected: (_) => setState(() => _subfolder = null),
+                ),
+                for (final entry in children.entries)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 7),
+                    child: ChoiceChip(
+                      label: Text(entry.key),
+                      selected:
+                          _subfolder != null &&
+                          listPathEquals(_subfolder!, entry.value),
+                      onSelected: (_) =>
+                          setState(() => _subfolder = entry.value),
+                    ),
+                  ),
+              ],
+            ),
+          ),
       ],
     );
   }
 
-  List<Widget> _timelineSlivers(List<CloudFile> files) {
-    final groups = <String, List<CloudFile>>{};
-    for (final file in files.where((f) => f.isMedia)) {
+  Map<String, List<CloudFile>> _memoryGroups(List<CloudFile> files) {
+    final now = DateTime.now();
+    final result = <String, List<CloudFile>>{};
+    for (final file in files) {
       final date = file.modified?.toLocal();
-      final label = date == null ? 'Date unavailable' : _dayLabel(date);
+      if (!file.isMedia || date == null || date.year >= now.year) continue;
+      if (date.month == now.month && date.day == now.day) {
+        final years = now.year - date.year;
+        result
+            .putIfAbsent(
+              years == 1 ? '1 year ago' : '$years years ago',
+              () => [],
+            )
+            .add(file);
+      }
+    }
+    final favorites = files.where((f) => f.isMedia && f.favorite).toList();
+    if (favorites.isNotEmpty) result['A few favorites'] = favorites;
+    return result;
+  }
+
+  Widget _memoryStrip(List<CloudFile> files) => SizedBox(
+    height: 124,
+    child: ListView(
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+      children: [
+        for (final entry in _memoryGroups(files).entries)
+          Padding(
+            padding: const EdgeInsets.only(right: 10),
+            child: Semantics(
+              button: true,
+              label: entry.key,
+              child: GestureDetector(
+                onTap: () => _open(entry.value.first, entry.value),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(15),
+                  child: SizedBox(
+                    width: 164,
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        ExcludeSemantics(
+                          child: MediaTile(
+                            file: entry.value.first,
+                            controller: c,
+                          ),
+                        ),
+                        const DecoratedBox(
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.center,
+                              end: Alignment.bottomCenter,
+                              colors: [Colors.transparent, Colors.black87],
+                            ),
+                          ),
+                        ),
+                        Positioned(
+                          left: 12,
+                          right: 10,
+                          bottom: 10,
+                          child: Text(
+                            entry.key,
+                            maxLines: 2,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w600,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
+    ),
+  );
+
+  List<Widget> _timelineSlivers(List<CloudFile> files) {
+    final media = files.where((f) => f.isMedia).toList();
+    if (media.isEmpty) return [];
+    final groups = <String, List<CloudFile>>{};
+    for (final file in media) {
+      final date = file.modified?.toLocal();
+      final label = date == null
+          ? 'Date unavailable'
+          : _density >= 5
+          ? MaterialLocalizations.of(context).formatMonthYear(date)
+          : _dayLabel(date);
       groups.putIfAbsent(label, () => []).add(file);
     }
     return [
-      for (final group in groups.entries) ...[
-        SliverPersistentHeader(
-          pinned: true,
-          delegate: _DateHeader(
-            title: group.key,
-            count: group.value.length,
-            selected: group.value.every((f) => _selected.containsKey(f.key)),
-            onSelect: () => setState(() {
-              final all = group.value.every(
-                (f) => _selected.containsKey(f.key),
-              );
-              for (final file in group.value) {
-                if (all) {
-                  _selected.remove(file.key);
-                } else {
-                  _selected[file.key] = file;
-                }
+      SliverLayoutBuilder(
+        builder: (context, constraints) {
+          _timelineStart = constraints.precedingScrollExtent;
+          _dateStops.clear();
+          _rowPositions.clear();
+          final columns = constraints.crossAxisExtent > 650
+              ? _density + 2
+              : _density;
+          final tileExtent =
+              (constraints.crossAxisExtent - (columns - 1) * 2) / columns;
+          final headerExtent =
+              44.0 + MediaQuery.textScalerOf(context).scale(13) - 13;
+          final rows = <({String? label, List<CloudFile> files})>[];
+          var offset = 0.0;
+          for (final group in groups.entries) {
+            _dateStops.add((offset: offset, label: group.key));
+            rows.add((label: group.key, files: group.value));
+            offset += headerExtent;
+            for (var index = 0; index < group.value.length; index += columns) {
+              final row = group.value.skip(index).take(columns).toList();
+              _rowPositions.add((offset: offset, files: row));
+              rows.add((label: null, files: row));
+              offset += tileExtent + 2;
+            }
+          }
+          return SliverVariedExtentList.builder(
+            itemCount: rows.length,
+            itemExtentBuilder: (index, _) => index >= rows.length
+                ? null
+                : rows[index].label == null
+                ? tileExtent + 2
+                : headerExtent,
+            itemBuilder: (context, index) {
+              final row = rows[index];
+              if (row.label != null) {
+                final all = row.files.every(
+                  (f) => _selected.containsKey(f.key),
+                );
+                return Padding(
+                  padding: const EdgeInsets.only(left: 16, right: 4),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          row.label!,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: 'Select ${row.label}',
+                        iconSize: 18,
+                        onPressed: row.files.every((f) => f.readOnly)
+                            ? null
+                            : () => setState(() {
+                                for (final file in row.files.where(
+                                  (f) => !f.readOnly,
+                                )) {
+                                  if (all) {
+                                    _selected.remove(file.key);
+                                  } else {
+                                    _selected[file.key] = file;
+                                  }
+                                }
+                              }),
+                        icon: Icon(
+                          all
+                              ? Icons.check_circle
+                              : Icons.radio_button_unchecked,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
               }
-            }),
-            color: Theme.of(context).scaffoldBackgroundColor,
-          ),
-        ),
-        _mediaGrid(group.value, files),
-      ],
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 2),
+                child: Row(
+                  children: [
+                    for (var i = 0; i < columns; i++) ...[
+                      if (i > 0) const SizedBox(width: 2),
+                      Expanded(
+                        child: i < row.files.length
+                            ? _mediaTile(row.files[i], media)
+                            : const SizedBox.shrink(),
+                      ),
+                    ],
+                  ],
+                ),
+              );
+            },
+          );
+        },
+      ),
     ];
   }
 
@@ -995,278 +1356,124 @@ class _LibraryScreenState extends State<LibraryScreen> {
     return MaterialLocalizations.of(context).formatMediumDate(date);
   }
 
-  Widget _mediaGrid(List<CloudFile> media, List<CloudFile> visible) =>
-      SliverPadding(
-        padding: const EdgeInsets.symmetric(horizontal: 4),
-        sliver: SliverLayoutBuilder(
-          builder: (context, constraints) {
-            final columns = (constraints.crossAxisExtent > 600
-                ? _density + 2
-                : _density);
-            return SliverGrid(
-              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: columns,
-                crossAxisSpacing: 3,
-                mainAxisSpacing: 3,
+  Widget _mediaTile(CloudFile file, List<CloudFile> visible) {
+    final selected = _selected.containsKey(file.key);
+    return Semantics(
+      label: file.name,
+      button: true,
+      selected: selected,
+      child: GestureDetector(
+        onTap: () => _open(file, visible),
+        onLongPress: file.readOnly ? null : () => _toggle(file),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          padding: EdgeInsets.all(selected ? 6 : 0),
+          color: Theme.of(context).colorScheme.primaryContainer,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              Hero(
+                tag: 'asset:${file.key}',
+                child: MediaTile(
+                  key: ValueKey(file.key),
+                  file: file,
+                  controller: c,
+                ),
               ),
-              delegate: SliverChildBuilderDelegate((context, index) {
-                final file = media[index];
-                final selected = _selected.containsKey(file.key);
-                return Semantics(
-                  label: file.name,
-                  button: true,
-                  selected: selected,
-                  child: GestureDetector(
-                    onTap: () => _open(file, visible),
-                    onLongPress: () => _toggle(file),
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 180),
-                      padding: EdgeInsets.all(selected ? 7 : 0),
-                      decoration: BoxDecoration(
-                        color: Theme.of(context).colorScheme.primaryContainer,
-                        borderRadius: BorderRadius.circular(selected ? 20 : 6),
-                      ),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(selected ? 12 : 6),
-                        child: Stack(
-                          fit: StackFit.expand,
-                          children: [
-                            Hero(
-                              tag: 'asset:${file.key}',
-                              child: MediaTile(
-                                key: ValueKey(file.key),
-                                file: file,
-                                controller: c,
-                              ),
-                            ),
-                            if (_selecting)
-                              Positioned(
-                                top: 6,
-                                left: 6,
-                                child: Icon(
-                                  selected
-                                      ? Icons.check_circle
-                                      : Icons.radio_button_unchecked,
-                                  color: selected
-                                      ? Theme.of(context).colorScheme.primary
-                                      : Colors.white,
-                                ),
-                              ),
-                            if (file.favorite)
-                              const Positioned(
-                                bottom: 8,
-                                right: 8,
-                                child: Icon(
-                                  Icons.favorite,
-                                  color: Colors.white,
-                                  size: 16,
-                                ),
-                              ),
-                            if (file.isVideo)
-                              const Positioned(
-                                bottom: 8,
-                                left: 8,
-                                child: Icon(
-                                  Icons.play_circle_fill_rounded,
-                                  color: Colors.white,
-                                  size: 22,
-                                ),
-                              ),
-                          ],
-                        ),
-                      ),
-                    ),
+              if (_selecting && !file.readOnly)
+                Positioned(
+                  top: 5,
+                  left: 5,
+                  child: Icon(
+                    selected
+                        ? Icons.check_circle
+                        : Icons.radio_button_unchecked,
+                    color: selected
+                        ? Theme.of(context).colorScheme.primary
+                        : Colors.white,
+                    size: 22,
                   ),
-                );
-              }, childCount: media.length),
-            );
-          },
-        ),
-      );
-
-  List<Widget> _albumSlivers(List<CloudFile> files) {
-    final folders = files.where((f) => f.isDirectory).toList();
-    final media = files.where((f) => f.isMedia).toList();
-    return [
-      if (folders.isNotEmpty)
-        SliverPadding(
-          padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
-          sliver: SliverLayoutBuilder(
-            builder: (context, constraints) => SliverGrid(
-              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: constraints.crossAxisExtent > 650 ? 4 : 2,
-                mainAxisSpacing: 20,
-                crossAxisSpacing: 16,
-                childAspectRatio: .8,
-              ),
-              delegate: SliverChildBuilderDelegate((context, index) {
-                final folder = folders[index];
-                return GestureDetector(
-                  onTap: () => _open(folder, files),
-                  onLongPress: () => _toggle(folder),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(22),
-                          child: Stack(
-                            fit: StackFit.expand,
-                            children: [
-                              AlbumCover(folder: folder, controller: c),
-                              const DecoratedBox(
-                                decoration: BoxDecoration(
-                                  gradient: LinearGradient(
-                                    begin: Alignment.topCenter,
-                                    end: Alignment.bottomCenter,
-                                    colors: [
-                                      Colors.transparent,
-                                      Colors.black26,
-                                    ],
-                                  ),
-                                ),
-                              ),
-                              Positioned(
-                                top: 8,
-                                right: 8,
-                                child: _selecting
-                                    ? Icon(
-                                        _selected.containsKey(folder.key)
-                                            ? Icons.check_circle
-                                            : Icons.radio_button_unchecked,
-                                        color: Colors.white,
-                                      )
-                                    : IconButton.filledTonal(
-                                        tooltip: 'Actions for ${folder.name}',
-                                        onPressed: c.busy
-                                            ? null
-                                            : () => fileActions(
-                                                context,
-                                                c,
-                                                folder,
-                                              ),
-                                        icon: const Icon(
-                                          Icons.more_horiz,
-                                          size: 18,
-                                        ),
-                                      ),
-                              ),
-                              const Positioned(
-                                bottom: 12,
-                                left: 12,
-                                child: Icon(
-                                  Icons.folder_outlined,
-                                  color: Colors.white,
-                                  size: 20,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      Text(
-                        folder.name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      Text(
-                        'Folder album',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ],
+                ),
+              if (file.favorite)
+                const Positioned(
+                  bottom: 6,
+                  right: 6,
+                  child: Icon(Icons.favorite, color: Colors.white, size: 14),
+                ),
+              if (file.isVideo)
+                const Positioned(
+                  bottom: 5,
+                  left: 5,
+                  child: Icon(
+                    Icons.play_arrow_rounded,
+                    color: Colors.white,
+                    size: 21,
                   ),
-                );
-              }, childCount: folders.length),
-            ),
+                ),
+            ],
           ),
         ),
-      if (media.isNotEmpty) ..._timelineSlivers(media),
-    ];
+      ),
+    );
   }
 
   Widget _driveSliver(List<CloudFile> files) => SliverPadding(
-    padding: const EdgeInsets.symmetric(horizontal: 16),
+    padding: const EdgeInsets.symmetric(horizontal: 12),
     sliver: SliverList.builder(
       itemCount: files.length,
       itemBuilder: (context, index) {
         final file = files[index];
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 6),
-          child: ListTile(
-            selected: _selected.containsKey(file.key),
-            selectedTileColor: Theme.of(context).colorScheme.primaryContainer,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(18),
-            ),
-            onTap: () => _open(file, files),
-            onLongPress: () => _toggle(file),
-            leading: _selecting
-                ? Icon(
-                    _selected.containsKey(file.key)
-                        ? Icons.check_circle
-                        : Icons.radio_button_unchecked,
-                  )
-                : file.isMedia
-                ? SizedBox(
-                    width: 48,
-                    height: 48,
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(12),
-                      child: MediaTile(file: file, controller: c),
-                    ),
-                  )
-                : Container(
-                    width: 48,
-                    height: 48,
-                    decoration: BoxDecoration(
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.surfaceContainerHighest,
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    child: Icon(
-                      file.isDirectory
-                          ? Icons.folder_rounded
-                          : Icons.description_outlined,
-                      color: Theme.of(context).colorScheme.primary,
-                    ),
+        final colors = Theme.of(context).colorScheme;
+        return ListTile(
+          contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+          selected: _selected.containsKey(file.key),
+          selectedTileColor: colors.primaryContainer,
+          onTap: () => _open(file, files),
+          onLongPress: file.readOnly ? null : () => _toggle(file),
+          leading: _selecting
+              ? Icon(
+                  _selected.containsKey(file.key)
+                      ? Icons.check_circle
+                      : Icons.radio_button_unchecked,
+                )
+              : SizedBox(
+                  width: 40,
+                  height: 40,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(11),
+                    child: file.isMedia
+                        ? MediaTile(file: file, controller: c)
+                        : ColoredBox(
+                            color: colors.surfaceContainerHigh,
+                            child: Icon(
+                              file.isDirectory
+                                  ? Icons.folder_outlined
+                                  : Icons.description_outlined,
+                              color: colors.primary,
+                              size: 22,
+                            ),
+                          ),
                   ),
-            title: Text(
-              file.name,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontWeight: FontWeight.w600),
-            ),
-            subtitle: Text(
-              file.isDirectory ? 'Folder' : formatBytes(file.size),
-            ),
-            trailing: _selecting
-                ? null
-                : Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (file.favorite)
-                        Icon(
-                          Icons.favorite,
-                          size: 14,
-                          color: Theme.of(context).colorScheme.primary,
-                        ),
-                      IconButton(
-                        tooltip: 'Actions for ${file.name}',
-                        onPressed: c.busy
-                            ? null
-                            : () => fileActions(context, c, file),
-                        icon: const Icon(Icons.more_horiz),
-                      ),
-                    ],
-                  ),
+                ),
+          title: Text(
+            file.name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
           ),
+          subtitle: Text(
+            file.isDirectory ? 'Folder' : formatBytes(file.size),
+            style: const TextStyle(fontSize: 11),
+          ),
+          trailing: _selecting
+              ? null
+              : IconButton(
+                  tooltip: 'Actions for ${file.name}',
+                  onPressed: c.busy
+                      ? null
+                      : () => fileActions(context, c, file),
+                  icon: const Icon(Icons.more_vert, size: 20),
+                ),
         );
       },
     ),
@@ -1279,86 +1486,231 @@ class _LibraryScreenState extends State<LibraryScreen> {
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(
-            c.error == null
-                ? _album
-                      ? Icons.collections_bookmark_outlined
-                      : _library
-                      ? Icons.favorite_border
-                      : Icons.photo_library_outlined
-                : Icons.cloud_off,
-            size: 52,
+            c.error == null ? Icons.photo_library_outlined : Icons.cloud_off,
+            size: 44,
             color: Theme.of(context).colorScheme.primary,
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 16),
           Text(
-            c.error != null
-                ? 'A little connection trouble'
-                : _query.isNotEmpty ||
-                      _month != null ||
-                      _filter != MediaFilter.all
-                ? 'Nothing here just yet'
-                : _album
-                ? 'A collection starts with a folder'
-                : _library
-                ? 'Keep your favorites close'
-                : 'Make room for something good',
-            textAlign: TextAlign.center,
+            c.error != null ? 'Connection interrupted' : 'Nothing here yet',
             style: Theme.of(context).textTheme.titleLarge,
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
           Text(
             c.error != null
-                ? 'Refresh to try again.'
-                : _album
-                ? 'Folders become albums automatically. Add a folder or open one to see its photos.'
-                : 'Try another filter, load older pages, or add files from Drive.',
+                ? 'Your loaded items are kept. Pull to refresh and retry.'
+                : c.tab == 6
+                ? 'Save originals from a file menu or video player to access them offline.'
+                : c.tab == 5
+                ? 'Photos you share from Nextcloud will appear here.'
+                : _query.isNotEmpty || _filter != MediaFilter.all
+                ? 'Try another search or view option.'
+                : 'Add files in Drive to start your collection.',
             textAlign: TextAlign.center,
-            style: Theme.of(context).textTheme.bodyMedium,
           ),
         ],
       ),
     ),
   );
 
+  Future<void> _viewOptions() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, update) => SafeArea(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'View options',
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+                const SizedBox(height: 14),
+                if (!_drive && !_albumHome) ...[
+                  const Text('Show'),
+                  Wrap(
+                    spacing: 8,
+                    children: [
+                      for (final value in MediaFilter.values)
+                        ChoiceChip(
+                          label: Text(switch (value) {
+                            MediaFilter.all => 'All',
+                            MediaFilter.photos => 'Photos',
+                            MediaFilter.videos => 'Videos',
+                            MediaFilter.favorites => 'Favorites',
+                          }),
+                          selected: _filter == value,
+                          onSelected: (_) {
+                            setState(() => _filter = value);
+                            update(() {});
+                          },
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  const Text('Grid density'),
+                  Wrap(
+                    spacing: 8,
+                    children: [
+                      for (var value = 2; value <= 6; value++)
+                        ChoiceChip(
+                          label: Text('$value'),
+                          selected: value == _density,
+                          onSelected: (_) {
+                            _changeDensity(value);
+                            update(() {});
+                          },
+                        ),
+                    ],
+                  ),
+                ],
+                const SizedBox(height: 12),
+                const Text('Sort'),
+                for (final (value, label) in [
+                  (LibrarySort.newest, 'Newest modified first'),
+                  (LibrarySort.oldest, 'Oldest modified first'),
+                  (LibrarySort.name, 'Name A-Z'),
+                  if (!_albumHome) (LibrarySort.size, 'Largest first'),
+                ])
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(label),
+                    trailing: _sort == value ? const Icon(Icons.check) : null,
+                    onTap: () {
+                      setState(() => _sort = value);
+                      update(() {});
+                    },
+                  ),
+                if (!_drive && !_albumHome)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.calendar_month_outlined),
+                    title: const Text('Jump to month'),
+                    onTap: () {
+                      Navigator.pop(sheetContext);
+                      _chooseMonth();
+                    },
+                  ),
+                if (_albumHome)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.folder_open_outlined),
+                    title: const Text('Choose photo source'),
+                    onTap: () {
+                      Navigator.pop(sheetContext);
+                      _chooseSource();
+                    },
+                  ),
+                const Text(
+                  'Timeline dates currently use file modification time.',
+                  style: TextStyle(fontSize: 11),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _chooseMonth() async {
+    final labels = _dateStops.map((s) => s.label).toList();
+    final monthDates =
+        c.items
+            .map((f) => f.modified?.toLocal())
+            .nonNulls
+            .map((d) => DateTime(d.year, d.month))
+            .toSet()
+            .toList()
+          ..sort((a, b) => b.compareTo(a));
+    final month = await showModalBottomSheet<DateTime>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            const ListTile(title: Text('Jump to month')),
+            for (final date in monthDates)
+              ListTile(
+                title: Text(
+                  MaterialLocalizations.of(context).formatMonthYear(date),
+                ),
+                onTap: () => Navigator.pop(context, date),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || month == null || !_scroll.hasClients) return;
+    final candidates = c.items.where((f) {
+      final d = f.modified?.toLocal();
+      return d?.year == month.year && d?.month == month.month;
+    }).toList();
+    if (candidates.isEmpty) return;
+    final label = _density >= 5
+        ? MaterialLocalizations.of(context).formatMonthYear(month)
+        : labels.firstWhere(
+            (label) => candidates.any(
+              (f) => _dayLabel(f.modified!.toLocal()) == label,
+            ),
+            orElse: () => '',
+          );
+    final stop = _dateStops.where((s) => s.label == label).firstOrNull;
+    if (stop != null) {
+      _scroll.jumpTo(
+        (_timelineStart + stop.offset).clamp(
+          0,
+          _scroll.position.maxScrollExtent,
+        ),
+      );
+      _updateDate();
+    }
+  }
+
   Widget _selectionBar() => SafeArea(
     top: false,
-    child: Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+    child: Material(
       color: Theme.of(context).colorScheme.surfaceContainer,
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-        children: [
-          IconButton(
-            tooltip: 'Favorite selected',
-            onPressed: c.busy ? null : () => _bulk('favorite'),
-            icon: const Icon(Icons.favorite_border),
-          ),
-          IconButton(
-            tooltip: 'Move selected to album',
-            onPressed: c.busy ? null : () => _bulk('move'),
-            icon: const Icon(Icons.drive_file_move_outlined),
-          ),
-          IconButton(
-            tooltip: 'Copy selected to album',
-            onPressed: c.busy ? null : () => _bulk('copy'),
-            icon: const Icon(Icons.copy_outlined),
-          ),
-          IconButton(
-            tooltip: 'Delete selected',
-            onPressed: c.busy ? null : () => _bulk('delete'),
-            icon: const Icon(Icons.delete_outline),
-          ),
-          TextButton(
-            onPressed: c.busy ? null : () => setState(() => _selected.clear()),
-            child: const Text('Done'),
-          ),
-        ],
+      child: Padding(
+        padding: const EdgeInsets.all(8),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          children: [
+            for (final (action, label, icon) in [
+              ('favorite', 'Favorite selected', Icons.favorite_border),
+              (
+                'move',
+                'Move selected to album',
+                Icons.drive_file_move_outlined,
+              ),
+              ('copy', 'Copy selected to album', Icons.copy_outlined),
+              ('delete', 'Delete selected', Icons.delete_outline),
+            ])
+              IconButton(
+                tooltip: label,
+                onPressed: c.busy ? null : () => _bulk(action),
+                icon: Icon(icon),
+              ),
+            IconButton(
+              tooltip: 'Done',
+              onPressed: c.busy
+                  ? null
+                  : () => setState(() => _selected.clear()),
+              icon: const Icon(Icons.check),
+            ),
+          ],
+        ),
       ),
     ),
   );
 
   Future<void> _bulk(String operation) async {
-    // A selected folder already includes its descendants.
     final files = _selected.values
         .where(
           (f) => !_selected.values.any(
@@ -1391,16 +1743,12 @@ class _LibraryScreenState extends State<LibraryScreen> {
             ListTile(
               leading: const Icon(Icons.upload_file_outlined),
               title: const Text('Upload files'),
-              subtitle: Text(
-                c.directory.isEmpty
-                    ? 'Destination: Nextcloud root'
-                    : 'Destination: /${c.directory.join('/')}',
-              ),
+              subtitle: Text('Destination: /${c.directory.join('/')}'),
               onTap: () => Navigator.pop(context, 'upload'),
             ),
             ListTile(
               leading: const Icon(Icons.create_new_folder_outlined),
-              title: Text(_album ? 'New album folder' : 'New folder'),
+              title: const Text('New folder'),
               onTap: () => Navigator.pop(context, 'folder'),
             ),
           ],
@@ -1411,8 +1759,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     if (action == 'folder') {
       final name = await showDialog<String>(
         context: context,
-        builder: (_) =>
-            NameDialog(title: _album ? 'New album folder' : 'New folder'),
+        builder: (_) => const NameDialog(title: 'New folder'),
       );
       if (name != null) await c.createFolder(name);
       return;
@@ -1431,9 +1778,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
       final picked = await FilePicker.platform.pickFiles(allowMultiple: true);
       if (picked == null) return;
       for (final file in picked.files) {
-        if (c.account != account ||
-            !pathStartsWith(c.directory, destination) ||
-            c.directory.length != destination.length) {
+        if (c.account != account || !listPathEquals(c.directory, destination)) {
           throw const FormatException(
             'Destination changed. Select your files again.',
           );
@@ -1447,114 +1792,5 @@ class _LibraryScreenState extends State<LibraryScreen> {
   }
 }
 
-class AlbumCover extends StatefulWidget {
-  const AlbumCover({super.key, required this.folder, required this.controller});
-  final CloudFile folder;
-  final AppController controller;
-  @override
-  State<AlbumCover> createState() => _AlbumCoverState();
-}
-
-class _AlbumCoverState extends State<AlbumCover> {
-  late Future<CloudFile?> _cover = widget.controller.albumCover(widget.folder);
-  @override
-  void didUpdateWidget(AlbumCover oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    _cover = widget.controller.albumCover(widget.folder);
-  }
-
-  @override
-  Widget build(BuildContext context) => FutureBuilder<CloudFile?>(
-    future: _cover,
-    builder: (context, snapshot) {
-      if (snapshot.data case final photo?) {
-        return MediaTile(file: photo, controller: widget.controller);
-      }
-      final colors = Theme.of(context).colorScheme;
-      return Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [colors.primaryContainer, colors.tertiaryContainer],
-          ),
-        ),
-        child: Center(
-          child: snapshot.hasError
-              ? IconButton(
-                  tooltip: 'Cover unavailable. Retry',
-                  icon: const Icon(Icons.refresh),
-                  onPressed: () => setState(() {
-                    _cover = widget.controller
-                        .folderContents(widget.folder.path)
-                        .then(
-                          (files) => files.where((f) => f.isMedia).firstOrNull,
-                        );
-                  }),
-                )
-              : Icon(
-                  Icons.collections_outlined,
-                  size: 48,
-                  color: colors.primary.withValues(alpha: .5),
-                ),
-        ),
-      );
-    },
-  );
-}
-
-class _DateHeader extends SliverPersistentHeaderDelegate {
-  _DateHeader({
-    required this.title,
-    required this.count,
-    required this.selected,
-    required this.onSelect,
-    required this.color,
-  });
-  final String title;
-  final int count;
-  final bool selected;
-  final VoidCallback onSelect;
-  final Color color;
-  @override
-  double get minExtent => 54;
-  @override
-  double get maxExtent => 54;
-  @override
-  Widget build(
-    BuildContext context,
-    double shrinkOffset,
-    bool overlapsContent,
-  ) => SizedBox(
-    height: maxExtent,
-    child: ColoredBox(
-      color: color,
-      child: Padding(
-        padding: const EdgeInsets.only(left: 20, right: 8),
-        child: Row(
-          children: [
-            Expanded(
-              child: Text(
-                title,
-                style: Theme.of(
-                  context,
-                ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
-              ),
-            ),
-            Text('$count', style: Theme.of(context).textTheme.labelSmall),
-            IconButton(
-              tooltip: 'Select $title',
-              onPressed: onSelect,
-              icon: Icon(
-                selected ? Icons.check_circle : Icons.radio_button_unchecked,
-                size: 19,
-              ),
-            ),
-          ],
-        ),
-      ),
-    ),
-  );
-  @override
-  bool shouldRebuild(_DateHeader oldDelegate) => true;
-}
+bool listPathEquals(List<String> a, List<String> b) =>
+    a.length == b.length && pathStartsWith(a, b);

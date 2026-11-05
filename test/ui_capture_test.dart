@@ -52,9 +52,8 @@ void main() {
         ('Timeline', 'timeline'),
         ('Albums', 'albums'),
         ('Drive', 'drive'),
-        ('Library', 'library'),
       ]) {
-        await tester.tap(find.text(label).last);
+        await tester.tap(find.byTooltip(label));
         await tester.pumpAndSettle();
         final boundary =
             key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
@@ -69,6 +68,21 @@ void main() {
         });
         expect(tester.takeException(), isNull);
       }
+      await tester.tap(find.byTooltip('Albums'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Kyoto'));
+      await tester.pumpAndSettle();
+      final boundary =
+          key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+      await tester.runAsync(() async {
+        final image = await boundary.toImage();
+        final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+        await File(
+          'build/ui/smart-album.png',
+        ).writeAsBytes(bytes!.buffer.asUint8List());
+        image.dispose();
+      });
+      expect(tester.takeException(), isNull);
       debugDisableShadows = oldShadows;
     },
     skip: !const bool.fromEnvironment('CAPTURE_UI'),

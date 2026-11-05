@@ -48,9 +48,11 @@ void main() {
       await c.initialize();
       c.enterDemo();
       await c.selectTab(4);
-      final photos = c.items.firstWhere((f) => f.name == 'Photos');
+      final photos = (await c.folderContents(
+        [],
+      )).firstWhere((f) => f.name == 'Photos');
       expect(await c.albumCover(photos), isNotNull);
-      await c.openFolder(photos);
+      await c.openSmartAlbum(['Photos', 'Travel', 'Japan', 'Kyoto']);
       expect(c.tab, 4);
       final original = c.items.firstWhere((f) => f.isImage);
       expect(
@@ -126,12 +128,9 @@ void main() {
       )..account = account;
       addTearDown(c.dispose);
       await c.load();
-      expect(c.hasMore, isTrue);
-      await c.loadMore();
       expect(offsets, [0, 200]);
       expect(c.items, hasLength(201));
       expect(c.hasMore, isFalse);
-      await c.loadMore();
       expect(offsets, hasLength(2));
     },
   );
@@ -244,13 +243,15 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Try demo'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Albums'));
+    await tester.tap(find.byTooltip('Albums'));
     await tester.pumpAndSettle();
-    expect(find.text('Folder album'), findsWidgets);
-    await tester.tap(find.text('Photos').last);
+    expect(find.text('Smart albums'), findsOneWidget);
+    expect(find.text('Empty folder'), findsNothing);
+    expect(find.text('Japan'), findsNothing);
+    await tester.tap(find.text('Kyoto'));
     await tester.pumpAndSettle();
     expect(c.tab, 4);
-    expect(c.directory, ['Photos']);
+    expect(c.directory, ['Photos', 'Travel', 'Japan', 'Kyoto']);
     final image = find.bySemanticsLabel('Alpine morning.jpg');
     await tester.longPress(image);
     await tester.pumpAndSettle();
@@ -284,8 +285,8 @@ void main() {
     await tester.ensureVisible(find.text('Try demo'));
     await tester.tap(find.text('Try demo'));
     await tester.pumpAndSettle();
-    for (final label in ['Albums', 'Drive', 'Library', 'Timeline']) {
-      await tester.tap(find.text(label).last);
+    for (final label in ['Albums', 'Drive', 'Timeline']) {
+      await tester.tap(find.byTooltip(label));
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull, reason: label);
     }

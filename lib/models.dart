@@ -44,6 +44,7 @@ class Account {
     required this.appPassword,
     required this.userId,
     required this.displayName,
+    this.photoRoot,
   });
 
   final Uri server;
@@ -51,6 +52,16 @@ class Account {
   final String appPassword;
   final String userId;
   final String displayName;
+  final List<String>? photoRoot;
+
+  Account withPhotoRoot(List<String> path) => Account(
+    server: server,
+    loginName: loginName,
+    appPassword: appPassword,
+    userId: userId,
+    displayName: displayName,
+    photoRoot: List.unmodifiable(path),
+  );
 
   String get authorization =>
       'Basic ${base64Encode(utf8.encode('$loginName:$appPassword'))}';
@@ -61,6 +72,7 @@ class Account {
     'appPassword': appPassword,
     'userId': userId,
     'displayName': displayName,
+    'photoRoot': photoRoot,
   });
 
   factory Account.decode(String value) {
@@ -71,6 +83,7 @@ class Account {
       appPassword: json['appPassword'] as String,
       userId: json['userId'] as String,
       displayName: json['displayName'] as String,
+      photoRoot: (json['photoRoot'] as List<dynamic>?)?.cast<String>(),
     );
   }
 }
@@ -86,6 +99,7 @@ class CloudFile {
     this.id,
     this.favorite = false,
     this.demoColor,
+    this.albumDavPath,
   });
 
   final List<String> path;
@@ -97,6 +111,8 @@ class CloudFile {
   final String? id;
   final bool favorite;
   final int? demoColor;
+  final List<String>? albumDavPath;
+  bool get readOnly => albumDavPath != null;
 
   Map<String, dynamic> toJson() => {
     'path': path,
@@ -108,6 +124,7 @@ class CloudFile {
     'id': id,
     'favorite': favorite,
     'color': demoColor,
+    'albumDavPath': albumDavPath,
   };
 
   factory CloudFile.fromJson(Map<String, dynamic> json) => CloudFile(
@@ -122,6 +139,7 @@ class CloudFile {
     id: json['id'] as String?,
     favorite: json['favorite'] as bool? ?? false,
     demoColor: json['color'] as int?,
+    albumDavPath: (json['albumDavPath'] as List<dynamic>?)?.cast<String>(),
   );
 
   String get key => path.map(Uri.encodeComponent).join('/');
@@ -139,6 +157,7 @@ class CloudFile {
     id: id,
     favorite: value,
     demoColor: demoColor,
+    albumDavPath: albumDavPath,
   );
 
   CloudFile atPath(List<String> value) => CloudFile(
@@ -152,6 +171,51 @@ class CloudFile {
     favorite: favorite,
     demoColor: demoColor,
   );
+}
+
+class NativeAlbum {
+  const NativeAlbum({
+    required this.name,
+    required this.davPath,
+    required this.count,
+    this.coverId,
+    this.shared = false,
+  });
+  final String name;
+  final List<String> davPath;
+  final int count;
+  final String? coverId;
+  final bool shared;
+}
+
+class SmartAlbum {
+  const SmartAlbum({required this.path, required this.files});
+  final List<String> path;
+  final List<CloudFile> files;
+  String get name => path.isEmpty ? 'Photos at root' : path.last;
+  String get key => path.map(Uri.encodeComponent).join('/');
+}
+
+List<SmartAlbum> buildSmartAlbums(List<CloudFile> files, List<String> root) {
+  final media = files
+      .where((f) => f.isMedia && pathStartsWith(f.path, root))
+      .toList();
+  final parents = <String, SmartAlbum>{};
+  for (final file in media) {
+    final path = file.path.sublist(0, file.path.length - 1);
+    final key = path.map(Uri.encodeComponent).join('/');
+    parents.putIfAbsent(key, () => SmartAlbum(path: path, files: []));
+  }
+  for (final file in media) {
+    for (var depth = root.length; depth < file.path.length; depth++) {
+      final key = file.path.take(depth).map(Uri.encodeComponent).join('/');
+      parents[key]?.files.add(file);
+    }
+  }
+  return parents.values.toList()..sort((a, b) {
+    final name = a.name.toLowerCase().compareTo(b.name.toLowerCase());
+    return name == 0 ? a.key.compareTo(b.key) : name;
+  });
 }
 
 class TrashEntry {

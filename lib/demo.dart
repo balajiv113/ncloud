@@ -4,6 +4,17 @@ List<CloudFile> demoFiles() {
   final now = DateTime.now();
   return [
     const CloudFile(path: ['Photos'], name: 'Photos', isDirectory: true),
+    for (final path in [
+      ['Photos', 'Travel'],
+      ['Photos', 'Travel', 'Japan'],
+      ['Photos', 'Travel', 'Japan', 'Kyoto'],
+      ['Photos', 'Travel', 'Italy'],
+      ['Photos', 'Travel', 'Italy', 'Dolomites'],
+      ['Photos', 'Family'],
+      ['Photos', 'Family', 'Coast & country'],
+      ['Photos', 'Empty folder'],
+    ])
+      CloudFile(path: path, name: path.last, isDirectory: true),
     const CloudFile(
       path: ['Weekend escapes'],
       name: 'Weekend escapes',
@@ -48,11 +59,15 @@ List<CloudFile> demoFiles() {
     ].indexed)
       CloudFile(
         path: [
-          index < 4
-              ? 'Photos'
-              : index < 8
-              ? 'Weekend escapes'
-              : 'Coast & country',
+          'Photos',
+          if (index < 8) ...[
+            'Travel',
+            index < 4 ? 'Japan' : 'Italy',
+            index < 4 ? 'Kyoto' : 'Dolomites',
+          ] else ...[
+            'Family',
+            'Coast & country',
+          ],
           '$name.${index == 11 ? 'mp4' : 'jpg'}',
         ],
         name: '$name.${index == 11 ? 'mp4' : 'jpg'}',

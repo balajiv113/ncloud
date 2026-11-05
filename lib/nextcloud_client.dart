@@ -48,7 +48,7 @@ class NextcloudClient {
     final request = http.Request(method, uri)
       ..followRedirects = false
       ..headers.addAll({
-        'User-Agent': 'ncloud/0.3.0',
+        'User-Agent': 'ncloud/0.4.0',
         if (account != null) 'Authorization': account.authorization,
         ...headers,
       });
@@ -188,6 +188,159 @@ class NextcloudClient {
     account.server,
     ['remote.php', 'dav', 'files', account.userId, ...path],
   );
+
+  Uri fileUri(Account account, CloudFile file) => file.albumDavPath == null
+      ? davUri(account, file.path)
+      : serverEndpoint(account.server, [
+          'remote.php',
+          'dav',
+          ...file.albumDavPath!,
+        ]);
+
+  Future<List<NativeAlbum>> albums(
+    Account account, {
+    bool shared = false,
+  }) async {
+    final path = ['photos', account.userId, shared ? 'sharedalbums' : 'albums'];
+    final response = await _request(
+      'PROPFIND',
+      serverEndpoint(account.server, ['remote.php', 'dav', ...path]),
+      account: account,
+      headers: {'Depth': '1', 'Content-Type': 'application/xml; charset=utf-8'},
+      body: '''<d:propfind xmlns:d="DAV:" xmlns:nc="http://nextcloud.org/ns">
+        <d:prop><d:displayname/><nc:original-name/><nc:nbItems/><nc:last-photo/></d:prop>
+      </d:propfind>''',
+    );
+    if (response.statusCode == 404 || response.statusCode == 405) return [];
+    _expect(response, {207});
+    final root = serverEndpoint(account.server, [
+      'remote.php',
+      'dav',
+      ...path,
+    ]).pathSegments;
+    final result = <NativeAlbum>[];
+    for (final entry in XmlDocument.parse(
+      response.body,
+    ).findAllElements('response', namespace: 'DAV:')) {
+      final href = entry.getElement('href', namespace: 'DAV:')?.innerText;
+      if (href == null) continue;
+      final uri = Uri.parse(href);
+      if (uri.hasAuthority && uri.origin != account.server.origin) continue;
+      final segments = uri.pathSegments.where((s) => s.isNotEmpty).toList();
+      if (segments.length != root.length + 1 ||
+          !pathStartsWith(segments, root) ||
+          segments.any((s) => s == '.' || s == '..' || s.contains('/')))
+        continue;
+      final props = _successfulProps(entry);
+      if (props.isEmpty) continue;
+      String value(String name, String ns) =>
+          props
+              .map((p) => p.getElement(name, namespace: ns)?.innerText)
+              .nonNulls
+              .firstOrNull ??
+          '';
+      final name = value('original-name', 'http://nextcloud.org/ns');
+      final display = value('displayname', 'DAV:');
+      final cover = value('last-photo', 'http://nextcloud.org/ns');
+      result.add(
+        NativeAlbum(
+          name: name.isNotEmpty
+              ? name
+              : display.isNotEmpty
+              ? display
+              : segments.last,
+          davPath: [...path, segments.last],
+          count: int.tryParse(value('nbItems', 'http://nextcloud.org/ns')) ?? 0,
+          coverId: cover.isEmpty || cover == '0' ? null : cover,
+          shared: shared,
+        ),
+      );
+    }
+    return result;
+  }
+
+  static List<XmlElement> _successfulProps(XmlElement entry) => entry
+      .findElements('propstat', namespace: 'DAV:')
+      .where(
+        (p) => RegExp(
+          r'\s200(?:\s|$)',
+        ).hasMatch(p.getElement('status', namespace: 'DAV:')?.innerText ?? ''),
+      )
+      .map((p) => p.getElement('prop', namespace: 'DAV:'))
+      .nonNulls
+      .toList();
+
+  Future<List<CloudFile>> albumFiles(
+    Account account,
+    NativeAlbum album,
+    List<CloudFile> library,
+  ) async {
+    final response = await _request(
+      'PROPFIND',
+      serverEndpoint(account.server, ['remote.php', 'dav', ...album.davPath]),
+      account: account,
+      headers: {'Depth': '1', 'Content-Type': 'application/xml; charset=utf-8'},
+      body:
+          '''<d:propfind xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns"
+        xmlns:nc="http://nextcloud.org/ns"><d:prop>$_properties
+        <nc:file-name/><nc:photos-collection-file-original-filename/></d:prop></d:propfind>''',
+    );
+    _expect(response, {207});
+    final root = serverEndpoint(account.server, [
+      'remote.php',
+      'dav',
+      ...album.davPath,
+    ]).pathSegments;
+    final known = {
+      for (final file in library)
+        if (file.id != null) file.id!: file,
+    };
+    final result = <CloudFile>[];
+    for (final entry in XmlDocument.parse(
+      response.body,
+    ).findAllElements('response', namespace: 'DAV:')) {
+      final href = entry.getElement('href', namespace: 'DAV:')?.innerText;
+      if (href == null) continue;
+      final uri = Uri.parse(href);
+      if (uri.hasAuthority && uri.origin != account.server.origin) continue;
+      final segments = uri.pathSegments.where((s) => s.isNotEmpty).toList();
+      if (segments.length != root.length + 1 ||
+          !pathStartsWith(segments, root) ||
+          segments.any((s) => s == '.' || s == '..' || s.contains('/')))
+        continue;
+      final props = _successfulProps(entry);
+      if (props.isEmpty) continue;
+      String value(String name, [String ns = 'DAV:']) =>
+          props
+              .map((p) => p.getElement(name, namespace: ns)?.innerText)
+              .nonNulls
+              .firstOrNull ??
+          '';
+      final id = value('fileid', 'http://owncloud.org/ns');
+      final existing = known[id];
+      if (existing != null) {
+        result.add(existing);
+        continue;
+      }
+      final type = value('getcontenttype');
+      if (!type.startsWith('image/') && !type.startsWith('video/')) continue;
+      final filename = value('file-name', 'http://nextcloud.org/ns');
+      final name = filename.isEmpty ? value('displayname') : filename;
+      result.add(
+        CloudFile(
+          path: ['Nextcloud albums', ...album.davPath, segments.last],
+          name: name.isEmpty ? segments.last : name,
+          isDirectory: false,
+          contentType: type,
+          id: id.isEmpty ? null : id,
+          size: int.tryParse(value('getcontentlength')) ?? 0,
+          albumDavPath: [...album.davPath, segments.last],
+          favorite: value('favorite', 'http://owncloud.org/ns') == '1',
+        ),
+      );
+    }
+    return result;
+  }
 
   Future<List<CloudFile>> listFiles(Account account, List<String> path) async {
     final response = await _request(
@@ -436,6 +589,18 @@ class NextcloudClient {
         .toList();
   }
 
+  Future<List<List<String>>> sharedPaths(Account account) async {
+    final data = await _sharesRequest(account, 'GET') as List<dynamic>;
+    return [
+      for (final item in data.cast<Map<String, dynamic>>())
+        if (item['path'] is String)
+          (item['path'] as String)
+              .split('/')
+              .where((s) => s.isNotEmpty)
+              .toList(),
+    ];
+  }
+
   Future<PublicShare> createShare(
     Account account,
     CloudFile file, {
@@ -612,7 +777,7 @@ class NextcloudClient {
         'Authorization': account.authorization,
         'Content-Type': 'application/octet-stream',
         'If-None-Match': '*',
-        'User-Agent': 'ncloud/0.3.0',
+        'User-Agent': 'ncloud/0.4.0',
       });
     try {
       final response = await http.Response.fromStream(
@@ -634,7 +799,7 @@ class NextcloudClient {
     Account account,
     CloudFile file,
   ) async {
-    final request = http.Request('GET', davUri(account, file.path))
+    final request = http.Request('GET', fileUri(account, file))
       ..followRedirects = false
       ..headers['Authorization'] = account.authorization;
     try {
@@ -686,7 +851,7 @@ class NextcloudClient {
       }
       for (var attempt = 0; ; attempt++) {
         final uri = original
-            ? davUri(account, file.path)
+            ? fileUri(account, file)
             : serverEndpoint(
                 account.server,
                 ['index.php', 'core', 'preview'],

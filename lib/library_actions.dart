@@ -46,23 +46,29 @@ Future<void> fileActions(
             ListTile(
               title: Text(file.name, maxLines: 2),
               subtitle: Text(
-                file.isDirectory ? 'Folder album' : formatBytes(file.size),
+                file.isDirectory ? 'Folder' : formatBytes(file.size),
               ),
             ),
             for (final (value, icon, label) in [
-              (
-                'favorite',
-                file.favorite ? Icons.favorite : Icons.favorite_border,
-                file.favorite ? 'Remove favorite' : 'Add favorite',
-              ),
-              ('link', Icons.link, 'Manage share links'),
+              if (!file.readOnly)
+                (
+                  'favorite',
+                  file.favorite ? Icons.favorite : Icons.favorite_border,
+                  file.favorite ? 'Remove favorite' : 'Add favorite',
+                ),
+              if (!file.readOnly) ('link', Icons.link, 'Manage share links'),
               if (!file.isDirectory)
                 ('download', Icons.ios_share, 'Download original & share'),
-              ('rename', Icons.edit_outlined, 'Rename'),
-              ('move', Icons.drive_file_move_outlined, 'Move to folder'),
-              ('copy', Icons.copy_outlined, 'Copy to folder'),
+              if (!file.isDirectory)
+                ('offline', Icons.download_outlined, 'Save offline'),
+              if (!file.readOnly) ('rename', Icons.edit_outlined, 'Rename'),
+              if (!file.readOnly)
+                ('move', Icons.drive_file_move_outlined, 'Move to folder'),
+              if (!file.readOnly)
+                ('copy', Icons.copy_outlined, 'Copy to folder'),
               ('details', Icons.info_outline, 'Details'),
-              ('delete', Icons.delete_outline, 'Delete from Nextcloud'),
+              if (!file.readOnly)
+                ('delete', Icons.delete_outline, 'Delete from Nextcloud'),
             ])
               ListTile(
                 leading: Icon(icon),
@@ -76,6 +82,17 @@ Future<void> fileActions(
   );
   if (!context.mounted || action == null || c.busy) return;
   switch (action) {
+    case 'offline':
+      try {
+        await c.saveOffline(file);
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Saved for offline access')),
+          );
+        }
+      } catch (e) {
+        if (context.mounted) showError(context, e);
+      }
     case 'favorite':
       await c.organize([file], 'favorite', favorite: !file.favorite);
     case 'link':
@@ -622,7 +639,7 @@ class SettingsScreen extends StatelessWidget {
           ),
           const ListTile(
             leading: Icon(Icons.info_outline),
-            title: Text('ncloud 0.3 · streaming & offline cache'),
+            title: Text('ncloud 0.4 · Smart albums & seamless browsing'),
             subtitle: Text(
               'Keep the app open during transfers. Public links are read-only. Server permissions and retention rules apply.',
             ),

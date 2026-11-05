@@ -154,7 +154,7 @@ class _AssetViewerState extends State<AssetViewer> with WidgetsBindingObserver {
                           ),
                           IconButton(
                             tooltip: 'Details & organize',
-                            onPressed: widget.controller.busy
+                            onPressed: widget.controller.busy || _file.readOnly
                                 ? null
                                 : () async {
                                     final key = _file.key;
@@ -244,15 +244,17 @@ class _AssetViewerState extends State<AssetViewer> with WidgetsBindingObserver {
                               ),
                               IconButton(
                                 tooltip: 'Share link',
-                                onPressed: () => showModalBottomSheet<void>(
-                                  context: context,
-                                  showDragHandle: true,
-                                  isScrollControlled: true,
-                                  builder: (_) => SharePanel(
-                                    controller: widget.controller,
-                                    file: _file,
-                                  ),
-                                ),
+                                onPressed: _file.readOnly
+                                    ? null
+                                    : () => showModalBottomSheet<void>(
+                                        context: context,
+                                        showDragHandle: true,
+                                        isScrollControlled: true,
+                                        builder: (_) => SharePanel(
+                                          controller: widget.controller,
+                                          file: _file,
+                                        ),
+                                      ),
                                 icon: const Icon(Icons.link),
                               ),
                               IconButton(
@@ -268,7 +270,8 @@ class _AssetViewerState extends State<AssetViewer> with WidgetsBindingObserver {
                               ),
                               IconButton(
                                 tooltip: 'Delete',
-                                onPressed: widget.controller.busy
+                                onPressed:
+                                    widget.controller.busy || _file.readOnly
                                     ? null
                                     : () async {
                                         if (await confirmDelete(context, [
