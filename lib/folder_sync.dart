@@ -193,6 +193,13 @@ class FolderPair {
   DateTime? lastRun;
   final bool photoBackup;
 
+  bool get includesSourceFolder => !photoBackup && mode != SyncMode.download;
+
+  List<String> get cloudRoot => [
+    ...remote,
+    if (includesSourceFolder) folder.name,
+  ];
+
   Map<String, Object?> toJson() => {
     'id': id,
     'account': account,
@@ -419,6 +426,7 @@ class FolderSyncController extends ChangeNotifier {
     final owner = _accountKey;
     if (owner == null || owner != _owner) throw StateError('Reconnect first.');
     checkSyncPath(remote);
+    checkSyncPath([folder.name]);
     bool overlaps(List<String> a, List<String> b) =>
         a.length <= b.length &&
         List.generate(a.length, (i) => a[i] == b[i]).every((v) => v);
@@ -708,6 +716,7 @@ class FolderSyncController extends ChangeNotifier {
       );
     }
     _check(pair);
+    checkSyncPath(pair.cloudRoot);
     phase = 'Checking Wi-Fi and charging conditions';
     _notify();
     await _conditions(pair);
@@ -752,6 +761,20 @@ class FolderSyncController extends ChangeNotifier {
     directories.add([]);
     phase = 'Reading Nextcloud destination';
     _notify();
+    if (pair.includesSourceFolder) {
+      final children = await client.listFiles(session, pair.remote);
+      _check(pair);
+      final folder = children
+          .where((file) => file.name == pair.folder.name)
+          .singleOrNull;
+      if (folder == null) {
+        await client.createFolder(session, pair.cloudRoot);
+      } else if (!folder.isDirectory) {
+        throw const FormatException(
+          'A file blocks the selected folder name in Nextcloud. Choose another destination.',
+        );
+      }
+    }
     while (directories.isNotEmpty) {
       _check(pair);
       if (++scanned > 200000) {
@@ -761,11 +784,11 @@ class FolderSyncController extends ChangeNotifier {
       }
       final path = directories.removeLast();
       for (final item in await client.listFiles(session, [
-        ...pair.remote,
+        ...pair.cloudRoot,
         ...path,
       ])) {
         // Never follow a server listing outside the requested direct children.
-        final expected = [...pair.remote, ...path, item.name];
+        final expected = [...pair.cloudRoot, ...path, item.name];
         checkSyncPath(expected);
         if (_key(expected) != _key(item.path) || item.albumDavPath != null) {
           throw const FormatException(
@@ -839,13 +862,13 @@ class FolderSyncController extends ChangeNotifier {
           _check(pair);
           await client.upload(
             session,
-            [...pair.remote, ...target],
+            [...pair.cloudRoot, ...target],
             staged.openRead(),
             stagedSize,
           );
           final confirmed =
               (await client.listFiles(session, [
-                    ...pair.remote,
+                    ...pair.cloudRoot,
                     ...target.take(target.length - 1),
                   ]))
                   .where(
@@ -939,7 +962,7 @@ class FolderSyncController extends ChangeNotifier {
     FolderPair pair,
     List<String> target,
   ) async {
-    var parent = List.of(pair.remote);
+    var parent = List.of(pair.cloudRoot);
     for (final segment in target.take(target.length - 1)) {
       _check(pair);
       final children = await client.listFiles(session, parent);

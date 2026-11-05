@@ -545,15 +545,92 @@ void main() {
     },
   );
 
+  test('selected source folder is included even when empty', () async {
+    final value = await pair(SyncMode.backup);
+    expect(value.cloudRoot, ['Backup', 'Selected']);
+    await sync.run(value);
+    expect(sync.error, isNull);
+    expect(cloud.folders, contains('Backup/Selected'));
+    expect(cloud.uploads, 0);
+    expect(cloud.files, isEmpty);
+    expect(FolderPair.fromJson(value.toJson()).cloudRoot, value.cloudRoot);
+  });
+
+  test(
+    'previously flattened files stay untouched when backup includes the source folder',
+    () async {
+      await device.put('nested/file.txt', 'original');
+      final value = await pair(SyncMode.backup);
+      cloud.put('Backup/nested/file.txt', 'original');
+      final oldVersion = '${cloud.cloud('Backup/nested/file.txt').etag}|8';
+      await sync.journal.confirm(
+        value.id,
+        ['nested', 'file.txt'],
+        device.entry(device.file(['nested', 'file.txt'])).version,
+        ['nested', 'file.txt'],
+        oldVersion,
+      );
+      await sync.run(value);
+      expect(sync.error, isNull);
+      expect(
+        cloud.files.keys,
+        containsAll([
+          'Backup/nested/file.txt',
+          'Backup/Selected/nested/file.txt',
+        ]),
+      );
+      expect(
+        cloud.files.values.map((f) => utf8.decode(f.$1)),
+        everyElement('original'),
+      );
+      expect(cloud.uploads, 1);
+      await sync.run(value);
+      expect(sync.error, isNull);
+      expect(cloud.uploads, 1);
+      expect(device.imports, 0);
+    },
+  );
+
+  test(
+    'a file blocking the source folder name stops without changing it',
+    () async {
+      await device.put('notes.txt', 'local');
+      cloud.put('Backup/Selected', 'protected');
+      final value = await pair(SyncMode.backup);
+      await sync.run(value);
+      expect(sync.error, contains('file blocks'));
+      expect(utf8.decode(cloud.files['Backup/Selected']!.$1), 'protected');
+      expect(cloud.uploads, 0);
+      expect(device.imports, 0);
+      expect(cloud.folders, isNot(contains('Backup/Selected')));
+    },
+  );
+
+  test('invalid source folder names cannot create a cloud path', () async {
+    await sync.load();
+    await expectLater(
+      sync.add(
+        'Unsafe',
+        const DeviceFolder('grant', '../Documents', 'folder-id'),
+        ['Backup'],
+        SyncMode.backup,
+        false,
+      ),
+      throwsFormatException,
+    );
+    expect(sync.pairs, isEmpty);
+    expect(cloud.folders, {'', 'Backup'});
+  });
+
   test('backup preserves server names, local deletions and restarts', () async {
     await device.put('nested/photo.jpg', 'local photo');
-    cloud.put('Backup/nested/photo.jpg', 'existing cloud photo');
+    cloud.put('Backup/Selected/nested/photo.jpg', 'existing cloud photo');
     final value = await pair(SyncMode.backup);
     await sync.run(value);
     expect(sync.error, isNull);
     expect(cloud.uploads, 1);
     expect(
-      utf8.decode(cloud.files['Backup/nested/photo.jpg']!.$1),
+      utf8.decode(cloud.files['Backup/Selected/nested/photo.jpg']!.$1),
       'existing cloud photo',
     );
     expect(cloud.files, hasLength(2));
@@ -603,22 +680,28 @@ void main() {
     () async {
       await device.put('same.txt', 'local version');
       await device.put('only-local.txt', 'local');
-      cloud.put('Backup/same.txt', 'cloud version');
-      cloud.put('Backup/only-remote.txt', 'remote');
+      cloud.put('Backup/Selected/same.txt', 'cloud version');
+      cloud.put('Backup/Selected/only-remote.txt', 'remote');
       final value = await pair(SyncMode.merge);
       await sync.run(value);
       expect(sync.error, isNull);
       expect(cloud.uploads, 2);
       expect(device.imports, 2);
       expect(await device.file(['same.txt']).readAsString(), 'local version');
-      expect(utf8.decode(cloud.files['Backup/same.txt']!.$1), 'cloud version');
+      expect(
+        utf8.decode(cloud.files['Backup/Selected/same.txt']!.$1),
+        'cloud version',
+      );
       await sync.run(value);
       expect(cloud.uploads, 2);
       expect(device.imports, 2);
       await device.put('only-local.txt', 'new local version');
       await sync.run(value);
       expect(sync.error, isNull);
-      expect(utf8.decode(cloud.files['Backup/only-local.txt']!.$1), 'local');
+      expect(
+        utf8.decode(cloud.files['Backup/Selected/only-local.txt']!.$1),
+        'local',
+      );
       final uploads = cloud.uploads;
       final downloads = device.imports;
       await sync.run(value);
@@ -632,7 +715,7 @@ void main() {
     'permission errors stop the entire scan without interpreting deletions',
     () async {
       await device.put('keep.txt', 'local');
-      cloud.put('Backup/keep.txt', 'remote');
+      cloud.put('Backup/Selected/keep.txt', 'remote');
       final value = await pair(SyncMode.merge);
       device.denied = true;
       await sync.run(value);
@@ -693,10 +776,14 @@ void main() {
   test('destination races never overwrite cloud files', () async {
     await device.put('file.txt', 'source');
     final value = await pair(SyncMode.backup);
-    cloud.beforeUpload = () => cloud.put('Backup/file.txt', 'racing content');
+    cloud.beforeUpload = () =>
+        cloud.put('Backup/Selected/file.txt', 'racing content');
     await sync.run(value);
     expect(sync.error, isNotNull);
-    expect(utf8.decode(cloud.files['Backup/file.txt']!.$1), 'racing content');
+    expect(
+      utf8.decode(cloud.files['Backup/Selected/file.txt']!.$1),
+      'racing content',
+    );
     expect(await sync.journal.receipt(value.id, 'local', ['file.txt']), isNull);
   });
 

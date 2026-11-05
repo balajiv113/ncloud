@@ -189,7 +189,7 @@ class _FolderSyncScreenState extends State<FolderSyncScreen> {
             Text(pair.mode.label),
             const SizedBox(height: 12),
             Text('Device: ${pair.folder.name}'),
-            Text('Nextcloud: /${pair.remote.join('/')}'),
+            Text('Nextcloud: /${pair.cloudRoot.join('/')}'),
             Text(
               '${pair.wifiOnly ? 'Wi-Fi only' : 'Mobile data allowed'}'
               '${pair.chargingOnly ? ' · charging only' : ''}',

@@ -173,7 +173,7 @@ jobs:
           gh release create "v0.5.5-preview.${{ github.run_number }}" ncloud-android.apk \
             --target "${{ github.sha }}" --prerelease \
             --title "ncloud Android preview #${{ github.run_number }}" \
-            --notes "ncloud 0.5.5: Fixes native Android backup callback compilation and Sync now routing. Adds whole-library Photo backup with a user-selected Nextcloud destination: Android DCIM/Pictures keep their subfolders; iPhone Photos originals upload flat, once per asset rather than per album, including Live Photo motion. Full/limited access is explicit and permission prompts are never repeated during normal runs. Create-only uploads, persistent receipts and conflict copies preserve originals; no deletion propagation or overwriting. Photo backup is manually started and foreground-only. Custom folder pairs remain separate. Updates reuse the cached development signer."
+            --notes "ncloud 0.5.5: Custom folder Backup and Two-way now include the selected source folder itself: Documents to /Backups produces /Backups/Documents, preserving subfolders. Empty selected roots are created; existing flattened uploads are never moved or deleted. Pair cards show the actual cloud root. Download-only pairs retain their exact selected cloud source. Photo backup remains unchanged: Android preserves DCIM/Pictures folders, iPhone uploads assets flat, and both use your chosen Nextcloud destination. All uploads stay create-only with persistent receipts. Transfers require ncloud to remain open. Updates reuse the cached development signer."
 
   ios:
     if: github.event_name == 'workflow_dispatch' && inputs.build_ios
