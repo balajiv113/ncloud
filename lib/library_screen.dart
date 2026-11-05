@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'app_controller.dart';
+import 'change_monitor.dart';
 import 'asset_viewer.dart';
 import 'discovery_models.dart';
 import 'library_actions.dart';
@@ -77,24 +78,30 @@ class _LibraryScreenState extends State<LibraryScreen>
       ? (_pointers.values.first - _pointers.values.last).distance
       : 0;
 
-  Timer? _changePoll;
+  ChangeMonitor? _changes;
   bool _foreground = true;
 
   @override
   void initState() {
     super.initState();
     _scroll.addListener(_prefetch);
+    _scroll.addListener(_activity);
     WidgetsBinding.instance.addObserver(this);
-    _changePoll = Timer.periodic(
-      const Duration(seconds: 60),
-      (_) => _checkForChanges(),
-    );
+    if (!c.demo && c.account != null) {
+      _changes = ChangeMonitor(
+        client: c.client,
+        account: c.account!,
+        check: _checkForChanges,
+        onActive: c.setBrowsingActive,
+        onError: c.reportChangeError,
+      )..activity();
+    }
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _changePoll?.cancel();
+    _changes?.dispose();
     _search.dispose();
     _scroll.dispose();
     super.dispose();
@@ -103,15 +110,21 @@ class _LibraryScreenState extends State<LibraryScreen>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _foreground = state == AppLifecycleState.resumed;
-    if (_foreground) _checkForChanges();
+    _changes?.setForeground(_foreground);
   }
 
-  /// Picks up photos added or removed in Nextcloud while the Timeline is
-  /// open: applied in place at the top, otherwise offered as a pill.
-  Future<void> _checkForChanges() async {
-    if (!_foreground || c.tab != 0 || _selecting) return;
-    if (!await c.checkForChanges() || !mounted) return;
-    if (!_scroll.hasClients || _scroll.offset < 120) c.applyChanges();
+  void _activity() => _changes?.activity();
+
+  Future<bool> _checkForChanges(Set<String>? ids, bool pushed) async {
+    if (!_foreground || _selecting) return false;
+    final changed = await c.checkForChanges(changedFileIds: ids, force: pushed);
+    if (!mounted) return changed;
+    if (changed &&
+        c.tab == 0 &&
+        (!_scroll.hasClients || _scroll.offset < 120)) {
+      c.applyChanges();
+    }
+    return changed;
   }
 
   void _showChanges() {
@@ -205,6 +218,7 @@ class _LibraryScreenState extends State<LibraryScreen>
   }
 
   void _navigate(int tab) {
+    _activity();
     setState(_reset);
     if (_scroll.hasClients) _scroll.jumpTo(0);
     c.selectTab(tab);
@@ -419,6 +433,7 @@ class _LibraryScreenState extends State<LibraryScreen>
                 },
                 child: Listener(
                   onPointerDown: (event) {
+                    _activity();
                     _pointers[event.pointer] = event.position;
                     if (_pointers.length == 2) {
                       _pinchBase = _density;
@@ -1838,7 +1853,7 @@ class _LibraryScreenState extends State<LibraryScreen>
           loaded
               ? found.length
               : (day.count > found.length ? day.count : found.length),
-          loaded ? null : day.id,
+          loaded && !c.dayNeedsRefresh(day.id) ? null : day.id,
         );
       }
       for (final file in [...byDay.values.expand((f) => f), ...other]) {

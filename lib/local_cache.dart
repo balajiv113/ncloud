@@ -5,20 +5,11 @@ import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:path_provider/path_provider.dart';
+import 'package:sqflite/sqflite.dart' show DatabaseFactory;
 
+import 'file_store.dart';
+import 'library_database.dart';
 import 'models.dart';
-
-Uint8List _encodeMetadata(Object value) {
-  final plain = utf8.encode(jsonEncode(value));
-  if (plain.length < 4096) return plain;
-  final packed = GZipCodec(level: 1).encode(plain);
-  return Uint8List.fromList(
-    packed.length <= plain.length * 0.9 ? packed : plain,
-  );
-}
-
-Future<Uint8List> _packMetadata(Object value) =>
-    Isolate.run(() => _encodeMetadata(value));
 
 Object? _decodeMetadata(Uint8List bytes) {
   final packed = bytes.length > 1 && bytes[0] == 0x1f && bytes[1] == 0x8b;
@@ -53,8 +44,10 @@ class LocalCache {
   LocalCache(
     this._locate, {
     Future<Directory> Function()? locateDownloads,
+    DatabaseFactory? databaseFactory,
     this.budget = browsingBudget,
-  }) : _locateDownloads = locateDownloads;
+  }) : _locateDownloads = locateDownloads,
+       _databaseFactory = databaseFactory;
 
   factory LocalCache.platform() => LocalCache(
     () async => Directory(
@@ -67,6 +60,8 @@ class LocalCache {
 
   final Future<Directory> Function() _locate;
   final Future<Directory> Function()? _locateDownloads;
+  final DatabaseFactory? _databaseFactory;
+  LibraryDatabase? _database;
   final int budget;
   Directory? _directory;
   Future<Directory>? _downloadsDirectory;
@@ -117,10 +112,26 @@ class LocalCache {
     return destination;
   }
 
-  Future<void> _serialized(Future<void> Function() operation) {
+  Future<T> _serialized<T>(Future<T> Function() operation) {
     final next = _writes.then((_) => operation());
     _writes = next.then<void>((_) {}, onError: (Object _, StackTrace _) {});
     return next;
+  }
+
+  Future<LibraryDatabase> get _db async => _database ??= LibraryDatabase(
+    '${(await _root).path}/catalogue.sqlite3',
+    factory: _databaseFactory,
+    onError: _reportWriteError,
+  );
+
+  Future<LibraryDatabase?> get _existingDatabase async {
+    final path = '${(await _root).path}/catalogue.sqlite3';
+    return await File(path).exists() ? await _db : null;
+  }
+
+  Future<void> _removeLegacy(File file) async {
+    if (await file.exists()) await file.delete();
+    _totalBytes -= _entries?.remove(file.path)?.size ?? 0;
   }
 
   Future<void> _index() async {
@@ -223,27 +234,38 @@ class LocalCache {
     }
   });
 
-  Future<List<CloudFile>?> readListing(String key) async {
+  Future<List<CloudFile>?> readListing(String key) => _serialized(() async {
     try {
+      final existing = await _existingDatabase;
+      final saved = await existing?.readListing(key);
+      if (saved != null) return saved;
       final file = await _file('listings', key, '.json');
       if (!await file.exists()) return null;
       final json = (await _readMetadata(file)) as List<dynamic>;
-      _touch(file);
-      return [
+      final files = [
         for (final item in json)
           CloudFile.fromJson((item as Map).cast<String, dynamic>()),
       ];
+      await (await _db).writeListing(key, files);
+      await _removeLegacy(file);
+      await _index();
+      await _trim();
+      return files.take(FileStore.maxFiles).toList();
     } on Object {
+      _reportWriteError(
+        'Could not read the local library catalogue. Reconnect to reload metadata.',
+      );
       return null;
     }
-  }
+  });
 
   Future<void> writeListing(String key, List<CloudFile> files) =>
       _serialized(() async {
         try {
-          final file = await _file('listings', key, '.json');
-          final rows = [for (final f in files) f.toJson()];
-          await _write(file, await _packMetadata(rows));
+          await (await _db).writeListing(key, files);
+          await _removeLegacy(await _file('listings', key, '.json'));
+          await _index();
+          await _trim();
         } on Object {
           _reportWriteError(
             'Could not save library pages. Check available device storage.',
@@ -251,22 +273,38 @@ class LocalCache {
         }
       });
 
-  Future<Map<String, dynamic>?> readDocument(String key) async {
+  Future<Map<String, dynamic>?> readDocument(
+    String key,
+  ) => _serialized(() async {
     try {
+      final existing = await _existingDatabase;
+      final saved = await existing?.readDocument(key);
+      if (saved != null) return saved;
       final file = await _file('indexes', key, '.json');
       if (!await file.exists()) return null;
-      _touch(file);
-      return ((await _readMetadata(file)) as Map).cast<String, dynamic>();
+      final value = ((await _readMetadata(file)) as Map)
+          .cast<String, dynamic>();
+      await (await _db).writeDocument(key, value);
+      await _removeLegacy(file);
+      final restored = await (await _db).readDocument(key);
+      await _index();
+      await _trim();
+      return restored;
     } on Object {
+      _reportWriteError(
+        'Could not read the local library catalogue. Reconnect to reload metadata.',
+      );
       return null;
     }
-  }
+  });
 
   Future<void> writeDocument(String key, Map<String, dynamic> value) =>
       _serialized(() async {
         try {
-          final file = await _file('indexes', key, '.json');
-          await _write(file, await _packMetadata(value));
+          await (await _db).writeDocument(key, value);
+          await _removeLegacy(await _file('indexes', key, '.json'));
+          await _index();
+          await _trim();
         } on Object {
           _reportWriteError(
             'Could not save library metadata. Check available device storage.',
@@ -274,7 +312,90 @@ class LocalCache {
         }
       });
 
+  /// Persists only mutations since the previous successful transaction; no
+  /// whole-library JSON snapshot is created on the UI isolate.
+  Future<void> writeLibrary(String key, FileStore store) =>
+      _serialized(() async {
+        try {
+          final db = await _db;
+          final full = !await db.containsCollection(key);
+          final changes = store.persistenceChanges(full: full);
+          await db.writeLibrary(key, changes);
+          store.acknowledgePersistence(changes);
+          await _removeLegacy(await _file('indexes', key, '.json'));
+          await _index();
+          await _trim();
+        } on Object {
+          _reportWriteError(
+            'Could not save library metadata. Check available device storage.',
+          );
+        }
+      });
+
+  Future<List<CloudFile>> readFilesByIds(
+    String accountKey,
+    Iterable<String> ids,
+  ) => _serialized(() async {
+    try {
+      final db = await _existingDatabase;
+      return await db?.readFilesByIds(accountKey, ids) ?? [];
+    } on Object {
+      _reportWriteError('Could not read the local library catalogue.');
+      return <CloudFile>[];
+    }
+  });
+
+  /// Reads at most [FileStore.maxFiles] persisted day rows, newest day first.
+  /// Freshness and complete-day count checks belong to the owning listing.
+  Future<List<CloudFile>> readDayFiles(
+    String accountKey,
+    List<int> days, {
+    DateTime? freshSince,
+  }) => _serialized(() async {
+    try {
+      if (days.isEmpty) return <CloudFile>[];
+      final db = await _existingDatabase;
+      return await db?.readDayFiles(accountKey, days, freshSince: freshSince) ??
+          [];
+    } on Object {
+      _reportWriteError('Could not read the local library catalogue.');
+      return <CloudFile>[];
+    }
+  });
+
+  Future<({List<CloudFile> files, String? etag, DateTime updated})?>
+  readFolderSnapshot(String accountKey, List<String> path) =>
+      _serialized(() async {
+        try {
+          return await (await _existingDatabase)?.readFolderSnapshot(
+            accountKey,
+            path,
+          );
+        } on Object {
+          _reportWriteError('Could not read the local folder catalogue.');
+          return null;
+        }
+      });
+
+  /// Invalidates reloadable pages and folder etags without discarding the
+  /// canonical library, discovery documents, or offline downloads.
+  Future<void> invalidateListings(String accountKey) => _serialized(() async {
+    try {
+      await (await _existingDatabase)?.invalidateListings(accountKey);
+      // Old hashed JSON cannot be scoped safely. Discard disposable legacy
+      // pages rather than resurrecting an invalidated server snapshot.
+      for (final name in ['listings', 'indexes']) {
+        await for (final entity in (await _folder(name)).list()) {
+          if (entity is File) await _removeLegacy(entity);
+        }
+      }
+    } on Object {
+      _reportWriteError('Could not invalidate cached library pages.');
+    }
+  });
+
   Future<void> clearDocuments() => _serialized(() async {
+    await (await _existingDatabase)?.clearDocuments();
     final folder = await _folder('indexes');
     await for (final entity in folder.list()) {
       if (entity is File) {
@@ -335,14 +456,26 @@ class LocalCache {
 
   Future<void> _trim() async {
     final entries = _entries!;
-    if (_totalBytes <= budget) return;
+    final db = await _existingDatabase;
+    var databaseBytes = await db?.allocatedBytes() ?? 0;
+    if (_totalBytes + databaseBytes <= budget) return;
+    if (db != null) {
+      await db.checkpoint();
+      databaseBytes = await db.allocatedBytes();
+      if (_totalBytes + databaseBytes <= budget) return;
+    }
+    final target = (budget * 0.8).floor();
     final ordered = entries.keys.toList()
       ..sort((a, b) => entries[a]!.accessed.compareTo(entries[b]!.accessed));
     for (final path in ordered) {
-      if (_totalBytes <= budget * 0.8) break;
+      if (_totalBytes + databaseBytes <= target) break;
       final file = File(path);
       if (await file.exists()) await file.delete();
       _totalBytes -= entries.remove(path)!.size;
+    }
+    if (db != null && _totalBytes + databaseBytes > target) {
+      await db.trimToBytes((target - _totalBytes).clamp(0, budget));
+      databaseBytes = await db.allocatedBytes();
     }
   }
 
@@ -358,6 +491,7 @@ class LocalCache {
           if (entity is File) total += await entity.length();
         }
       }
+      total += await (await _existingDatabase)?.allocatedBytes() ?? 0;
     } on Object {
       // Best effort.
     }
@@ -374,11 +508,18 @@ class LocalCache {
 
   Future<void> clear() => _serialized(() async {
     await _downloads;
+    await _database?.close();
+    _database = null;
     final root = await _root;
     if (await root.exists()) await root.delete(recursive: true);
     _entries = null;
     _totalBytes = 0;
     _writeError = null;
+  });
+
+  Future<void> close() => _serialized(() async {
+    await _database?.close();
+    _database = null;
   });
 
   Future<void> clearAll() async {

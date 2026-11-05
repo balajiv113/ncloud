@@ -55,6 +55,7 @@ void main() {
     cache = LocalCache(() async => root);
   });
   tearDown(() async {
+    await cache.close();
     if (await root.exists()) await root.delete(recursive: true);
   });
 

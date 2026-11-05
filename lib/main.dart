@@ -31,15 +31,22 @@ class NcloudApp extends StatefulWidget {
   State<NcloudApp> createState() => _NcloudAppState();
 }
 
-class _NcloudAppState extends State<NcloudApp> {
+class _NcloudAppState extends State<NcloudApp> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     widget.controller.initialize();
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    widget.controller.setBrowsingActive(state == AppLifecycleState.resumed);
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     widget.controller.dispose();
     super.dispose();
   }

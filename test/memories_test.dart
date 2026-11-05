@@ -368,6 +368,9 @@ void main() {
       expect(c.nativeAlbums.single.count, 12);
       expect(c.photoRoot, ['Photos']);
       expect(c.catalogueError, isNull);
+      for (var i = 0; i < 100 && calls < 2; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
       await c.selectTab(4);
       expect(c.loading, isFalse);
       expect(c.smartAlbums.single.name, 'Travel');

@@ -352,6 +352,81 @@ class NextcloudClient {
   Future<List<CloudFile>> listFiles(Account account, List<String> path) async =>
       (await listFolder(account, path)).children;
 
+  Future<String?> folderEtag(Account account, List<String> path) async {
+    final response = await _request(
+      'PROPFIND',
+      davUri(account, path),
+      account: account,
+      headers: {'Depth': '0', 'Content-Type': 'application/xml; charset=utf-8'},
+      body:
+          '<d:propfind xmlns:d="DAV:"><d:prop><d:getetag/>'
+          '</d:prop></d:propfind>',
+    );
+    _expect(response, {207});
+    final root = XmlDocument.parse(response.body);
+    for (final propstat in root.findAllElements(
+      'propstat',
+      namespace: 'DAV:',
+    )) {
+      if (!RegExp(r'\s200(?:\s|$)').hasMatch(
+        propstat.getElement('status', namespace: 'DAV:')?.innerText ?? '',
+      )) {
+        continue;
+      }
+      final etag = propstat
+          .getElement('prop', namespace: 'DAV:')
+          ?.getElement('getetag', namespace: 'DAV:')
+          ?.innerText
+          .trim();
+      if (etag != null && etag.isNotEmpty) return etag;
+    }
+    return null;
+  }
+
+  /// Never send account credentials to another origin advertised by a server.
+  Future<Uri?> pushEndpoint(Account account) async {
+    final response = await _request(
+      'GET',
+      serverEndpoint(
+        account.server,
+        ['ocs', 'v2.php', 'cloud', 'capabilities'],
+        {'format': 'json'},
+      ),
+      account: account,
+      headers: {'OCS-APIRequest': 'true', 'Accept': 'application/json'},
+    );
+    if ({404, 405, 501}.contains(response.statusCode)) return null;
+    _expect(response, {200});
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    final ocs = body['ocs'] as Map<String, dynamic>;
+    final meta = ocs['meta'] as Map<String, dynamic>?;
+    if (meta != null &&
+        meta['statuscode'] != 100 &&
+        meta['statuscode'] != 200) {
+      throw const CloudException('Could not discover Nextcloud push support.');
+    }
+    final data = ocs['data'] as Map<String, dynamic>;
+    final capabilities = data['capabilities'] as Map<String, dynamic>;
+    final push = capabilities['notify_push'] as Map<String, dynamic>?;
+    final endpoints = push?['endpoints'] as Map<String, dynamic>?;
+    final value = endpoints?['websocket'];
+    if (value == null) return null;
+    if (value is! String) {
+      throw const CloudException('The push endpoint is invalid.');
+    }
+    final uri = Uri.parse(value);
+    final https = uri.replace(scheme: 'https');
+    if (uri.scheme != 'wss' ||
+        uri.userInfo.isNotEmpty ||
+        uri.fragment.isNotEmpty ||
+        https.origin != account.server.origin) {
+      throw const CloudException(
+        'Push requires a secure endpoint on the same server. Using change checks instead.',
+      );
+    }
+    return uri;
+  }
+
   /// Lists direct children plus the folder's own entry, whose recursive etag
   /// lets cached listings be reused while nothing below it changed.
   Future<({CloudFile? self, List<CloudFile> children})> listFolder(

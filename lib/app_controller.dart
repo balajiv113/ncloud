@@ -184,6 +184,36 @@ class AppController extends ChangeNotifier {
   final List<CloudFile> _thumbnailWarmupQueue = [];
   final Set<String> _thumbnailWarmupKnown = {};
   bool _warmingThumbnails = false;
+  bool _browsingActive = true;
+
+  void setBrowsingActive(bool active) {
+    _browsingActive = active;
+    if (!active) {
+      _thumbnailWarmupTimer?.cancel();
+      _thumbnailWarmupTimer = null;
+      _previewTimer?.cancel();
+      _previewTimer = null;
+      for (final request in _previewBatch.values) {
+        request.completer.completeError(const PreviewCancelled());
+      }
+      _previewBatch.clear();
+    } else {
+      _scheduleThumbnailWarmup();
+      if (!_fetchingDays && _pendingDays.isNotEmpty && error == null) {
+        unawaited(_drainDays());
+      }
+    }
+  }
+
+  void reportChangeError(Object error) {
+    if (_disposed) return;
+    final message =
+        'Live updates are delayed; using change checks. ${errorMessage(error)}';
+    if (notice == message) return;
+    notice = message;
+    notifyListeners();
+  }
+
   final Map<String, Future<CloudFile?>> _covers = {};
   final Map<String, List<CloudFile>> _demoTrash = {};
 
@@ -428,6 +458,7 @@ class AppController extends ChangeNotifier {
         final total = recent.fold(0, (sum, d) => sum + d.count);
         warmTotal = total;
         while (active() &&
+            _browsingActive &&
             DateTime.now().isBefore(deadline) &&
             identical(listing, _activeListing)) {
           final missing = recent
@@ -492,6 +523,11 @@ class AppController extends ChangeNotifier {
       }
       _loadVersion++;
       _loginVersion++;
+      _changeOwner = null;
+      _changeEtag = null;
+      _lastIndexCheck = null;
+      _pendingChangeHint = false;
+      _pendingChangeIds = {};
       _clearPreviews();
       _covers.clear();
       _demoTrash.clear();
@@ -751,7 +787,17 @@ class AppController extends ChangeNotifier {
         if (version != _loadVersion) return;
         if (document != null) previous = _MediaListing.fromJson(document);
       }
-      final known = previous == null ? null : fileStore.resolve(previous.keys);
+      var known = previous == null ? null : fileStore.resolve(previous.keys);
+      if (previous != null &&
+          known!.length != previous.keys.length &&
+          listingKey != null) {
+        final persisted = await cache?.readListing(listingKey);
+        if (version != _loadVersion) return;
+        if (persisted != null) {
+          fileStore.putAll(persisted);
+          known = fileStore.resolve(previous.keys);
+        }
+      }
       if (previous != null && known!.length == previous.keys.length) {
         items = known;
         refreshing = true;
@@ -767,6 +813,7 @@ class AppController extends ChangeNotifier {
       } else if (listingKey != null) {
         final cached = await cache?.readListing(listingKey);
         if (version != _loadVersion) return;
+        if (cached != null) fileStore.putAll(cached);
         final seed = cached ?? _seed(currentTab, path, native);
         if (seed.isNotEmpty && !keepItems) {
           items = seed;
@@ -774,7 +821,7 @@ class AppController extends ChangeNotifier {
           notifyListeners();
         }
       }
-      final listing = _MediaListing();
+      final listing = _MediaListing()..allowCachedDays = !refresh;
       if (currentTab == 6) {
         final saved = await cache?.readOfflineListing(_offlineListingKey) ?? [];
         final available = <CloudFile>[];
@@ -822,7 +869,8 @@ class AppController extends ChangeNotifier {
         listing.more = true;
         final previousDays = previous?.days;
         if (listing.days case final days? when !refresh) {
-          if (previousDays != null) {
+          if (previousDays != null &&
+              !previous!.updated.isBefore(fileStore.staleBefore)) {
             // Keep days whose index entry and cached files are unchanged so
             // revalidation only downloads days that actually changed.
             final before = {for (final day in previousDays) day.id: day.count};
@@ -834,7 +882,8 @@ class AppController extends ChangeNotifier {
             }
             for (final day in days) {
               final files = byDay[day.id] ?? const <CloudFile>[];
-              if (previous!.loaded.contains(day.id) &&
+              if (previous.loaded.contains(day.id) &&
+                  !previous.staleDays.contains(day.id) &&
                   before[day.id] == day.count &&
                   files.length == day.count) {
                 listing.add(fileStore, files);
@@ -919,7 +968,7 @@ class AppController extends ChangeNotifier {
       do {
         _storeDirty = false;
         if (_storeOwner != key) return;
-        await cache!.writeDocument(key, fileStore.toJson());
+        await cache!.writeLibrary(key, fileStore);
       } while (_storeDirty);
     }().whenComplete(() => _storeWrite = null);
   }
@@ -935,9 +984,33 @@ class AppController extends ChangeNotifier {
     if (!force) {
       final known = fileStore.folder(path);
       if (known != null) return known;
+      final saved = await cache?.readFolderSnapshot(_storeKey(session), path);
+      if (saved != null && account == session && !_disposed) {
+        final etag = await client.folderEtag(session, path);
+        if (etag != null && etag == saved.etag) {
+          fileStore.putFolder(path, saved.files, etag: etag);
+          _persistStore();
+          return saved.files;
+        }
+      }
     }
+    final previous = fileStore.folder(path, fresh: false);
     final result = await client.listFolder(session, path);
-    if (account != session) return result.children;
+    if (account != session || _disposed) return result.children;
+    final returned = result.children.map((file) => file.key).toSet();
+    final gone = {
+      for (final file in previous ?? <CloudFile>[])
+        if (!returned.contains(file.key)) file.key,
+    };
+    for (final file in previous ?? <CloudFile>[]) {
+      if (file.isDirectory && gone.contains(file.key)) {
+        fileStore.removeTree(file.path);
+      }
+    }
+    fileStore.removeKeys(gone);
+    for (final listing in _listings.values) {
+      listing.replace(const {}, gone);
+    }
     if (result.self case final self?) {
       if (path.isNotEmpty) fileStore.putAll([self]);
     }
@@ -987,17 +1060,26 @@ class AppController extends ChangeNotifier {
         count += day.count;
       }
       if (ids.isEmpty) return (files: <CloudFile>[], days: ids, scanned: 0);
-      final files = activeMapBounds != null
-          ? await client.memoryMapDayFiles(session, ids, activeMapBounds!)
-          : await client.memoryDayFiles(
-              session,
-              ids,
-              path: path,
-              favorites: currentTab == 2,
-              recursive: recursive,
-              resolvePaths: !_pathless(currentTab),
-              person: activePerson,
-            );
+      final cached = await _cachedDayFiles(
+        listing,
+        session,
+        ids,
+        currentTab,
+        path,
+      );
+      final files =
+          cached ??
+          (activeMapBounds != null
+              ? await client.memoryMapDayFiles(session, ids, activeMapBounds!)
+              : await client.memoryDayFiles(
+                  session,
+                  ids,
+                  path: path,
+                  favorites: currentTab == 2,
+                  recursive: recursive,
+                  resolvePaths: !_pathless(currentTab),
+                  person: activePerson,
+                ));
       return (files: files, days: ids, scanned: files.length);
     }
     final page = await client.searchPage(
@@ -1017,6 +1099,39 @@ class AppController extends ChangeNotifier {
     return (files: page.files, days: <int>[], scanned: page.scanned);
   }
 
+  Future<List<CloudFile>?> _cachedDayFiles(
+    _MediaListing listing,
+    Account session,
+    List<int> days,
+    int currentTab,
+    List<String> path,
+  ) async {
+    if (cache == null ||
+        !listing.allowCachedDays ||
+        currentTab != 0 ||
+        path.isNotEmpty ||
+        activeNativeAlbum != null ||
+        activePerson != null ||
+        activeMapBounds != null ||
+        listing.updated.isBefore(fileStore.staleBefore) ||
+        days.any(listing.staleDays.contains)) {
+      return null;
+    }
+    final saved = await cache!.readDayFiles(
+      _storeKey(session),
+      days,
+      freshSince: fileStore.staleBefore,
+    );
+    final counts = <int, int>{};
+    for (final file in saved) {
+      if (file.captureDay case final day?) {
+        counts[day] = (counts[day] ?? 0) + 1;
+      }
+    }
+    final expected = {for (final day in listing.days!) day.id: day.count};
+    return days.every((day) => counts[day] == expected[day]) ? saved : null;
+  }
+
   Future<void> _fetchPage(
     _MediaListing listing,
     Account session,
@@ -1027,6 +1142,27 @@ class AppController extends ChangeNotifier {
   }
 
   void _mergePage(_MediaListing listing, _Page page) {
+    if (page.days.isNotEmpty) {
+      final days = page.days.toSet();
+      final previous = {
+        for (final key in listing.keys)
+          if (days.contains(fileStore[key]?.captureDay)) key,
+      };
+      if (tab == 0 &&
+          directory.isEmpty &&
+          activeNativeAlbum == null &&
+          activePerson == null &&
+          activeMapBounds == null) {
+        final returned = page.files.map((file) => file.key).toSet();
+        final gone = previous.difference(returned);
+        fileStore.removeKeys(gone);
+        for (final cached in _listings.values) {
+          cached.replace(const {}, gone);
+        }
+      }
+      listing.replace(const {}, previous);
+      listing.staleDays.removeAll(days);
+    }
     listing.add(fileStore, page.files);
     if (listing.days case final days?) {
       listing.loaded.addAll(page.days);
@@ -1087,12 +1223,19 @@ class AppController extends ChangeNotifier {
 
   /// Whether the photos of an indexed day are already in the current view.
   bool dayLoaded(int day) => _activeListing?.loaded.contains(day) ?? true;
+  bool dayNeedsRefresh(int day) =>
+      _activeListing?.staleDays.contains(day) ?? false;
 
   /// Loads specific indexed days, such as those the timeline scrolled or was
   /// scrubbed to. The most recently requested days load first and requests
   /// left far behind by a fast scrub are dropped.
   ({List<MemoryDay> days, Set<int> changed, int added})? _timelineChanges;
   bool _checkingChanges = false;
+  bool _pendingChangeHint = false;
+  Set<String>? _pendingChangeIds = {};
+  String? _changeOwner;
+  String? _changeEtag;
+  DateTime? _lastIndexCheck;
 
   /// True when the server's Timeline differs from what is on screen.
   bool get timelineChanged => _timelineChanges != null;
@@ -1100,37 +1243,135 @@ class AppController extends ChangeNotifier {
   /// Photos added on the server since the Timeline was shown.
   int get newPhotos => _timelineChanges?.added ?? 0;
 
-  /// Compares the server's day index with the one on screen. One small
-  /// request; nothing is downloaded unless a day's count changed.
-  Future<bool> checkForChanges() async {
+  /// Unchanged trees cost one depth-zero etag request, not a library scan.
+  Future<bool> checkForChanges({
+    Set<String>? changedFileIds,
+    bool force = false,
+  }) async {
+    if (force) {
+      _pendingChangeHint = true;
+      if (changedFileIds == null) {
+        _pendingChangeIds = null;
+      } else {
+        _pendingChangeIds?.addAll(changedFileIds);
+      }
+    }
     final listing = _activeListing;
     final session = account;
     final shown = listing?.days;
     if (_checkingChanges ||
         demo ||
         session == null ||
-        shown == null ||
-        tab != 0 ||
-        activeNativeAlbum != null ||
-        loading) {
+        loading ||
+        loadingMore ||
+        fetchingDays ||
+        busy ||
+        !_browsingActive) {
       return false;
     }
+    force = force || _pendingChangeHint;
+    if (_pendingChangeHint) changedFileIds = _pendingChangeIds;
+    _pendingChangeHint = false;
+    _pendingChangeIds = {};
     _checkingChanges = true;
+    final loadVersion = _loadVersion;
     try {
+      final owner = 'changes-v1|${session.server}|${session.userId}';
+      if (_changeOwner != owner) {
+        _changeOwner = owner;
+        _changeEtag = (await cache?.readDocument(owner))?['etag'] as String?;
+        _lastIndexCheck = null;
+      }
+      final etag = await client.folderEtag(session, const []);
+      if (_disposed || account != session) return false;
+      if (loadVersion != _loadVersion ||
+          loading ||
+          loadingMore ||
+          fetchingDays) {
+        if (force) {
+          _pendingChangeHint = true;
+          if (changedFileIds == null) {
+            _pendingChangeIds = null;
+          } else {
+            _pendingChangeIds?.addAll(changedFileIds);
+          }
+        }
+        return false;
+      }
+      final treeChanged =
+          force || (etag != null && _changeEtag != null && etag != _changeEtag);
+      final indexDue =
+          _lastIndexCheck == null ||
+          DateTime.now().difference(_lastIndexCheck!) >=
+              const Duration(minutes: 15);
+      final metadataSweep = indexDue && _lastIndexCheck != null;
+      if (!treeChanged && etag != null && etag == _changeEtag && !indexDue) {
+        return false;
+      }
+      if (treeChanged) {
+        _resolvedIds.clear();
+        await cache?.invalidateListings(_storeKey(session));
+        await _invalidateBrowse();
+        final ids = changedFileIds;
+        final hinted = ids == null
+            ? <CloudFile>[]
+            : fileStore.where((file) => ids.contains(file.id));
+        final knownIds = hinted.map((file) => file.id).toSet();
+        final precise =
+            ids != null &&
+            ids.isNotEmpty &&
+            ids.every(knownIds.contains) &&
+            hinted.every((file) => file.captureDay != null);
+        final hintedDays = hinted.map((file) => file.captureDay).toSet();
+        for (final cached in _listings.values) {
+          cached.staleDays.addAll(
+            precise ? cached.loaded.where(hintedDays.contains) : cached.loaded,
+          );
+        }
+      }
+      if (metadataSweep && !treeChanged) {
+        listing?.staleDays.addAll(listing.loaded);
+      }
+      if (tab != 0 || shown == null || activeNativeAlbum != null) {
+        if (treeChanged || metadataSweep) await load(refresh: true);
+        if (_disposed || account != session || error != null) return false;
+        _changeEtag = etag;
+        _lastIndexCheck = DateTime.now();
+        await cache?.writeDocument(owner, {'etag': etag});
+        return treeChanged || metadataSweep;
+      }
       final path = [...directory];
       final days = await client.memoryDays(
         session,
         path: path,
         recursive: _recursiveMedia(0, path),
       );
-      if (days == null || !identical(listing, _activeListing)) return false;
+      if (days == null ||
+          _disposed ||
+          account != session ||
+          !identical(listing, _activeListing)) {
+        return false;
+      }
+      _lastIndexCheck = DateTime.now();
       final before = {for (final day in shown) day.id: day.count};
       final after = {for (final day in days) day.id: day.count};
       final changed = {
         for (final id in {...before.keys, ...after.keys})
           if (before[id] != after[id]) id,
       };
-      if (changed.isEmpty) return false;
+      if (treeChanged || metadataSweep) {
+        listing!.staleDays.addAll(changed.where(listing.loaded.contains));
+      }
+      _changeEtag = etag;
+      await cache?.writeDocument(owner, {'etag': etag});
+      if (changed.isEmpty) {
+        if (treeChanged || metadataSweep) {
+          _persistStore();
+          await cache?.writeDocument(_listingKey()!, listing!.toJson());
+          notifyListeners();
+        }
+        return treeChanged || metadataSweep;
+      }
       int total(Map<int, int> counts) => counts.values.fold(0, (a, b) => a + b);
       _timelineChanges = (
         days: days,
@@ -1139,8 +1380,20 @@ class AppController extends ChangeNotifier {
       );
       notifyListeners();
       return true;
-    } on Object {
-      return false;
+    } catch (e) {
+      if (force) {
+        _pendingChangeHint = true;
+        if (changedFileIds == null) {
+          _pendingChangeIds = null;
+        } else {
+          _pendingChangeIds?.addAll(changedFileIds);
+        }
+      }
+      if (!_disposed && account == session) {
+        notice = 'Could not check for library updates. ${errorMessage(e)}';
+        notifyListeners();
+      }
+      rethrow;
     } finally {
       _checkingChanges = false;
     }
@@ -1157,10 +1410,15 @@ class AppController extends ChangeNotifier {
       return;
     }
     final reload = changes.changed.where(listing.loaded.contains).toList();
-    listing.loaded.removeAll(changes.changed);
+    listing.staleDays.addAll(changes.changed);
+    final removed = changes.changed.difference(
+      changes.days.map((day) => day.id).toSet(),
+    );
+    listing.loaded.removeAll(removed);
+    listing.staleDays.removeAll(removed);
     listing.replace(const {}, {
       for (final key in listing.keys)
-        if (changes.changed.contains(fileStore[key]?.captureDay)) key,
+        if (removed.contains(fileStore[key]?.captureDay)) key,
     });
     listing.days = changes.days;
     listing.more = changes.days.any((d) => !listing.loaded.contains(d.id));
@@ -1173,9 +1431,11 @@ class AppController extends ChangeNotifier {
 
   void ensureDays(Iterable<int> days) {
     final listing = _activeListing;
-    if (listing?.days == null || account == null) return;
+    if (listing?.days == null || account == null || error != null) return;
     for (final day in days) {
-      if (listing!.loaded.contains(day)) continue;
+      if (listing!.loaded.contains(day) && !listing.staleDays.contains(day)) {
+        continue;
+      }
       _pendingDays
         ..remove(day)
         ..add(day);
@@ -1183,7 +1443,9 @@ class AppController extends ChangeNotifier {
     while (_pendingDays.length > 60) {
       _pendingDays.remove(_pendingDays.first);
     }
-    if (!_fetchingDays && _pendingDays.isNotEmpty) unawaited(_drainDays());
+    if (_browsingActive && !_fetchingDays && _pendingDays.isNotEmpty) {
+      unawaited(_drainDays());
+    }
   }
 
   Future<void> _drainDays() async {
@@ -1191,7 +1453,7 @@ class AppController extends ChangeNotifier {
     fetchingDays = true;
     notifyListeners();
     try {
-      while (_pendingDays.isNotEmpty && !_disposed) {
+      while (_pendingDays.isNotEmpty && !_disposed && _browsingActive) {
         final listing = _activeListing;
         final session = account;
         final days = listing?.days;
@@ -1202,7 +1464,9 @@ class AppController extends ChangeNotifier {
         final limit = _dayBatchLimit(tab);
         for (final day in _pendingDays.toList().reversed) {
           final size = counts[day];
-          if (size == null || listing.loaded.contains(day)) {
+          if (size == null ||
+              (listing.loaded.contains(day) &&
+                  !listing.staleDays.contains(day))) {
             _pendingDays.remove(day);
             continue;
           }
@@ -1216,17 +1480,30 @@ class AppController extends ChangeNotifier {
         final currentTab = tab;
         final path = [...directory];
         final key = _listingKey();
-        final files = activeMapBounds != null
-            ? await client.memoryMapDayFiles(session, batch, activeMapBounds!)
-            : await client.memoryDayFiles(
-                session,
-                batch,
-                path: path,
-                favorites: currentTab == 2,
-                recursive: _recursiveMedia(currentTab, path),
-                resolvePaths: !_pathless(currentTab),
-                person: activePerson,
-              );
+        final cached = await _cachedDayFiles(
+          listing,
+          session,
+          batch,
+          currentTab,
+          path,
+        );
+        final files =
+            cached ??
+            (activeMapBounds != null
+                ? await client.memoryMapDayFiles(
+                    session,
+                    batch,
+                    activeMapBounds!,
+                  )
+                : await client.memoryDayFiles(
+                    session,
+                    batch,
+                    path: path,
+                    favorites: currentTab == 2,
+                    recursive: _recursiveMedia(currentTab, path),
+                    resolvePaths: !_pathless(currentTab),
+                    person: activePerson,
+                  ));
         if (version != _loadVersion ||
             _disposed ||
             !identical(_activeListing, listing)) {
@@ -2007,6 +2284,7 @@ class AppController extends ChangeNotifier {
 
   void _scheduleThumbnailWarmup() {
     if (_disposed ||
+        !_browsingActive ||
         _warmingThumbnails ||
         _thumbnailWarmupQueue.isEmpty ||
         tab != 0) {
@@ -2020,7 +2298,7 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> _warmThumbnailBatch() async {
-    if (_disposed || tab != 0 || account == null) return;
+    if (_disposed || !_browsingActive || tab != 0 || account == null) return;
     if (busy || loading || loadingMore || fetchingDays) {
       _scheduleThumbnailWarmup();
       return;
@@ -2237,6 +2515,7 @@ class AppController extends ChangeNotifier {
     int size,
     String loadKey,
   ) {
+    if (!_browsingActive) return Future.error(const PreviewCancelled());
     if (file.id == null ||
         memoriesAvailable != true ||
         _multipreviewUnavailable ||
@@ -2260,7 +2539,7 @@ class AppController extends ChangeNotifier {
   /// requests (tiles currently on screen) first.
   void _flushPreviews(Account session) {
     _previewTimer = null;
-    if (!identical(account, session)) return;
+    if (!identical(account, session) || !_browsingActive) return;
     while (_previewBatch.isNotEmpty && _previewBatches < 3) {
       final batch = <_PreviewRequest>[];
       for (final key in _previewBatch.keys.toList().reversed) {
@@ -2284,9 +2563,16 @@ class AppController extends ChangeNotifier {
     Account session,
     List<_PreviewRequest> batch,
   ) async {
-    void single(_PreviewRequest request) => request.completer.complete(
-      client.preview(session, request.file, size: request.size),
-    );
+    void single(_PreviewRequest request) {
+      if (!_browsingActive || !identical(account, session)) {
+        request.completer.completeError(const PreviewCancelled());
+      } else {
+        request.completer.complete(
+          client.preview(session, request.file, size: request.size),
+        );
+      }
+    }
+
     try {
       if (batch.length == 1) {
         single(batch.single);
@@ -2312,7 +2598,7 @@ class AppController extends ChangeNotifier {
       }
     } finally {
       _previewBatches--;
-      if (_previewBatch.isNotEmpty) {
+      if (_browsingActive && _previewBatch.isNotEmpty) {
         _previewTimer ??= Timer(Duration.zero, () => _flushPreviews(session));
       }
     }
@@ -2460,6 +2746,7 @@ class AppController extends ChangeNotifier {
     _loadVersion++;
     _loginVersion++;
     client.close();
+    unawaited(cache?.close());
     super.dispose();
   }
 }
@@ -2471,6 +2758,8 @@ class _MediaListing {
   final Set<String> _known = {};
   List<MemoryDay>? days;
   final Set<int> loaded = {};
+  final Set<int> staleDays = {};
+  bool allowCachedDays = true;
   int offset = 0;
   bool more = false;
   DateTime updated = DateTime.now();
@@ -2525,6 +2814,7 @@ class _MediaListing {
     'keys': keys,
     'days': days?.map((d) => d.toJson()).toList(),
     'loaded': loaded.toList(),
+    'staleDays': staleDays.toList(),
     'offset': offset,
     'more': more,
     'updated': updated.toIso8601String(),
@@ -2541,6 +2831,7 @@ class _MediaListing {
     listing.keys = (value['keys'] as List).cast<String>();
     listing._known.addAll(listing.keys);
     listing.loaded.addAll((value['loaded'] as List).cast<int>());
+    listing.staleDays.addAll((value['staleDays'] as List? ?? []).cast<int>());
     return listing;
   }
 }

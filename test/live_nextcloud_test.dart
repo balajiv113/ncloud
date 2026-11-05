@@ -196,8 +196,25 @@ void main() {
       final bytes = base64Decode(
         'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGOQqMgGAAGnAPzLMdOkAAAAAElFTkSuQmCC',
       );
+      final beforeRoot = await client.folderEtag(account, []);
+      final beforeFolder = await client.folderEtag(account, folder);
+      expect(beforeRoot, isNotEmpty);
+      expect(beforeFolder, isNotEmpty);
       final path = [...folder, 'Photo & sunshine #1.png'];
       await client.upload(account, path, Stream.value(bytes), bytes.length);
+      expect(await client.folderEtag(account, folder), isNot(beforeFolder));
+      final afterRoot = await client.folderEtag(account, []);
+      expect(
+        afterRoot,
+        isNot(beforeRoot),
+        reason: 'descendant changes must propagate to the account root',
+      );
+      expect(await client.folderEtag(account, []), afterRoot);
+      expect(
+        await client.pushEndpoint(account),
+        isNull,
+        reason: 'the fixture has no optional Client Push app',
+      );
       final files = await client.listFiles(account, folder);
       expect(files, hasLength(1));
       final photo = files.single;

@@ -12,6 +12,7 @@ import 'package:ncloud/local_cache.dart';
 import 'package:ncloud/models.dart';
 import 'package:ncloud/media_tile.dart';
 import 'package:ncloud/nextcloud_client.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'app_test.dart' show MemoryStore;
 import 'nextcloud_client_test.dart' show account, multistatus, responseEntry;
@@ -23,10 +24,16 @@ void main() {
   late LocalCache cache;
 
   setUp(() async {
-    root = await Directory.systemTemp.createTemp('ncloud-cache-test');
-    cache = LocalCache(() async => Directory('${root.path}/cache'));
+    root = await Directory(
+      '.dart_tool/ncloud-cache-tests/${DateTime.now().microsecondsSinceEpoch}',
+    ).absolute.create(recursive: true);
+    cache = LocalCache(
+      () async => Directory('${root.path}/cache'),
+      databaseFactory: databaseFactoryFfi,
+    );
   });
   tearDown(() async {
+    await cache.close();
     if (await root.exists()) await root.delete(recursive: true);
   });
 
@@ -91,12 +98,12 @@ void main() {
     () async {
       cache = LocalCache(
         () async => Directory('${root.path}/cache'),
-        budget: 400,
+        budget: 256 * 1024,
       );
-      await cache.writeThumbnail('old', Uint8List(180));
-      await cache.writeThumbnail('recent', Uint8List(180));
+      await cache.writeThumbnail('old', Uint8List(100 * 1024));
+      await cache.writeThumbnail('recent', Uint8List(100 * 1024));
       await cache.writeDocument('metadata', {'value': 'a' * 100});
-      expect(await cache.size(), lessThanOrEqualTo(320));
+      expect(await cache.size(), lessThanOrEqualTo(256 * 1024));
       expect(await cache.readThumbnail('old'), isNull);
       expect(await cache.readThumbnail('recent'), isNotNull);
       expect(await cache.readDocument('metadata'), {'value': 'a' * 100});
@@ -131,6 +138,7 @@ void main() {
       final abandoned = File('${root.path}/cache/thumbs/abandoned.part');
       await abandoned.writeAsBytes(Uint8List(1000));
       final size = await cache.size();
+      await cache.close();
       cache = LocalCache(
         () async => Directory('${root.path}/cache'),
         budget: 200,
@@ -165,32 +173,25 @@ void main() {
     },
   );
 
-  test(
-    'only large worthwhile metadata is compressed, with legacy JSON support',
-    () async {
-      final large = {'rows': List.filled(500, 'repeated library metadata')};
-      await cache.writeDocument('large', large);
-      final file = File(
-        '${root.path}/cache/indexes/${cacheDigest('large')}.json',
-      );
-      final bytes = await file.readAsBytes();
-      expect(bytes.take(2), [0x1f, 0x8b]);
-      expect(
-        bytes.length,
-        lessThan(utf8.encode(jsonEncode(large)).length * 0.9),
-      );
-      expect(await cache.readDocument('large'), large);
-      await cache.writeListing('large-list', List.filled(50, photo()));
-      expect(await cache.readListing('large-list'), hasLength(50));
-      await cache.writeDocument('small', {'value': 1});
-      final small = File(
-        '${root.path}/cache/indexes/${cacheDigest('small')}.json',
-      );
-      expect(jsonDecode(await small.readAsString()), {'value': 1});
-      await file.writeAsString(jsonEncode(large));
-      expect(await cache.readDocument('large'), large);
-    },
-  );
+  test('legacy compressed JSON migrates lazily into SQLite metadata', () async {
+    final large = {'rows': List.filled(500, 'repeated library metadata')};
+    final file = File(
+      '${root.path}/cache/indexes/${cacheDigest('large')}.json',
+    );
+    await file.parent.create(recursive: true);
+    await file.writeAsBytes(gzip.encode(utf8.encode(jsonEncode(large))));
+    expect(await cache.readDocument('large'), large);
+    expect(await file.exists(), isFalse);
+    await cache.writeListing('large-list', List.filled(50, photo()));
+    expect(await cache.readListing('large-list'), hasLength(50));
+    await cache.writeDocument('small', {'value': 1});
+    final small = File(
+      '${root.path}/cache/indexes/${cacheDigest('small')}.json',
+    );
+    expect(await small.exists(), isFalse);
+    expect(await cache.readDocument('small'), {'value': 1});
+    expect(await File('${root.path}/cache/catalogue.sqlite3').exists(), isTrue);
+  });
 
   test(
     'saved originals and membership survive eviction, clear and restart',
@@ -224,6 +225,7 @@ void main() {
       final oldOriginal = File('${legacy.path}/${cacheDigest('saved')}.jpg');
       await oldOriginal.writeAsBytes(png);
       await cache.writeListing('offline', [photo()]);
+      await cache.close();
       cache = LocalCache(
         () async => Directory('${root.path}/cache'),
         budget: 1,
