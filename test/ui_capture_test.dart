@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ncloud/app_controller.dart';
 import 'package:ncloud/main.dart';
+import 'package:ncloud/nextcloud_client.dart';
 
 import 'app_test.dart' show MemoryStore;
 
@@ -42,7 +43,12 @@ void main() {
       await tester.pumpWidget(
         RepaintBoundary(
           key: key,
-          child: NcloudApp(controller: AppController(store: MemoryStore())),
+          child: NcloudApp(
+            controller: AppController(
+              store: MemoryStore(),
+              client: NextcloudClient(),
+            ),
+          ),
         ),
       );
       await tester.pumpAndSettle();
@@ -98,7 +104,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byTooltip('Back'));
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('View all Nextcloud albums')));
+      await tester.tap(find.byKey(const ValueKey('View all Cloud albums')));
       await tester.pumpAndSettle();
       await capture('nextcloud-albums-expanded');
       debugDisableShadows = oldShadows;

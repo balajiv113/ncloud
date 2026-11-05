@@ -12,6 +12,7 @@ import 'package:ncloud/folder_sync_screen.dart';
 import 'package:ncloud/app_controller.dart';
 import 'package:ncloud/models.dart';
 import 'package:ncloud/nextcloud_client.dart';
+import 'package:ncloud/cloud_backend.dart';
 import 'package:ncloud/android_folder_sync_screen.dart';
 import 'package:ncloud/sync_rules.dart';
 import 'package:ncloud/sync_background.dart';
@@ -136,7 +137,15 @@ class TestSyncBackground implements SyncBackground {
   }
 }
 
-class CloudFolders extends NextcloudClient {
+class CloudFolders implements CloudBackend {
+  @override
+  dynamic noSuchMethod(Invocation invocation) => throw UnsupportedError(
+    'Unexpected backend call: ${invocation.memberName}',
+  );
+
+  @override
+  void close() {}
+
   final files = <String, (List<int>, int)>{};
   final folders = <String>{'', 'Backup'};
   int revision = 0;
@@ -215,20 +224,16 @@ class CloudFolders extends NextcloudClient {
   }
 
   @override
-  Future<http.StreamedResponse> downloadVersion(
-    Account account,
-    CloudFile file,
-  ) async {
+  Future<CloudDownload> downloadVersion(Account account, CloudFile file) async {
     final value = files[file.path.join('/')]!;
     if (file.etag != '"${value.$2}"') {
       throw const CloudException('Revision changed');
     }
     downloads++;
-    return http.StreamedResponse(
+    return CloudDownload(
       interrupted
           ? Stream.error(const SocketException('Interrupted'))
           : Stream.value(value.$1),
-      200,
     );
   }
 }
@@ -613,17 +618,22 @@ void main() {
   );
 
   test(
-    'legacy pair JSON keeps all files, serial uploads and foreground behavior',
+    'persisted pairs require the current schema and reject invalid concurrency',
     () async {
       final value = await pair(SyncMode.backup);
-      final json = value.toJson()
-        ..remove('rules')
-        ..remove('background')
-        ..remove('uploadConcurrency');
-      final legacy = FolderPair.fromJson(json);
-      expect(legacy.rules.toJson(), const SyncRules.all().toJson());
-      expect(legacy.background, isFalse);
-      expect(legacy.uploadConcurrency, 1);
+      for (final field in [
+        'rules',
+        'background',
+        'uploadConcurrency',
+        'wifiOnly',
+        'chargingOnly',
+      ]) {
+        expect(
+          () => FolderPair.fromJson(value.toJson()..remove(field)),
+          throwsA(isA<TypeError>()),
+          reason: field,
+        );
+      }
       for (final count in [0, 4]) {
         await expectLater(
           sync.add(
@@ -1236,6 +1246,7 @@ void main() {
     (tester) async {
       final controller = AppController(
         store: MemoryStore(),
+        client: cloud,
         folderSyncController: sync,
       )..account = account;
       await tester.runAsync(sync.load);

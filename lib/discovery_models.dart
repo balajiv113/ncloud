@@ -25,24 +25,23 @@ class RecognizedPerson {
     'name': name,
     'count': count,
     if (cover != null) 'cover': cover,
-    if (coverEtag != null) 'cover_etag': coverEtag,
+    if (coverEtag != null) 'coverEtag': coverEtag,
   };
 
   factory RecognizedPerson.fromJson(Map<String, dynamic> json) {
     final id = json['id'];
     final name = json['name'];
     final count = json['count'];
-    final rawCover = json['cover'];
-    final cover = rawCover is String ? int.tryParse(rawCover) : rawCover;
-    final etag = json['cover_etag'];
+    final cover = json['cover'];
+    final etag = json['coverEtag'];
     if (id is! int ||
         id <= 0 ||
         name is! String ||
         count is! int ||
         count < 0 ||
-        (rawCover != null && (cover is! int || cover <= 0)) ||
+        (cover != null && (cover is! int || cover <= 0)) ||
         (etag != null && etag is! String)) {
-      throw const FormatException('Unsupported Recognize person record.');
+      throw const FormatException('Invalid person record.');
     }
     return RecognizedPerson(
       id: id,
@@ -68,19 +67,6 @@ class PhotoLocation {
 
   final double latitude;
   final double longitude;
-
-  factory PhotoLocation.fromJson(Map<String, dynamic> json) {
-    double coordinate(Object? value) {
-      if (value is num) return value.toDouble();
-      if (value is String) {
-        final parsed = double.tryParse(value);
-        if (parsed != null) return parsed;
-      }
-      throw const FormatException('Invalid photo location.');
-    }
-
-    return PhotoLocation(coordinate(json['lat']), coordinate(json['lon']));
-  }
 }
 
 /// Non-wrapping viewport. Split an antimeridian-crossing view into two bounds.
@@ -153,35 +139,4 @@ class PhotoMapCluster {
   final int count;
   final int? previewId;
   final String? previewEtag;
-
-  factory PhotoMapCluster.fromJson(Map<String, dynamic> json) {
-    final id = json['id'];
-    final center = json['center'];
-    final count = json['count'];
-    final preview = json['preview'];
-    if (id is! int ||
-        id <= 0 ||
-        center is! List ||
-        center.length != 2 ||
-        count is! num ||
-        !count.isFinite ||
-        count < 0 ||
-        count != count.roundToDouble() ||
-        (preview != null && preview is! Map)) {
-      throw const FormatException('Unsupported photo map cluster.');
-    }
-    final previewId = preview is Map ? preview['fileid'] : null;
-    final previewEtag = preview is Map ? preview['etag'] : null;
-    if ((previewId != null && (previewId is! int || previewId <= 0)) ||
-        (previewEtag != null && previewEtag is! String)) {
-      throw const FormatException('Unsupported photo map preview.');
-    }
-    return PhotoMapCluster(
-      id: id,
-      location: PhotoLocation.fromJson({'lat': center[0], 'lon': center[1]}),
-      count: count.toInt(),
-      previewId: previewId as int?,
-      previewEtag: previewEtag as String?,
-    );
-  }
 }

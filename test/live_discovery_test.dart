@@ -36,18 +36,18 @@ void main() {
         fail('The local fixture did not issue an app password.');
       }
       final account = await client.authenticate(server, owner.userId, token);
-      final people = await client.memoryPeople(account);
+      final people = await client.people(account);
       expect(
         people,
         isNotNull,
         reason: 'Recognize is installed in this fixture',
       );
-      final position = await client.memoryMapPosition(account);
+      final position = await client.mapPosition(account);
       expect(position, isNotNull);
       expect(position!.latitude, closeTo(45, 0.001));
       expect(position.longitude, closeTo(9, 0.001));
       final bounds = PhotoMapBounds(south: 44, north: 46, west: 8, east: 10);
-      final clusters = await client.memoryMapClusters(
+      final clusters = await client.mapClusters(
         account,
         bounds: bounds,
         zoom: 5,
@@ -55,9 +55,9 @@ void main() {
       expect(clusters, isNotEmpty);
       expect(clusters.fold<int>(0, (n, c) => n + c.count), 202);
       expect(clusters.any((c) => c.previewId != null), isTrue);
-      final days = await client.memoryMapDays(account, [bounds]);
+      final days = await client.mapDays(account, [bounds]);
       expect(days.fold<int>(0, (n, day) => n + day.count), 202);
-      final files = await client.memoryMapDayFiles(
+      final files = await client.mapDayFiles(
         account,
         days.map((d) => d.id).toList(),
         [bounds],
@@ -67,10 +67,10 @@ void main() {
       expect(await client.preview(account, files.first), isNotEmpty);
       final outside = PhotoMapBounds(south: -10, north: 10, west: -20, east: 0);
       expect(
-        await client.memoryMapClusters(account, bounds: outside, zoom: 5),
+        await client.mapClusters(account, bounds: outside, zoom: 5),
         isEmpty,
       );
-      expect(await client.memoryMapDays(account, [outside]), isEmpty);
+      expect(await client.mapDays(account, [outside]), isEmpty);
       final controller = AppController(store: MemoryStore(), client: client)
         ..account = account;
       addTearDown(controller.dispose);

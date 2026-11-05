@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
 
 import 'app_controller.dart';
+import 'diagnostics.dart';
 import 'folder_sync_screen.dart';
 import 'models.dart';
 import 'screens.dart';
@@ -17,7 +18,7 @@ Future<bool> confirmDelete(BuildContext context, List<CloudFile> files) async =>
           'Delete ${files.length == 1 ? files.single.name : '${files.length} items'}?',
         ),
         content: const Text(
-          'This deletes the originals from Nextcloud, not just this view. Folder contents are included. Recovery depends on your server’s trash and retention settings.',
+          'This deletes the originals from your server, not just this view. Folder contents are included. Recovery depends on your server’s trash and retention settings.',
         ),
         actions: [
           TextButton(
@@ -71,7 +72,7 @@ Future<void> fileActions(
                 ('copy', Icons.copy_outlined, 'Copy to folder'),
               ('details', Icons.info_outline, 'Details'),
               if (!file.readOnly)
-                ('delete', Icons.delete_outline, 'Delete from Nextcloud'),
+                ('delete', Icons.delete_outline, 'Delete from server'),
             ])
               ListTile(
                 leading: Icon(icon),
@@ -363,9 +364,7 @@ class _SharePanelState extends State<SharePanel> {
           if (widget.controller.demo)
             const Padding(
               padding: EdgeInsets.symmetric(vertical: 20),
-              child: Text(
-                'Connect a Nextcloud server to create real share links.',
-              ),
+              child: Text('Connect a server to create real share links.'),
             ),
           for (final link in _links)
             Card(
@@ -535,7 +534,7 @@ class _TrashScreenState extends State<TrashScreen> {
         const Padding(
           padding: EdgeInsets.all(20),
           child: Text(
-            'Recovery follows Nextcloud retention and naming rules. If the original folder is gone, items may restore to your root folder.',
+            'Recovery follows your server’s retention and naming rules. If the original folder is gone, items may restore to your root folder.',
           ),
         ),
         if (_busy) const LinearProgressIndicator(),
@@ -633,14 +632,14 @@ class SettingsScreen extends StatelessWidget {
             leading: Icon(Icons.lock_outline),
             title: Text('Private by design'),
             subtitle: Text(
-              'Encrypted device credentials. Direct to your Nextcloud. No analytics or image proxy.',
+              'Encrypted device credentials. Direct to your server. No analytics or image proxy.',
             ),
           ),
           const ListTile(
             leading: Icon(Icons.photo_library_outlined),
             title: Text('Timeline & folder albums'),
             subtitle: Text(
-              'Dates use file modification time. Load older pages as you browse. Albums are real folders, not duplicate uploads.',
+              'Dates use capture dates when available, otherwise file modification time. Albums group existing photos without duplicate uploads.',
             ),
           ),
           if (!controller.demo && (Platform.isAndroid || Platform.isIOS))
@@ -676,6 +675,48 @@ class SettingsScreen extends StatelessWidget {
               'Keep the app open during transfers. Public links are read-only. Server permissions and retention rules apply.',
             ),
           ),
+          ListTile(
+            leading: const Icon(Icons.bug_report_outlined),
+            title: const Text('Support diagnostics'),
+            subtitle: const Text(
+              'Current session only. No account details, filenames, URLs or credentials. Nothing is sent automatically.',
+            ),
+            onTap: () => showDialog<void>(
+              context: context,
+              builder: (context) => AlertDialog(
+                title: const Text('Support diagnostics'),
+                content: SingleChildScrollView(
+                  child: SelectableText(Diagnostics.session.report()),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () async {
+                      try {
+                        await Clipboard.setData(
+                          ClipboardData(text: Diagnostics.session.report()),
+                        );
+                        if (context.mounted) Navigator.pop(context);
+                      } catch (error) {
+                        if (context.mounted) showError(context, error);
+                      }
+                    },
+                    child: const Text('Copy'),
+                  ),
+                  TextButton(
+                    onPressed: () {
+                      Diagnostics.session.clear();
+                      Navigator.pop(context);
+                    },
+                    child: const Text('Clear'),
+                  ),
+                  TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('Close'),
+                  ),
+                ],
+              ),
+            ),
+          ),
           if (controller.error case final error?)
             MessageCard(message: error, isError: true),
           const SizedBox(height: 24),
@@ -694,7 +735,7 @@ class SettingsScreen extends StatelessWidget {
                       builder: (context) => AlertDialog(
                         title: const Text('Disconnect?'),
                         content: const Text(
-                          'Remove local credentials and downloaded cache. Server files stay unchanged. Revoke the app password in Nextcloud to remove server access.',
+                          'Remove local credentials and downloaded cache. Server files stay unchanged. Revoke the app password in your server’s security settings to remove server access.',
                         ),
                         actions: [
                           TextButton(

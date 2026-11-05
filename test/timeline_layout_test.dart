@@ -3,6 +3,38 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ncloud/timeline_layout.dart';
 
 void main() {
+  test('large date indexes keep random timeline lookups bounded', () {
+    final layout = TimelineGridLayout(
+      counts: List.filled(100000, 100),
+      columns: 3,
+      tileExtent: 100,
+      headerExtent: 44,
+    );
+    expect(layout.itemCount, 10100000);
+    expect(layout.starts, hasLength(100000));
+    final watch = Stopwatch()..start();
+    for (var i = 0; i < 10000; i++) {
+      final section = (i * 7919) % layout.starts.length;
+      final index = layout.starts[section] + 1;
+      final geometry = layout.getGeometryForChildIndex(index);
+      expect(layout.sectionForIndex(index), section);
+      expect(
+        layout.getMinChildIndexForScrollOffset(geometry.scrollOffset),
+        index,
+      );
+    }
+    watch.stop();
+    expect(
+      watch.elapsed,
+      lessThan(const Duration(seconds: 10)),
+      reason: 'Random date lookup must not scan the photo/date collection.',
+    );
+    debugPrint(
+      'Timeline: 10,000 random lookups over 100,000 days in '
+      '${watch.elapsedMilliseconds} ms.',
+    );
+  });
+
   testWidgets(
     'a million photos build only viewport tiles, including after a jump',
     (tester) async {

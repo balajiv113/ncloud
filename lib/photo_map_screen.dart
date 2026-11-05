@@ -9,7 +9,7 @@ import 'app_controller.dart';
 import 'discovery_models.dart';
 import 'media_tile.dart';
 import 'models.dart';
-import 'nextcloud_client.dart';
+import 'cloud_backend.dart';
 import 'screens.dart';
 
 class PhotoMapScreen extends StatefulWidget {
@@ -68,7 +68,7 @@ class _PhotoMapScreenState extends State<PhotoMapScreen> {
       } else if (session == null) {
         throw const CloudException('Sign in to browse your photo map.');
       } else {
-        final position = await controller.client.memoryMapPosition(session);
+        final position = await controller.client.mapPosition(session);
         if (!mounted || controller.account != session) return;
         setState(() => _position = position);
       }
@@ -119,7 +119,7 @@ class _PhotoMapScreenState extends State<PhotoMapScreen> {
         try {
           final clusters = <int, PhotoMapCluster>{};
           for (final area in bounds) {
-            final result = await controller.client.memoryMapClusters(
+            final result = await controller.client.mapClusters(
               session,
               bounds: area,
               zoom: zoom,
@@ -281,7 +281,7 @@ class _PhotoMapScreenState extends State<PhotoMapScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       const Text(
-                        'Pins come from your Nextcloud. Optional background tiles send the viewed map area and your IP address to OpenStreetMap, never your photos.',
+                        'Pins come from your server. Optional background tiles send the viewed map area and your IP address to OpenStreetMap, never your photos.',
                       ),
                       TextButton(
                         onPressed: () => setState(() => _tilesEnabled = true),

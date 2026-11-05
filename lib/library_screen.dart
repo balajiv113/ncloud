@@ -16,6 +16,7 @@ import 'people_bubble.dart';
 import 'photo_map_screen.dart';
 import 'screens.dart';
 import 'timeline_layout.dart';
+import 'timeline_scrubber.dart';
 
 enum MediaFilter { all, photos, videos, favorites }
 
@@ -37,9 +38,18 @@ class LibraryScreen extends StatefulWidget {
 }
 
 class _LibraryScreenState extends State<LibraryScreen>
-    with WidgetsBindingObserver {
+    with WidgetsBindingObserver, SingleTickerProviderStateMixin {
+  static const _destinationOrder = [0, 4, 1];
   final _search = TextEditingController();
   final _scroll = ScrollController();
+  final Map<int, double> _destinationOffsets = {};
+  late final AnimationController _destinationAnimation;
+  late final CurvedAnimation _destinationCurve;
+  late int _lastTab;
+  double _destinationDirection = 1;
+  int _navigationRequest = 0;
+  Offset? _navigationDragStart;
+  Offset _navigationDrag = Offset.zero;
   final Map<String, CloudFile> _selected = {};
   final Map<int, Offset> _pointers = {};
   final List<({double offset, String label, DateTime? date})> _dateStops = [];
@@ -68,12 +78,23 @@ class _LibraryScreenState extends State<LibraryScreen>
       _album &&
       !c.smartAlbumOpen &&
       c.directory.isEmpty &&
-      c.activeNativeAlbum == null &&
+      c.activeCloudAlbum == null &&
       c.activePerson == null &&
       c.activeMapBounds == null;
   bool get _collection => const [2, 5, 6].contains(c.tab);
   bool get _sharedHome => c.sharedAlbumHome;
   bool get _selecting => _selected.isNotEmpty;
+  bool get _atNavigationRoot =>
+      c.tab == 0 ||
+      (_albumHome && !_albumsExpanded) ||
+      (_drive && c.directory.isEmpty);
+  bool get _canSwipeDestinations =>
+      _atNavigationRoot &&
+      !_selecting &&
+      !_searching &&
+      !c.busy &&
+      !c.loading &&
+      (ModalRoute.of(context)?.isCurrent ?? true);
   double get _span => _pointers.length == 2
       ? (_pointers.values.first - _pointers.values.last).distance
       : 0;
@@ -84,6 +105,16 @@ class _LibraryScreenState extends State<LibraryScreen>
   @override
   void initState() {
     super.initState();
+    _lastTab = c.tab;
+    _destinationAnimation = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 280),
+      value: 1,
+    );
+    _destinationCurve = CurvedAnimation(
+      parent: _destinationAnimation,
+      curve: Curves.easeOutCubic,
+    );
     _scroll.addListener(_prefetch);
     _scroll.addListener(_activity);
     WidgetsBinding.instance.addObserver(this);
@@ -104,7 +135,67 @@ class _LibraryScreenState extends State<LibraryScreen>
     _changes?.dispose();
     _search.dispose();
     _scroll.dispose();
+    _destinationCurve.dispose();
+    _destinationAnimation.dispose();
     super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(covariant LibraryScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _transitionTo(c.tab);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _destinationAnimation.value = 1;
+    }
+  }
+
+  void _transitionTo(int tab) {
+    if (tab == _lastTab) return;
+    int index(int value) =>
+        _destinationOrder.indexOf(const [2, 5, 6].contains(value) ? 4 : value);
+    _destinationDirection = index(tab) >= index(_lastTab) ? 1 : -1;
+    _lastTab = tab;
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _destinationAnimation.value = 1;
+    } else {
+      _destinationAnimation.forward(from: 0);
+    }
+  }
+
+  void _startNavigationDrag(DragStartDetails details) {
+    _navigationDrag = Offset.zero;
+    _navigationDragStart = _canSwipeDestinations && _pointers.length == 1
+        ? details.globalPosition
+        : null;
+  }
+
+  void _updateNavigationDrag(DragUpdateDetails details) {
+    if (_navigationDragStart case final start?) {
+      _navigationDrag = details.globalPosition - start;
+    }
+  }
+
+  void _endNavigationDrag(DragEndDetails details) {
+    final delta = _navigationDrag;
+    final allowed = _navigationDragStart != null && _canSwipeDestinations;
+    _navigationDragStart = null;
+    if (!allowed ||
+        delta.dx.abs() < 72 ||
+        delta.dx.abs() < delta.dy.abs() * 1.5) {
+      return;
+    }
+    final forward = Directionality.of(context) == TextDirection.ltr
+        ? delta.dx < 0
+        : delta.dx > 0;
+    final next = _destinationOrder.indexOf(c.tab) + (forward ? 1 : -1);
+    if (next >= 0 && next < _destinationOrder.length) {
+      _navigate(_destinationOrder[next]);
+    }
   }
 
   @override
@@ -217,11 +308,30 @@ class _LibraryScreenState extends State<LibraryScreen>
     _rowPositions.clear();
   }
 
-  void _navigate(int tab) {
+  Future<void> _navigate(int tab) async {
     _activity();
+    final previous = c.tab;
+    if (previous != tab && _atNavigationRoot && _scroll.hasClients) {
+      _destinationOffsets[previous] = _scroll.offset;
+    }
+    final request = ++_navigationRequest;
     setState(_reset);
     if (_scroll.hasClients) _scroll.jumpTo(0);
-    c.selectTab(tab);
+    _transitionTo(tab);
+    await c.selectTab(tab);
+    if (!mounted || previous == tab) return;
+    final offset = _destinationOffsets[tab];
+    if (offset == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          request != _navigationRequest ||
+          c.tab != tab ||
+          !_atNavigationRoot ||
+          !_scroll.hasClients) {
+        return;
+      }
+      _scroll.jumpTo(offset.clamp(0, _scroll.position.maxScrollExtent));
+    });
   }
 
   void _back() {
@@ -392,7 +502,7 @@ class _LibraryScreenState extends State<LibraryScreen>
     final title =
         (c.activeMapBounds == null ? null : 'Photos in this area') ??
         c.activePerson?.label ??
-        c.activeNativeAlbum?.name ??
+        c.activeCloudAlbum?.name ??
         (_collection
             ? switch (c.tab) {
                 2 => 'Favorites',
@@ -405,7 +515,7 @@ class _LibraryScreenState extends State<LibraryScreen>
                         ? (_showPeople
                               ? 'People'
                               : _showNative
-                              ? 'Nextcloud albums'
+                              ? 'Cloud albums'
                               : 'Smart albums')
                         : 'Albums')
                   : c.directory.lastOrNull ?? 'Photos')
@@ -421,344 +531,393 @@ class _LibraryScreenState extends State<LibraryScreen>
         extendBody: true,
         body: SafeArea(
           bottom: false,
-          child: Stack(
-            children: [
-              RefreshIndicator(
-                onRefresh: () async {
-                  setState(() {
-                    _selected.clear();
-                    _prefetchBudget = 2;
-                  });
-                  await c.load();
-                },
-                child: Listener(
-                  onPointerDown: (event) {
-                    _activity();
-                    _pointers[event.pointer] = event.position;
-                    if (_pointers.length == 2) {
-                      _pinchBase = _density;
-                      _pinchStart = _span;
-                    }
-                  },
-                  onPointerMove: (event) {
-                    if (!_pointers.containsKey(event.pointer)) return;
-                    _pointers[event.pointer] = event.position;
-                    if (_pointers.length != 2 ||
-                        _drive ||
-                        _albumHome ||
-                        _pinchStart <= 0) {
-                      return;
-                    }
-                    final scale = _span / _pinchStart;
-                    final next = scale > 1.3
-                        ? (_pinchBase - 1).clamp(2, 6)
-                        : scale < .75
-                        ? (_pinchBase + 1).clamp(2, 6)
-                        : _density;
-                    _changeDensity(next);
-                  },
-                  onPointerUp: (event) => _pointers.remove(event.pointer),
-                  onPointerCancel: (event) => _pointers.remove(event.pointer),
-                  child: NotificationListener<ScrollNotification>(
-                    onNotification: (notification) {
-                      if ((notification is ScrollUpdateNotification &&
-                              notification.dragDetails != null) ||
-                          (notification is OverscrollNotification &&
-                              notification.dragDetails != null)) {
-                        _prefetchBudget = 2;
-                        _prefetch();
-                      }
-                      return false;
-                    },
-                    child: CustomScrollView(
-                      controller: _scroll,
-                      physics: const AlwaysScrollableScrollPhysics(),
-                      // Builds and fetches roughly a screen ahead so tiles
-                      // are painted before they scroll into view.
-                      cacheExtent: 1200,
-                      slivers: [
-                        SliverAppBar(
-                          floating: true,
-                          snap: true,
-                          automaticallyImplyLeading: false,
-                          leading:
-                              _selecting || detail || c.directory.isNotEmpty
-                              ? IconButton(
-                                  tooltip: _selecting
-                                      ? 'Cancel selection'
-                                      : 'Back',
-                                  onPressed: c.busy ? null : _back,
-                                  icon: Icon(
-                                    _selecting ? Icons.close : Icons.arrow_back,
-                                  ),
-                                )
-                              : null,
-                          titleSpacing: 16,
-                          title: _searching
-                              ? TextField(
-                                  controller: _search,
-                                  autofocus: true,
-                                  onChanged: (value) =>
-                                      setState(() => _query = value),
-                                  decoration: const InputDecoration(
-                                    hintText: 'Search',
-                                    isDense: true,
-                                    contentPadding: EdgeInsets.symmetric(
-                                      horizontal: 12,
-                                      vertical: 10,
+          child: GestureDetector(
+            key: const ValueKey('destination-gestures'),
+            behavior: HitTestBehavior.translucent,
+            onHorizontalDragStart: _startNavigationDrag,
+            onHorizontalDragUpdate: _updateNavigationDrag,
+            onHorizontalDragEnd: _endNavigationDrag,
+            onHorizontalDragCancel: () => _navigationDragStart = null,
+            child: FadeTransition(
+              key: const ValueKey('destination-fade'),
+              opacity: Tween<double>(
+                begin: .6,
+                end: 1,
+              ).animate(_destinationCurve),
+              child: SlideTransition(
+                key: const ValueKey('destination-slide'),
+                textDirection: Directionality.of(context),
+                position: Tween<Offset>(
+                  begin: Offset(.045 * _destinationDirection, 0),
+                  end: Offset.zero,
+                ).animate(_destinationCurve),
+                // Keep one live scroll tree: outgoing copies would share the
+                // controller and continue requesting timeline pages.
+                child: Stack(
+                  children: [
+                    RefreshIndicator(
+                      onRefresh: () async {
+                        setState(() {
+                          _selected.clear();
+                          _prefetchBudget = 2;
+                        });
+                        await c.load();
+                      },
+                      child: Listener(
+                        onPointerDown: (event) {
+                          _activity();
+                          _pointers[event.pointer] = event.position;
+                          if (_pointers.length == 2) {
+                            _navigationDragStart = null;
+                            _pinchBase = _density;
+                            _pinchStart = _span;
+                          }
+                        },
+                        onPointerMove: (event) {
+                          if (!_pointers.containsKey(event.pointer)) return;
+                          _pointers[event.pointer] = event.position;
+                          if (_pointers.length != 2 ||
+                              _drive ||
+                              _albumHome ||
+                              _pinchStart <= 0) {
+                            return;
+                          }
+                          final scale = _span / _pinchStart;
+                          final next = scale > 1.3
+                              ? (_pinchBase - 1).clamp(2, 6)
+                              : scale < .75
+                              ? (_pinchBase + 1).clamp(2, 6)
+                              : _density;
+                          _changeDensity(next);
+                        },
+                        onPointerUp: (event) => _pointers.remove(event.pointer),
+                        onPointerCancel: (event) =>
+                            _pointers.remove(event.pointer),
+                        child: NotificationListener<ScrollNotification>(
+                          onNotification: (notification) {
+                            if ((notification is ScrollUpdateNotification &&
+                                    notification.dragDetails != null) ||
+                                (notification is OverscrollNotification &&
+                                    notification.dragDetails != null)) {
+                              _prefetchBudget = 2;
+                              _prefetch();
+                            }
+                            return false;
+                          },
+                          child: CustomScrollView(
+                            controller: _scroll,
+                            physics: const AlwaysScrollableScrollPhysics(),
+                            // Builds and fetches roughly a screen ahead so tiles
+                            // are painted before they scroll into view.
+                            cacheExtent: 1200,
+                            slivers: [
+                              SliverAppBar(
+                                floating: true,
+                                snap: true,
+                                automaticallyImplyLeading: false,
+                                leading:
+                                    _selecting ||
+                                        detail ||
+                                        c.directory.isNotEmpty
+                                    ? IconButton(
+                                        tooltip: _selecting
+                                            ? 'Cancel selection'
+                                            : 'Back',
+                                        onPressed: c.busy ? null : _back,
+                                        icon: Icon(
+                                          _selecting
+                                              ? Icons.close
+                                              : Icons.arrow_back,
+                                        ),
+                                      )
+                                    : null,
+                                titleSpacing: 16,
+                                title: _searching
+                                    ? TextField(
+                                        controller: _search,
+                                        autofocus: true,
+                                        onChanged: (value) =>
+                                            setState(() => _query = value),
+                                        decoration: const InputDecoration(
+                                          hintText: 'Search',
+                                          isDense: true,
+                                          contentPadding: EdgeInsets.symmetric(
+                                            horizontal: 12,
+                                            vertical: 10,
+                                          ),
+                                        ),
+                                      )
+                                    : Text(
+                                        _selecting
+                                            ? '${_selected.length} selected'
+                                            : title,
+                                        key: const ValueKey('library-title'),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.w700,
+                                          letterSpacing: -.7,
+                                        ),
+                                      ),
+                                actions: [
+                                  if (c.demo && !_searching && !_selecting)
+                                    Center(
+                                      child: Text(
+                                        'DEMO',
+                                        style: TextStyle(
+                                          fontSize: 9,
+                                          letterSpacing: 1,
+                                          color: theme.colorScheme.primary,
+                                        ),
+                                      ),
+                                    ),
+                                  if (!_selecting) ...[
+                                    IconButton(
+                                      tooltip: 'Search loaded items',
+                                      icon: Icon(
+                                        _searching ? Icons.close : Icons.search,
+                                      ),
+                                      onPressed: () => setState(() {
+                                        _searching = !_searching;
+                                        if (!_searching) {
+                                          _query = '';
+                                          _search.clear();
+                                        }
+                                      }),
+                                    ),
+                                    IconButton(
+                                      tooltip: 'View options',
+                                      onPressed: _viewOptions,
+                                      icon: const Icon(Icons.tune_rounded),
+                                    ),
+                                    if (!detail)
+                                      IconButton(
+                                        tooltip: 'Settings',
+                                        onPressed: () => Navigator.push(
+                                          context,
+                                          MaterialPageRoute<void>(
+                                            builder: (_) =>
+                                                SettingsScreen(controller: c),
+                                          ),
+                                        ),
+                                        icon: CircleAvatar(
+                                          radius: 15,
+                                          backgroundColor: theme
+                                              .colorScheme
+                                              .primaryContainer,
+                                          child: Text(
+                                            c.demo
+                                                ? 'N'
+                                                : (c
+                                                              .account
+                                                              ?.displayName
+                                                              .characters
+                                                              .firstOrNull ??
+                                                          'N')
+                                                      .toUpperCase(),
+                                            style: TextStyle(
+                                              fontSize: 11,
+                                              height: 1.4,
+                                              fontWeight: FontWeight.w700,
+                                              color: theme.colorScheme.primary,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                  ],
+                                  const SizedBox(width: 4),
+                                ],
+                              ),
+                              SliverToBoxAdapter(
+                                child: SizedBox(
+                                  height: 2,
+                                  child:
+                                      c.busy ||
+                                          (!_indexedLayout &&
+                                              (c.refreshing || c.loadingMore))
+                                      ? LinearProgressIndicator(
+                                          minHeight: 2,
+                                          value: c.busy && c.total > 0
+                                              ? c.completed / c.total
+                                              : null,
+                                        )
+                                      : null,
+                                ),
+                              ),
+                              if ((c.error ??
+                                      (_albumHome
+                                          ? c.catalogueError
+                                          : _sharedHome
+                                          ? c.sharedAlbumError
+                                          : null))
+                                  case final error?)
+                                SliverToBoxAdapter(
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(16),
+                                    child: MessageCard(
+                                      message: error,
+                                      isError: true,
+                                      onRetry:
+                                          c.loading || c.loadingMore || c.busy
+                                          ? null
+                                          : c.load,
                                     ),
                                   ),
-                                )
-                              : Text(
-                                  _selecting
-                                      ? '${_selected.length} selected'
-                                      : detail
-                                      ? title
-                                      : _albumHome
-                                      ? 'Albums'
-                                      : 'ncloud',
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w700,
-                                    letterSpacing: -.7,
-                                  ),
                                 ),
-                          actions: [
-                            if (c.demo && !_searching && !_selecting)
-                              Center(
-                                child: Text(
-                                  'DEMO',
-                                  style: TextStyle(
-                                    fontSize: 9,
-                                    letterSpacing: 1,
-                                    color: theme.colorScheme.primary,
-                                  ),
-                                ),
-                              ),
-                            if (!_selecting) ...[
-                              IconButton(
-                                tooltip: 'Search loaded items',
-                                icon: Icon(
-                                  _searching ? Icons.close : Icons.search,
-                                ),
-                                onPressed: () => setState(() {
-                                  _searching = !_searching;
-                                  if (!_searching) {
-                                    _query = '';
-                                    _search.clear();
-                                  }
-                                }),
-                              ),
-                              IconButton(
-                                tooltip: 'View options',
-                                onPressed: _viewOptions,
-                                icon: const Icon(Icons.tune_rounded),
-                              ),
-                              if (!detail)
-                                IconButton(
-                                  tooltip: 'Settings',
-                                  onPressed: () => Navigator.push(
-                                    context,
-                                    MaterialPageRoute<void>(
-                                      builder: (_) =>
-                                          SettingsScreen(controller: c),
+                              if (c.notice case final notice?)
+                                SliverToBoxAdapter(
+                                  child: Padding(
+                                    padding: const EdgeInsets.fromLTRB(
+                                      16,
+                                      8,
+                                      16,
+                                      4,
                                     ),
-                                  ),
-                                  icon: CircleAvatar(
-                                    radius: 15,
-                                    backgroundColor:
-                                        theme.colorScheme.primaryContainer,
                                     child: Text(
-                                      c.demo
-                                          ? 'N'
-                                          : (c
-                                                        .account
-                                                        ?.displayName
-                                                        .characters
-                                                        .firstOrNull ??
-                                                    'N')
-                                                .toUpperCase(),
+                                      notice,
                                       style: TextStyle(
-                                        fontSize: 11,
-                                        height: 1.4,
-                                        fontWeight: FontWeight.w700,
                                         color: theme.colorScheme.primary,
                                       ),
                                     ),
                                   ),
                                 ),
-                            ],
-                            const SizedBox(width: 4),
-                          ],
-                        ),
-                        SliverToBoxAdapter(
-                          child: SizedBox(
-                            height: 2,
-                            child:
-                                c.busy ||
-                                    (!_indexedLayout &&
-                                        (c.refreshing || c.loadingMore))
-                                ? LinearProgressIndicator(
-                                    minHeight: 2,
-                                    value: c.busy && c.total > 0
-                                        ? c.completed / c.total
-                                        : null,
-                                  )
-                                : null,
-                          ),
-                        ),
-                        if ((c.error ??
-                                (_albumHome
-                                    ? c.catalogueError
-                                    : _sharedHome
-                                    ? c.sharedAlbumError
-                                    : null))
-                            case final error?)
-                          SliverToBoxAdapter(
-                            child: Padding(
-                              padding: const EdgeInsets.all(16),
-                              child: MessageCard(
-                                message: error,
-                                isError: true,
-                                onRetry: c.loading || c.loadingMore || c.busy
-                                    ? null
-                                    : c.load,
-                              ),
-                            ),
-                          ),
-                        if (c.notice case final notice?)
-                          SliverToBoxAdapter(
-                            child: Padding(
-                              padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-                              child: Text(
-                                notice,
-                                style: TextStyle(
-                                  color: theme.colorScheme.primary,
-                                ),
-                              ),
-                            ),
-                          ),
-                        if (_drive)
-                          SliverToBoxAdapter(
-                            child: Padding(
-                              padding: const EdgeInsets.fromLTRB(18, 8, 12, 12),
-                              child: Row(
-                                children: [
-                                  Expanded(
-                                    child: Text(
-                                      title,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: theme.textTheme.headlineMedium
-                                          ?.copyWith(
-                                            fontWeight: FontWeight.w700,
-                                            letterSpacing: -.8,
+                              if (_drive)
+                                SliverToBoxAdapter(
+                                  child: Padding(
+                                    padding: const EdgeInsets.fromLTRB(
+                                      18,
+                                      8,
+                                      12,
+                                      12,
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Expanded(
+                                          child: Text(
+                                            title,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: theme
+                                                .textTheme
+                                                .headlineMedium
+                                                ?.copyWith(
+                                                  fontWeight: FontWeight.w700,
+                                                  letterSpacing: -.8,
+                                                ),
                                           ),
+                                        ),
+                                      ],
                                     ),
                                   ),
+                                ),
+                              if (_drive && c.directory.isNotEmpty)
+                                SliverToBoxAdapter(child: _breadcrumbs()),
+                              if ((_album || (c.tab == 5 && !_sharedHome)) &&
+                                  !_albumHome &&
+                                  c.activeCloudAlbum == null &&
+                                  c.activePerson == null &&
+                                  c.activeMapBounds == null)
+                                SliverToBoxAdapter(child: _albumContext()),
+                              if (c.loading &&
+                                  c.items.isEmpty &&
+                                  !_indexedLayout &&
+                                  !_albumHome &&
+                                  !_sharedHome)
+                                const SliverFillRemaining(
+                                  hasScrollBody: false,
+                                  child: Center(
+                                    child: CircularProgressIndicator(),
+                                  ),
+                                )
+                              else if (_albumHome)
+                                ..._albumHomeSlivers()
+                              else if (_sharedHome)
+                                ..._sharedAlbumSlivers()
+                              else ...[
+                                if (c.tab == 0 &&
+                                    !_selecting &&
+                                    _query.isEmpty &&
+                                    _filter == MediaFilter.all)
+                                  if (_memoryGroups(files).isNotEmpty)
+                                    SliverToBoxAdapter(
+                                      child: _memoryStrip(files),
+                                    ),
+                                if (_drive)
+                                  _driveSliver(files)
+                                else ...[
+                                  ..._timelineSlivers(files),
+                                  if (_collection &&
+                                      files.any((f) => !f.isMedia))
+                                    _driveSliver(
+                                      files.where((f) => !f.isMedia).toList(),
+                                    ),
                                 ],
-                              ),
-                            ),
-                          ),
-                        if (_drive && c.directory.isNotEmpty)
-                          SliverToBoxAdapter(child: _breadcrumbs()),
-                        if ((_album || (c.tab == 5 && !_sharedHome)) &&
-                            !_albumHome &&
-                            c.activeNativeAlbum == null &&
-                            c.activePerson == null &&
-                            c.activeMapBounds == null)
-                          SliverToBoxAdapter(child: _albumContext()),
-                        if (c.loading &&
-                            c.items.isEmpty &&
-                            !_indexedLayout &&
-                            !_albumHome &&
-                            !_sharedHome)
-                          const SliverFillRemaining(
-                            hasScrollBody: false,
-                            child: Center(child: CircularProgressIndicator()),
-                          )
-                        else if (_albumHome)
-                          ..._albumHomeSlivers()
-                        else if (_sharedHome)
-                          ..._sharedAlbumSlivers()
-                        else ...[
-                          if (c.tab == 0 &&
-                              !_selecting &&
-                              _query.isEmpty &&
-                              _filter == MediaFilter.all)
-                            if (_memoryGroups(files).isNotEmpty)
-                              SliverToBoxAdapter(child: _memoryStrip(files)),
-                          if (_drive)
-                            _driveSliver(files)
-                          else ...[
-                            ..._timelineSlivers(files),
-                            if (_collection && files.any((f) => !f.isMedia))
-                              _driveSliver(
-                                files.where((f) => !f.isMedia).toList(),
-                              ),
-                          ],
-                          if (files.isEmpty && !_indexedLayout)
-                            SliverFillRemaining(
-                              hasScrollBody: false,
-                              child: _empty(),
-                            ),
-                        ],
-                        if (c.loadingMore && !_indexedLayout)
-                          const SliverToBoxAdapter(
-                            child: Padding(
-                              padding: EdgeInsets.all(16),
-                              child: Center(
-                                child: SizedBox(
-                                  width: 20,
-                                  height: 20,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
+                                if (files.isEmpty && !_indexedLayout)
+                                  SliverFillRemaining(
+                                    hasScrollBody: false,
+                                    child: _empty(),
+                                  ),
+                              ],
+                              if (c.loadingMore && !_indexedLayout)
+                                const SliverToBoxAdapter(
+                                  child: Padding(
+                                    padding: EdgeInsets.all(16),
+                                    child: Center(
+                                      child: SizedBox(
+                                        width: 20,
+                                        height: 20,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      ),
+                                    ),
                                   ),
                                 ),
+                              const SliverToBoxAdapter(
+                                child: SizedBox(height: 130),
                               ),
-                            ),
+                            ],
                           ),
-                        const SliverToBoxAdapter(child: SizedBox(height: 130)),
-                      ],
+                        ),
+                      ),
                     ),
-                  ),
+                    if (!_albumHome && !_sharedHome && !_drive)
+                      Positioned(
+                        right: 0,
+                        top: 64,
+                        bottom: 112,
+                        width: 240,
+                        child: TimelineScrubber(
+                          controller: _scroll,
+                          labelAt: _labelAt,
+                          markers: _yearMarkers,
+                        ),
+                      ),
+                    if (c.tab == 0 && c.timelineChanged && !_selecting)
+                      Positioned(
+                        top: MediaQuery.paddingOf(context).top + 72,
+                        left: 0,
+                        right: 0,
+                        child: Center(
+                          child: FilledButton.icon(
+                            onPressed: _showChanges,
+                            style: FilledButton.styleFrom(
+                              shape: const StadiumBorder(),
+                              elevation: 4,
+                            ),
+                            icon: const Icon(Icons.arrow_upward, size: 18),
+                            label: Text(switch (c.newPhotos) {
+                              0 => 'Timeline updated',
+                              1 => '1 new photo',
+                              final n => '$n new photos',
+                            }),
+                          ),
+                        ),
+                      ),
+                  ],
                 ),
               ),
-              if (!_albumHome && !_sharedHome && !_drive)
-                Positioned(
-                  right: 0,
-                  top: 64,
-                  bottom: 112,
-                  width: 240,
-                  child: _TimelineScrubber(
-                    controller: _scroll,
-                    labelAt: _labelAt,
-                    markers: _yearMarkers,
-                  ),
-                ),
-              if (c.tab == 0 && c.timelineChanged && !_selecting)
-                Positioned(
-                  top: MediaQuery.paddingOf(context).top + 72,
-                  left: 0,
-                  right: 0,
-                  child: Center(
-                    child: FilledButton.icon(
-                      onPressed: _showChanges,
-                      style: FilledButton.styleFrom(
-                        shape: const StadiumBorder(),
-                        elevation: 4,
-                      ),
-                      icon: const Icon(Icons.arrow_upward, size: 18),
-                      label: Text(switch (c.newPhotos) {
-                        0 => 'Timeline updated',
-                        1 => '1 new photo',
-                        final n => '$n new photos',
-                      }),
-                    ),
-                  ),
-                ),
-            ],
+            ),
           ),
         ),
         floatingActionButton: _drive && !_selecting
@@ -1039,7 +1198,7 @@ class _LibraryScreenState extends State<LibraryScreen>
         const SliverToBoxAdapter(
           child: Padding(
             padding: EdgeInsets.fromLTRB(18, 0, 18, 12),
-            child: Text('Recognize · most photos first'),
+            child: Text('People · most photos first'),
           ),
         ),
       if (people.isNotEmpty)
@@ -1079,10 +1238,10 @@ class _LibraryScreenState extends State<LibraryScreen>
               _query.isNotEmpty
                   ? 'No matching people.'
                   : c.loadingPeople
-                  ? 'Loading people from Recognize...'
+                  ? 'Loading people...'
                   : c.peopleAvailable == false
-                  ? 'People requires Memories and Recognize on your Nextcloud.'
-                  : 'People appear here after Recognize groups your photos.',
+                  ? 'People is not available from your connected service.'
+                  : 'People appear here when your service groups your photos.',
             ),
           ),
         ),
@@ -1302,12 +1461,12 @@ class _LibraryScreenState extends State<LibraryScreen>
         .map(
           (a) => (
             name: a.name,
-            subtitle: a.shared ? 'Shared album' : 'Nextcloud album',
+            subtitle: a.shared ? 'Shared album' : 'Cloud album',
             count: '${a.count} items',
             cover: a.coverId == null
                 ? null
                 : CloudFile(
-                    path: ['album-cover', ...a.davPath],
+                    path: ['album-cover', ...a.reference],
                     name: a.name,
                     isDirectory: false,
                     id: a.coverId,
@@ -1316,7 +1475,7 @@ class _LibraryScreenState extends State<LibraryScreen>
             open: () {
               setState(() => _reset(keepAlbumSection: true));
               if (_scroll.hasClients) _scroll.jumpTo(0);
-              c.openNativeAlbum(a);
+              c.openCloudAlbum(a);
             },
           ),
         )
@@ -1398,17 +1557,14 @@ class _LibraryScreenState extends State<LibraryScreen>
               ),
             ),
           ),
-        _albumSectionHeading(
-          'Nextcloud albums',
-          expand: () => _expandAlbums(true),
-        ),
+        _albumSectionHeading('Cloud albums', expand: () => _expandAlbums(true)),
         if (nativeCards.isNotEmpty)
           _albumPreview(nativeCards)
         else if (c.nativeAlbumError == null)
           const SliverToBoxAdapter(
             child: Padding(
               padding: EdgeInsets.symmetric(horizontal: 18, vertical: 16),
-              child: Text('Albums from Nextcloud Photos appear here.'),
+              child: Text('Albums from your photo service appear here.'),
             ),
           ),
         if (c.nativeAlbumError case final error?)
@@ -1451,7 +1607,7 @@ class _LibraryScreenState extends State<LibraryScreen>
             child: Padding(
               padding: EdgeInsets.all(24),
               child: Text(
-                'No Nextcloud albums here yet. Albums from the Nextcloud Photos app appear here with their original membership.',
+                'No cloud albums here yet. Albums from your photo service appear here with their original membership.',
               ),
             ),
           ),
@@ -1775,7 +1931,7 @@ class _LibraryScreenState extends State<LibraryScreen>
     ),
   );
 
-  /// Whether the full Memories day index can lay out the whole timeline up
+  /// Whether the full day index can lay out the whole timeline up
   /// front, so scrolling and scrubbing never wait at the end of a page.
   bool get _indexedLayout =>
       c.indexedDays.isNotEmpty &&
@@ -2149,9 +2305,9 @@ class _LibraryScreenState extends State<LibraryScreen>
                 : c.tab == 6
                 ? 'Save originals from a file menu or video player to access them offline.'
                 : c.tab == 5
-                ? 'Photos you share from Nextcloud will appear here.'
+                ? 'Photos you share from your cloud will appear here.'
                 : c.activePerson != null
-                ? 'This Recognize group has no photos here. Refresh People to check for changes.'
+                ? 'This group has no photos here. Refresh People to check for changes.'
                 : c.activeMapBounds != null
                 ? 'No photos with saved coordinates in this area. Try a wider map view.'
                 : _query.isNotEmpty || _filter != MediaFilter.all
@@ -2259,9 +2415,9 @@ class _LibraryScreenState extends State<LibraryScreen>
                   ),
                 if (!_albumHome)
                   Text(
-                    c.memoriesAvailable == true
-                        ? 'Memories capture dates. Photos load as you scroll.'
-                        : 'WebDAV modification dates. Photos load as you scroll.',
+                    c.timelineIndexAvailable == true
+                        ? 'Capture dates. Photos load as you scroll.'
+                        : 'Modification dates. Photos load as you scroll.',
                     style: const TextStyle(fontSize: 11),
                   ),
               ],
@@ -2366,7 +2522,7 @@ class _LibraryScreenState extends State<LibraryScreen>
     if (c.demo) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Connect Nextcloud to upload your files.'),
+          content: Text('Connect your cloud to upload your files.'),
         ),
       );
       return;
@@ -2393,217 +2549,3 @@ class _LibraryScreenState extends State<LibraryScreen>
 
 bool listPathEquals(List<String> a, List<String> b) =>
     a.length == b.length && pathStartsWith(a, b);
-
-/// Google Photos-style fast scroller: a thumb on the right edge that can be
-/// dragged across the whole library, with the month under the thumb and year
-/// markers along the track. Indexed timelines lay out every day up front, so
-/// dragging lands anywhere and the photos there load on demand.
-class _TimelineScrubber extends StatefulWidget {
-  const _TimelineScrubber({
-    required this.controller,
-    required this.labelAt,
-    required this.markers,
-  });
-
-  final ScrollController controller;
-  final String? Function(double offset) labelAt;
-  final List<({double offset, String label})> Function() markers;
-
-  @override
-  State<_TimelineScrubber> createState() => _TimelineScrubberState();
-}
-
-class _TimelineScrubberState extends State<_TimelineScrubber> {
-  static const _thumbHeight = 48.0;
-  bool _active = false;
-  bool _dragging = false;
-  Timer? _hide;
-
-  @override
-  void initState() {
-    super.initState();
-    widget.controller.addListener(_scrolled);
-  }
-
-  @override
-  void didUpdateWidget(_TimelineScrubber oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.controller != widget.controller) {
-      oldWidget.controller.removeListener(_scrolled);
-      widget.controller.addListener(_scrolled);
-    }
-  }
-
-  @override
-  void dispose() {
-    _hide?.cancel();
-    widget.controller.removeListener(_scrolled);
-    super.dispose();
-  }
-
-  void _scrolled() {
-    if (!mounted) return;
-    setState(() => _active = true);
-    _scheduleHide();
-  }
-
-  void _scheduleHide() {
-    _hide?.cancel();
-    _hide = Timer(const Duration(milliseconds: 1600), () {
-      if (mounted && !_dragging) setState(() => _active = false);
-    });
-  }
-
-  void _seek(Offset global, double track) {
-    final controller = widget.controller;
-    final box = context.findRenderObject() as RenderBox?;
-    if (!controller.hasClients || box == null || track <= 0) return;
-    final local = box.globalToLocal(global);
-    final fraction = ((local.dy - _thumbHeight / 2) / track).clamp(0.0, 1.0);
-    controller.jumpTo(fraction * controller.position.maxScrollExtent);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final controller = widget.controller;
-    if (!controller.hasClients || !controller.position.hasContentDimensions) {
-      return const SizedBox.shrink();
-    }
-    final position = controller.position;
-    final max = position.maxScrollExtent;
-    if (max < position.viewportDimension * 2) return const SizedBox.shrink();
-    final theme = Theme.of(context);
-    final reduceMotion = MediaQuery.of(context).disableAnimations;
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final track = constraints.maxHeight - _thumbHeight;
-        final fraction = (position.pixels / max).clamp(0.0, 1.0);
-        final label = _dragging ? widget.labelAt(position.pixels) : null;
-        final visible = _active || _dragging;
-        final markers = <Widget>[];
-        if (_dragging) {
-          var last = -100.0;
-          for (final marker in widget.markers()) {
-            final top =
-                (marker.offset / max).clamp(0.0, 1.0) * track +
-                _thumbHeight / 2 -
-                8;
-            if (top - last < 22) continue;
-            last = top;
-            markers.add(
-              Positioned(
-                right: 52,
-                top: top,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 7,
-                    vertical: 2,
-                  ),
-                  decoration: BoxDecoration(
-                    color: theme.colorScheme.surface.withValues(alpha: .9),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(marker.label, style: theme.textTheme.labelSmall),
-                ),
-              ),
-            );
-          }
-        }
-        return IgnorePointer(
-          ignoring: !visible,
-          child: AnimatedOpacity(
-            opacity: visible ? 1 : 0,
-            duration: reduceMotion
-                ? Duration.zero
-                : const Duration(milliseconds: 180),
-            child: Stack(
-              children: [
-                ...markers,
-                Positioned(
-                  right: 0,
-                  top: fraction * track,
-                  height: _thumbHeight,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (label != null)
-                        Material(
-                          color: theme.colorScheme.inverseSurface,
-                          borderRadius: BorderRadius.circular(20),
-                          elevation: 3,
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 14,
-                              vertical: 9,
-                            ),
-                            child: Text(
-                              label,
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
-                                color: theme.colorScheme.onInverseSurface,
-                              ),
-                            ),
-                          ),
-                        ),
-                      Semantics(
-                        label: 'Scrub timeline by date',
-                        slider: true,
-                        child: GestureDetector(
-                          key: const ValueKey('timeline-scrubber'),
-                          behavior: HitTestBehavior.opaque,
-                          onVerticalDragStart: (details) {
-                            _hide?.cancel();
-                            setState(() => _dragging = true);
-                            HapticFeedback.selectionClick();
-                          },
-                          onVerticalDragUpdate: (details) =>
-                              _seek(details.globalPosition, track),
-                          onVerticalDragEnd: (_) {
-                            setState(() => _dragging = false);
-                            _scheduleHide();
-                          },
-                          onVerticalDragCancel: () {
-                            setState(() => _dragging = false);
-                            _scheduleHide();
-                          },
-                          child: SizedBox(
-                            width: 48,
-                            height: _thumbHeight,
-                            child: Center(
-                              child: Container(
-                                width: 34,
-                                height: 44,
-                                decoration: BoxDecoration(
-                                  color: theme.colorScheme.secondaryContainer,
-                                  borderRadius: const BorderRadius.horizontal(
-                                    left: Radius.circular(22),
-                                  ),
-                                  boxShadow: const [
-                                    BoxShadow(
-                                      blurRadius: 6,
-                                      color: Color(0x33000000),
-                                    ),
-                                  ],
-                                ),
-                                child: Icon(
-                                  Icons.unfold_more,
-                                  size: 20,
-                                  color: theme.colorScheme.onSecondaryContainer,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-}

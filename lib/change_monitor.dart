@@ -1,9 +1,7 @@
 import 'dart:async';
-import 'dart:convert';
-import 'dart:io';
 
 import 'models.dart';
-import 'nextcloud_client.dart';
+import 'cloud_backend.dart';
 
 /// Foreground-only change hints. No timers or socket survive inactivity.
 class ChangeMonitor {
@@ -16,10 +14,9 @@ class ChangeMonitor {
     this.idleAfter = const Duration(minutes: 2),
     this.minimumInterval = const Duration(minutes: 1),
     this.maximumInterval = const Duration(minutes: 5),
-    Future<WebSocket> Function(Uri)? connect,
-  }) : _connect = connect ?? ((uri) => WebSocket.connect(uri.toString()));
+  });
 
-  final NextcloudClient client;
+  final CloudBackend client;
   final Account account;
   final Future<bool> Function(Set<String>? ids, bool pushed) check;
   final void Function(bool active) onActive;
@@ -27,20 +24,14 @@ class ChangeMonitor {
   final Duration idleAfter;
   final Duration minimumInterval;
   final Duration maximumInterval;
-  final Future<WebSocket> Function(Uri) _connect;
   Timer? _poll;
   Timer? _idle;
   Timer? _debounce;
-  WebSocket? _socket;
-  StreamSubscription<dynamic>? _subscription;
+  StreamSubscription<Set<String>?>? _subscription;
   bool _disposed = false;
   bool _foreground = true;
   bool _active = false;
   bool _checking = false;
-  bool _opening = false;
-  bool _discovered = false;
-  bool _authenticated = false;
-  Uri? _endpoint;
   int _generation = 0;
   DateTime? _lastActivity;
   late Duration _interval = minimumInterval;
@@ -87,106 +78,33 @@ class ChangeMonitor {
   }
 
   Future<void> _openPush() async {
-    if (_opening || _socket != null || !_active || _disposed) return;
-    _opening = true;
+    if (_subscription != null || !_active || _disposed) return;
     final generation = _generation;
     bool current() => !_disposed && _active && generation == _generation;
     try {
-      if (!_discovered) {
-        final endpoint = await client.pushEndpoint(account);
-        if (!current()) return;
-        _endpoint = endpoint;
-        _discovered = true;
-      }
-      final endpoint = _endpoint;
-      if (endpoint == null || !current()) return;
-      final opening = _connect(endpoint);
-      late WebSocket socket;
-      try {
-        socket = await opening.timeout(const Duration(seconds: 15));
-      } on TimeoutException {
-        unawaited(
-          opening.then<void>(
-            (lateSocket) async {
-              await lateSocket.close();
+      _subscription = client
+          .changes(account)
+          .listen(
+            (ids) {
+              if (current()) _queue(ids);
             },
-            onError: (Object error, StackTrace _) {
-              if (current()) onError(error);
-            },
-          ),
-        );
-        rethrow;
-      }
-      if (!current()) {
-        await socket.close();
-        return;
-      }
-      _socket = socket;
-      _authenticated = false;
-      socket
-        ..add(account.loginName)
-        ..add(account.appPassword);
-      _subscription = socket.listen(
-        (dynamic event) {
-          if (!current() || event is! String) return;
-          if (event == 'authenticated') {
-            _authenticated = true;
-            socket.add('listen notify_file_id');
-          } else if (event.startsWith('err:')) {
-            onError(
-              const CloudException(
-                'Client Push authentication failed. Reconnect in Settings if change checks also fail.',
-              ),
-            );
-            _closePush();
-          } else if (event == 'notify_file' && _authenticated) {
-            _queue(null);
-          } else if (event.startsWith('notify_file_id ') && _authenticated) {
-            try {
-              final values = jsonDecode(
-                event.substring('notify_file_id '.length),
-              );
-              if (values is! List ||
-                  values.any(
-                    (id) =>
-                        (id is! int && id is! String) ||
-                        !RegExp(r'^\d+$').hasMatch(id.toString()),
-                  )) {
-                throw const FormatException('Invalid push file IDs.');
+            onError: (Object error) {
+              if (current()) {
+                onError(error);
+                _closePush();
               }
-              _queue(
-                values.length > 500
-                    ? null
-                    : values.map((id) => id.toString()).toSet(),
-              );
-            } catch (e) {
-              onError(e);
-              _queue(null);
-            }
-          }
-        },
-        onError: (Object error) {
-          if (current()) {
-            onError(error);
-            _closePush();
-          }
-        },
-        onDone: () {
-          if (current()) _closePush();
-        },
-      );
+            },
+            onDone: () {
+              if (current()) _closePush();
+            },
+          );
     } catch (e) {
       if (current()) onError(e);
-    } finally {
-      _opening = false;
-      if (!_disposed && _active && generation != _generation) {
-        unawaited(_openPush());
-      }
     }
   }
 
   void _queue(Set<String>? ids) {
-    if (ids == null || (_ids?.length ?? 0) > 500) {
+    if (ids == null || (_ids != null && {..._ids!, ...ids}.length > 500)) {
       _ids = null;
     } else {
       _ids?.addAll(ids);
@@ -207,9 +125,11 @@ class ChangeMonitor {
       return;
     }
     _checking = true;
+    final generation = _generation;
     _poll?.cancel();
     try {
       final changed = await check(pushed ? ids : null, pushed);
+      if (_disposed || generation != _generation) return;
       _interval = changed
           ? minimumInterval
           : Duration(
@@ -219,12 +139,18 @@ class ChangeMonitor {
               ),
             );
     } catch (e) {
-      onError(e);
-      _interval = maximumInterval;
+      if (!_disposed && generation == _generation) {
+        onError(e);
+        _interval = maximumInterval;
+      }
     } finally {
       _checking = false;
       if (!_disposed && _active) {
-        _poll = Timer(_interval, _check);
+        if (generation != _generation) {
+          unawaited(_check());
+        } else {
+          _poll = Timer(_interval, _check);
+        }
       }
     }
   }
@@ -232,9 +158,6 @@ class ChangeMonitor {
   void _closePush() {
     unawaited(_subscription?.cancel());
     _subscription = null;
-    unawaited(_socket?.close());
-    _socket = null;
-    _authenticated = false;
   }
 
   void dispose() {

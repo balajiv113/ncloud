@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:ncloud/nextcloud_client.dart';
+import 'package:ncloud/cloud_backend.dart';
 import 'package:ncloud/models.dart';
 import 'package:ncloud/app_controller.dart';
 
@@ -20,14 +21,14 @@ void main() {
         'ncloud-ci',
         const String.fromEnvironment('NEXTCLOUD_TEST_PASSWORD'),
       );
-      final folders = await client.memoryFolders(session, []);
+      final folders = await client.timelineFolders(session, []);
       expect(
         folders.any(
           (f) => f.path.last == 'ncloud-index' && f.previews.isNotEmpty,
         ),
         isTrue,
       );
-      final days = await client.memoryDays(
+      final days = await client.timelineDays(
         session,
         path: ['ncloud-index'],
         recursive: false,
@@ -43,7 +44,7 @@ void main() {
         ),
         throwsA(isA<CloudException>()),
       );
-      final files = await client.memoryDayFiles(
+      final files = await client.timelineDayFiles(
         session,
         days.map((d) => d.id).toList(),
         path: ['ncloud-index'],
@@ -56,7 +57,7 @@ void main() {
       expect(days.map((d) => d.id), contains(seed.captureDay));
       expect(seed.etag, isNotEmpty);
       expect(await client.preview(session, seed), isNotEmpty);
-      final recursiveDays = await client.memoryDays(
+      final recursiveDays = await client.timelineDays(
         session,
         path: ['ncloud-index'],
       );
@@ -148,7 +149,7 @@ void main() {
       ]);
       final controller = AppController(store: MemoryStore(), client: client)
         ..account = receiver
-        ..memoriesAvailable = true;
+        ..timelineIndexAvailable = true;
       addTearDown(controller.dispose);
       await controller.selectTab(5);
       expect(controller.sharedAlbumError, isNull);
@@ -284,7 +285,7 @@ void main() {
           'Destination': serverEndpoint(server, [
             'remote.php',
             'dav',
-            ...emptyNative.davPath,
+            ...emptyNative.reference,
             photo.id!,
           ]).toString(),
           'Depth': '0',
@@ -297,7 +298,7 @@ void main() {
       expect(nativeFiles.single.key, photo.key);
       expect(await client.preview(account, photo), isNotEmpty);
       final download = await client.download(account, photo);
-      expect(await download.stream.toBytes(), bytes);
+      expect(await download.stream.expand((chunk) => chunk).toList(), bytes);
       await client.setFavorite(account, photo, false);
       expect(
         (await client.listFiles(account, folder)).single.favorite,
@@ -368,11 +369,17 @@ void main() {
       final existing = recovered.singleWhere((f) => f.name == copied.name);
       final restored = recovered.singleWhere((f) => f.name != copied.name);
       expect(
-        await (await client.download(account, existing)).stream.toBytes(),
+        await (await client.download(
+          account,
+          existing,
+        )).stream.expand((chunk) => chunk).toList(),
         replacement,
       );
       expect(
-        await (await client.download(account, restored)).stream.toBytes(),
+        await (await client.download(
+          account,
+          restored,
+        )).stream.expand((chunk) => chunk).toList(),
         bytes,
       );
     },

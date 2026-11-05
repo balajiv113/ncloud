@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
@@ -8,30 +9,51 @@ import 'package:xml/xml.dart';
 
 import 'models.dart';
 import 'discovery_models.dart';
+import 'cloud_backend.dart';
+import 'nextcloud_change_feed.dart';
+import 'nextcloud_discovery.dart';
 
-class CloudException implements Exception {
-  const CloudException(this.message);
-  final String message;
+class _NextcloudLoginFlow implements LoginFlow {
+  _NextcloudLoginFlow(
+    this.login,
+    this.poll,
+    this.token,
+    this.server,
+    this.owner,
+  );
+
   @override
-  String toString() => message;
-}
-
-class LoginFlow {
-  const LoginFlow(this.login, this.poll, this.token);
   final Uri login;
   final Uri poll;
   final String token;
+  final Uri server;
+  final NextcloudClient owner;
+  Account? exchanged;
+  Account? verified;
+  Future<Account?>? polling;
 }
 
-class NextcloudClient {
-  NextcloudClient({http.Client? transport})
-    : _transport = transport ?? http.Client();
+extension NextcloudAuthorization on Account {
+  String get authorization =>
+      'Basic ${base64Encode(utf8.encode('$loginName:$appPassword'))}';
+}
+
+class NextcloudClient implements CloudBackend {
+  NextcloudClient({
+    http.Client? transport,
+    Future<WebSocket> Function(Uri)? connectPush,
+  }) : _transport = transport ?? http.Client(),
+       _connectPush = connectPush;
 
   final http.Client _transport;
+  final Future<WebSocket> Function(Uri)? _connectPush;
+  final _pushEndpoints = <Account, Future<Uri?>>{};
   final _previewQueue = Queue<Completer<void>>();
   int _activePreviews = 0;
   static const _timeout = Duration(seconds: 45);
   static const photoLimit = 200;
+  @override
+  int get pageSize => photoLimit;
   // Nextcloud's DAV FileSearchBackend rejects more than 100 comparisons.
   static const fileIdLimit = 100;
   static const _properties = '''
@@ -39,6 +61,7 @@ class NextcloudClient {
     <d:getcontentlength/><d:getlastmodified/><d:getetag/><oc:fileid/><oc:favorite/>
   ''';
 
+  @override
   void close() => _transport.close();
 
   Future<http.Response> _request(
@@ -61,10 +84,19 @@ class NextcloudClient {
         await _transport.send(request).timeout(_timeout),
       ).timeout(_timeout);
     } on TimeoutException {
-      throw const CloudException('The server timed out. Please try again.');
+      throw const CloudException(
+        'The server timed out. Please try again.',
+        retryable: true,
+      );
     } on http.ClientException {
       throw const CloudException(
         'Cannot reach the server. Check your connection and HTTPS certificate.',
+        retryable: true,
+      );
+    } on SocketException {
+      throw const CloudException(
+        'Cannot reach the server. Check your connection.',
+        retryable: true,
       );
     }
   }
@@ -90,9 +122,12 @@ class NextcloudClient {
       413 => 'The server rejected the file size. Check its upload limits.',
       423 => 'This file is locked. Please try again later.',
       429 => 'Too many requests. Wait a moment and try again.',
-      507 => 'Your Nextcloud storage is full.',
+      507 => 'Your server storage is full.',
       _ => 'The server returned HTTP $status. Please try again.',
     },
+    statusCode: status,
+    retryable:
+        status == 408 || status == 429 || (status >= 500 && status < 600),
   );
 
   Uri _trustedUri(Uri server, String value) {
@@ -105,6 +140,7 @@ class NextcloudClient {
     return uri;
   }
 
+  @override
   Future<LoginFlow> startLogin(Uri server) async {
     final response = await _request(
       'POST',
@@ -113,30 +149,70 @@ class NextcloudClient {
     _expect(response, {200});
     final data = jsonDecode(response.body) as Map<String, dynamic>;
     final poll = data['poll'] as Map<String, dynamic>;
-    return LoginFlow(
+    return _NextcloudLoginFlow(
       _trustedUri(server, data['login'] as String),
       _trustedUri(server, poll['endpoint'] as String),
       poll['token'] as String,
+      server,
+      this,
     );
   }
 
+  @override
   Future<Account?> pollLogin(Uri server, LoginFlow flow) async {
-    final response = await _request(
-      'POST',
-      flow.poll,
-      headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-      body: Uri(queryParameters: {'token': flow.token}).query,
-    );
-    if (response.statusCode == 404) return null;
-    _expect(response, {200});
-    final data = jsonDecode(response.body) as Map<String, dynamic>;
-    return authenticate(
-      _trustedUri(server, data['server'] as String),
-      data['loginName'] as String,
-      data['appPassword'] as String,
-    );
+    if (flow is! _NextcloudLoginFlow ||
+        !identical(flow.owner, this) ||
+        flow.server != server) {
+      throw const CloudException(
+        'The login flow is not valid for this server.',
+      );
+    }
+    if (flow.verified case final account?) return account;
+    return flow.polling ??= _pollLogin(
+      server,
+      flow,
+    ).whenComplete(() => flow.polling = null);
   }
 
+  Future<Account?> _pollLogin(Uri server, _NextcloudLoginFlow flow) async {
+    if (flow.exchanged == null) {
+      final response = await _request(
+        'POST',
+        flow.poll,
+        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+        body: Uri(queryParameters: {'token': flow.token}).query,
+      );
+      if (response.statusCode == 404) return null;
+      _expect(response, {200});
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      flow.exchanged = Account(
+        server: _trustedUri(server, data['server'] as String),
+        loginName: data['loginName'] as String,
+        appPassword: data['appPassword'] as String,
+        userId: '',
+        displayName: '',
+      );
+    }
+    final credentials = flow.exchanged!;
+    try {
+      return flow.verified = await authenticate(
+        credentials.server,
+        credentials.loginName,
+        credentials.appPassword,
+      );
+    } on CloudException catch (error) {
+      if (error.statusCode == 401) {
+        throw CloudException(
+          error.message,
+          statusCode: error.statusCode,
+          retryable: true,
+        );
+      }
+      rethrow;
+    }
+  }
+
+  @override
   Future<Account> authenticate(
     Uri server,
     String loginName,
@@ -192,15 +268,36 @@ class NextcloudClient {
     ['remote.php', 'dav', 'files', account.userId, ...path],
   );
 
-  Uri fileUri(Account account, CloudFile file) => file.albumDavPath == null
+  Uri fileUri(Account account, CloudFile file) => file.albumReference == null
       ? davUri(account, file.path)
       : serverEndpoint(account.server, [
           'remote.php',
           'dav',
-          ...file.albumDavPath!,
+          ...file.albumReference!,
         ]);
 
-  Future<List<NativeAlbum>> albums(
+  @override
+  MediaSource streamSource(Account account, CloudFile file) => (
+    uri: fileUri(account, file),
+    headers: {'Authorization': account.authorization},
+  );
+
+  @override
+  Stream<Set<String>?> changes(Account account) =>
+      nextcloudChanges(account, () async {
+        try {
+          return await _pushEndpoints.putIfAbsent(
+            account,
+            () => pushEndpoint(account),
+          );
+        } catch (_) {
+          _pushEndpoints.remove(account);
+          rethrow;
+        }
+      }, connect: _connectPush);
+
+  @override
+  Future<List<CloudAlbum>> albums(
     Account account, {
     bool shared = false,
   }) async {
@@ -221,7 +318,7 @@ class NextcloudClient {
       'dav',
       ...path,
     ]).pathSegments;
-    final result = <NativeAlbum>[];
+    final result = <CloudAlbum>[];
     for (final entry in XmlDocument.parse(
       response.body,
     ).findAllElements('response', namespace: 'DAV:')) {
@@ -247,13 +344,13 @@ class NextcloudClient {
       final display = value('displayname', 'DAV:');
       final cover = value('last-photo', 'http://nextcloud.org/ns');
       result.add(
-        NativeAlbum(
+        CloudAlbum(
           name: name.isNotEmpty
               ? name
               : display.isNotEmpty
               ? display
               : segments.last,
-          davPath: [...path, segments.last],
+          reference: [...path, segments.last],
           count: int.tryParse(value('nbItems', 'http://nextcloud.org/ns')) ?? 0,
           coverId: cover.isEmpty || cover == '0' ? null : cover,
           shared: shared,
@@ -274,14 +371,15 @@ class NextcloudClient {
       .nonNulls
       .toList();
 
+  @override
   Future<List<CloudFile>> albumFiles(
     Account account,
-    NativeAlbum album,
+    CloudAlbum album,
     List<CloudFile> library,
   ) async {
     final response = await _request(
       'PROPFIND',
-      serverEndpoint(account.server, ['remote.php', 'dav', ...album.davPath]),
+      serverEndpoint(account.server, ['remote.php', 'dav', ...album.reference]),
       account: account,
       headers: {'Depth': '1', 'Content-Type': 'application/xml; charset=utf-8'},
       body:
@@ -293,7 +391,7 @@ class NextcloudClient {
     final root = serverEndpoint(account.server, [
       'remote.php',
       'dav',
-      ...album.davPath,
+      ...album.reference,
     ]).pathSegments;
     final known = {
       for (final file in library)
@@ -333,7 +431,7 @@ class NextcloudClient {
       final name = filename.isEmpty ? value('displayname') : filename;
       result.add(
         CloudFile(
-          path: ['Nextcloud albums', ...album.davPath, segments.last],
+          path: ['Albums', ...album.reference, segments.last],
           name: name.isEmpty ? segments.last : name,
           isDirectory: false,
           contentType: type,
@@ -341,7 +439,7 @@ class NextcloudClient {
           size: int.tryParse(value('getcontentlength')) ?? 0,
           modified: _parseModified(value('getlastmodified')),
           etag: value('getetag').isEmpty ? null : value('getetag'),
-          albumDavPath: [...album.davPath, segments.last],
+          albumReference: [...album.reference, segments.last],
           favorite: value('favorite', 'http://owncloud.org/ns') == '1',
         ),
       );
@@ -349,9 +447,11 @@ class NextcloudClient {
     return result;
   }
 
+  @override
   Future<List<CloudFile>> listFiles(Account account, List<String> path) async =>
       (await listFolder(account, path)).children;
 
+  @override
   Future<String?> folderEtag(
     Account account,
     List<String> path, {
@@ -434,6 +534,7 @@ class NextcloudClient {
 
   /// Lists direct children plus the folder's own entry, whose recursive etag
   /// lets cached listings be reused while nothing below it changed.
+  @override
   Future<({CloudFile? self, List<CloudFile> children})> listFolder(
     Account account,
     List<String> path,
@@ -464,6 +565,7 @@ class NextcloudClient {
     );
   }
 
+  @override
   Future<List<CloudFile>> search(
     Account account, {
     bool favorites = false,
@@ -484,6 +586,7 @@ class NextcloudClient {
 
   /// Like [search], but also reports how many results the server returned
   /// before client-side filtering, which is what paging offsets must use.
+  @override
   Future<({List<CloudFile> files, int scanned})> searchPage(
     Account account, {
     bool favorites = false,
@@ -569,7 +672,8 @@ class NextcloudClient {
     return json;
   }
 
-  Future<List<RecognizedPerson>?> memoryPeople(
+  @override
+  Future<List<RecognizedPerson>?> people(
     Account account, {
     List<String> path = const [],
     bool optional = false,
@@ -586,7 +690,7 @@ class NextcloudClient {
     final people = [
       for (final row in rows)
         if (row is Map<String, dynamic>)
-          RecognizedPerson.fromJson(row)
+          parseNextcloudPerson(row)
         else
           throw const FormatException('Unsupported Recognize person record.'),
     ];
@@ -594,6 +698,7 @@ class NextcloudClient {
     return people;
   }
 
+  @override
   Future<Uint8List> personPreview(
     Account account,
     RecognizedPerson person,
@@ -629,7 +734,8 @@ class NextcloudClient {
     return response.bodyBytes;
   }
 
-  Future<PhotoLocation?> memoryMapPosition(Account account) async {
+  @override
+  Future<PhotoLocation?> mapPosition(Account account) async {
     final response = await _request(
       'GET',
       serverEndpoint(
@@ -650,10 +756,11 @@ class NextcloudClient {
     if (position is! Map<String, dynamic>) {
       throw const FormatException('Unsupported map position response.');
     }
-    return PhotoLocation.fromJson(position);
+    return parseNextcloudLocation(position);
   }
 
-  Future<List<PhotoMapCluster>> memoryMapClusters(
+  @override
+  Future<List<PhotoMapCluster>> mapClusters(
     Account account, {
     required PhotoMapBounds bounds,
     required int zoom,
@@ -675,20 +782,21 @@ class NextcloudClient {
     return [
       for (final row in rows!)
         if (row is Map<String, dynamic>)
-          PhotoMapCluster.fromJson(row)
+          parseNextcloudMapCluster(row)
         else
           throw const FormatException('Unsupported photo map cluster.'),
     ];
   }
 
-  Future<List<MemoryDay>> memoryMapDays(
+  @override
+  Future<List<TimelineDay>> mapDays(
     Account account,
     List<PhotoMapBounds> bounds,
   ) async {
     if (bounds.isEmpty) throw const FormatException('Choose a map area.');
     final counts = <int, int>{};
     for (final area in bounds) {
-      final days = await memoryDays(account, mapBounds: area);
+      final days = await timelineDays(account, mapBounds: area);
       for (final day in days!) {
         counts.update(
           day.id,
@@ -699,11 +807,12 @@ class NextcloudClient {
     }
     return [
       for (final id in counts.keys.toList()..sort((a, b) => b.compareTo(a)))
-        MemoryDay(id, counts[id]!),
+        TimelineDay(id, counts[id]!),
     ];
   }
 
-  Future<List<CloudFile>> memoryMapDayFiles(
+  @override
+  Future<List<CloudFile>> mapDayFiles(
     Account account,
     List<int> dayIds,
     List<PhotoMapBounds> bounds,
@@ -711,7 +820,7 @@ class NextcloudClient {
     if (bounds.isEmpty) throw const FormatException('Choose a map area.');
     final files = <String, CloudFile>{};
     for (final area in bounds) {
-      for (final file in await memoryDayFiles(
+      for (final file in await timelineDayFiles(
         account,
         dayIds,
         mapBounds: area,
@@ -725,6 +834,7 @@ class NextcloudClient {
 
   /// Thumbnails for many files in one streamed Memories request. Files whose
   /// preview is not generated yet are omitted; callers fetch those singly.
+  @override
   Future<Map<String, Uint8List>> multipreview(
     Account account,
     List<String> fileIds, {
@@ -789,7 +899,8 @@ class NextcloudClient {
     return previews;
   }
 
-  Future<List<MemoryDay>?> memoryDays(
+  @override
+  Future<List<TimelineDay>?> timelineDays(
     Account account, {
     List<String> path = const [],
     bool recursive = true,
@@ -815,12 +926,13 @@ class NextcloudClient {
     );
     if (rows == null) return null;
     return rows
-        .map((r) => MemoryDay.fromJson((r as Map).cast<String, dynamic>()))
+        .map((r) => parseNextcloudDay((r as Map).cast<String, dynamic>()))
         .where((d) => d.count > 0)
         .toList();
   }
 
-  Future<List<CloudFile>> memoryDayFiles(
+  @override
+  Future<List<CloudFile>> timelineDayFiles(
     Account account,
     List<int> dayIds, {
     List<String> path = const [],
@@ -904,6 +1016,7 @@ class NextcloudClient {
 
   /// Looks up real files for [ids] with a few concurrent search batches,
   /// never one request per photo.
+  @override
   Future<Map<String, CloudFile>> resolveFileIds(
     Account account,
     List<String> ids, {
@@ -934,7 +1047,8 @@ class NextcloudClient {
     return found;
   }
 
-  Future<List<MemoryFolder>> memoryFolders(
+  @override
+  Future<List<TimelineFolder>> timelineFolders(
     Account account,
     List<String> path,
   ) async {
@@ -960,11 +1074,12 @@ class NextcloudClient {
           etag: item['etag'] as String?,
         );
       }).toList();
-      return MemoryFolder(folder, previews);
+      return TimelineFolder(folder, previews);
     }).toList();
   }
 
-  Future<List<CloudFile>> memoryCover(
+  @override
+  Future<List<CloudFile>> timelineCover(
     Account account,
     List<String> path,
     int day,
@@ -987,6 +1102,7 @@ class NextcloudClient {
     }).toList();
   }
 
+  @override
   Future<void> transfer(
     Account account,
     CloudFile file,
@@ -1012,6 +1128,7 @@ class NextcloudClient {
     _expect(response, {201, 204});
   }
 
+  @override
   Future<void> delete(Account account, CloudFile file) async {
     final response = await _request(
       'DELETE',
@@ -1026,6 +1143,7 @@ class NextcloudClient {
     ['remote.php', 'dav', 'trashbin', account.userId, ...path],
   );
 
+  @override
   Future<List<TrashEntry>> trash(Account account) async {
     final root = _trashUri(account, ['trash']);
     final response = await _request(
@@ -1095,6 +1213,7 @@ class NextcloudClient {
     return result;
   }
 
+  @override
   Future<void> restore(Account account, TrashEntry entry) async {
     validateName(entry.key);
     final response = await _request(
@@ -1156,6 +1275,7 @@ class NextcloudClient {
     );
   }
 
+  @override
   Future<List<PublicShare>> shares(Account account, CloudFile file) async {
     final data =
         await _sharesRequest(
@@ -1171,6 +1291,7 @@ class NextcloudClient {
         .toList();
   }
 
+  @override
   Future<List<List<String>>> incomingSharedFolders(Account account) async {
     final data =
         await _sharesRequest(
@@ -1210,6 +1331,7 @@ class NextcloudClient {
         .toList();
   }
 
+  @override
   Future<PublicShare> createShare(
     Account account,
     CloudFile file, {
@@ -1231,6 +1353,7 @@ class NextcloudClient {
     return _share(data as Map<String, dynamic>);
   }
 
+  @override
   Future<void> revokeShare(Account account, PublicShare share) async {
     await _sharesRequest(account, 'DELETE', id: share.id);
   }
@@ -1337,6 +1460,7 @@ class NextcloudClient {
     return null;
   }
 
+  @override
   Future<void> createFolder(Account account, List<String> path) async {
     validateName(path.last);
     final response = await _request(
@@ -1347,6 +1471,7 @@ class NextcloudClient {
     _expect(response, {201});
   }
 
+  @override
   Future<void> setFavorite(Account account, CloudFile file, bool value) async {
     final response = await _request(
       'PROPPATCH',
@@ -1371,6 +1496,7 @@ class NextcloudClient {
     }
   }
 
+  @override
   Future<void> upload(
     Account account,
     List<String> path,
@@ -1403,10 +1529,8 @@ class NextcloudClient {
     }
   }
 
-  Future<http.StreamedResponse> download(
-    Account account,
-    CloudFile file,
-  ) async {
+  @override
+  Future<CloudDownload> download(Account account, CloudFile file) async {
     final request = http.Request('GET', fileUri(account, file))
       ..followRedirects = false
       ..headers['Authorization'] = account.authorization;
@@ -1416,7 +1540,7 @@ class NextcloudClient {
         await response.stream.drain<void>().timeout(_timeout);
         throw statusError(response.statusCode);
       }
-      return response;
+      return CloudDownload(response.stream);
     } on TimeoutException {
       throw const CloudException('Download timed out. Please try again.');
     } on http.ClientException {
@@ -1427,10 +1551,8 @@ class NextcloudClient {
   }
 
   /// Downloads exactly the revision inventoried by folder sync.
-  Future<http.StreamedResponse> downloadVersion(
-    Account account,
-    CloudFile file,
-  ) async {
+  @override
+  Future<CloudDownload> downloadVersion(Account account, CloudFile file) async {
     if (file.etag?.isNotEmpty != true) {
       throw const CloudException('A file revision is required for safe sync.');
     }
@@ -1450,7 +1572,7 @@ class NextcloudClient {
         await response.stream.drain<void>().timeout(_timeout);
         throw statusError(response.statusCode);
       }
-      return response;
+      return CloudDownload(response.stream);
     } on TimeoutException {
       throw const CloudException(
         'Sync download timed out. Run again to resume.',
@@ -1462,6 +1584,7 @@ class NextcloudClient {
     }
   }
 
+  @override
   Future<Uint8List> preview(
     Account account,
     CloudFile file, {

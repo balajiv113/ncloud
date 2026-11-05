@@ -126,7 +126,7 @@ class _FolderSyncScreenState extends State<_LegacyFolderSyncScreen> {
             const Padding(
               padding: EdgeInsets.all(20),
               child: Text(
-                'No sync pairs yet. Choose a device folder and a Nextcloud destination.',
+                'No sync pairs yet. Choose a device folder and a cloud destination.',
               ),
             ),
           const SizedBox(height: 16),
@@ -167,7 +167,7 @@ class _FolderSyncScreenState extends State<_LegacyFolderSyncScreen> {
                               title: const Text('Remove sync pair?'),
                               content: const Text(
                                 'Only settings and transfer history are removed. '
-                                'Device and Nextcloud files are not deleted. '
+                                'Device and cloud files are not deleted. '
                                 'Adding this pair again may create duplicate copies.',
                               ),
                               actions: [
@@ -198,7 +198,7 @@ class _FolderSyncScreenState extends State<_LegacyFolderSyncScreen> {
             Text(pair.mode.label),
             const SizedBox(height: 12),
             Text('Device: ${pair.folder.name}'),
-            Text('Nextcloud: /${pair.cloudRoot.join('/')}'),
+            Text('Cloud: /${pair.cloudRoot.join('/')}'),
             Text(
               '${pair.wifiOnly ? 'Wi-Fi only' : 'Mobile data allowed'}'
               '${pair.chargingOnly ? ' · charging only' : ''}',
@@ -352,7 +352,7 @@ class _PairSetupState extends State<_PairSetup> {
         ),
         ListTile(
           leading: const Icon(Icons.cloud_outlined),
-          title: const Text('On Nextcloud'),
+          title: const Text('On cloud'),
           subtitle: Text(
             _destination == null
                 ? 'Choose an existing folder'
@@ -419,7 +419,7 @@ class _PairSetupState extends State<_PairSetup> {
         const SizedBox(height: 16),
         const Text(
           'Select folders that do not overlap other pairs. Do not select a Files provider '
-          'that already mirrors this Nextcloud destination. The first run may create '
+          'that already mirrors this cloud destination. The first run may create '
           'duplicate copies when names already exist. Large files require temporary '
           'device space; staging is separate from the browsing cache.',
         ),

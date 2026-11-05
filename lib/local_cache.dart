@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:flutter/services.dart';
@@ -36,19 +35,6 @@ String cacheFailureMessage(String operation, Object error) {
   }
   return 'Could not $operation. Local cache failure (${error.runtimeType}). '
       'Saved offline originals are unaffected.';
-}
-
-Object? _decodeMetadata(Uint8List bytes) {
-  final packed = bytes.length > 1 && bytes[0] == 0x1f && bytes[1] == 0x8b;
-  return jsonDecode(utf8.decode(packed ? gzip.decode(bytes) : bytes));
-}
-
-Future<Object?> _readMetadata(File file) async {
-  final bytes = await file.readAsBytes();
-  return bytes.length >= 4096 ||
-          (bytes.length > 1 && bytes[0] == 0x1f && bytes[1] == 0x8b)
-      ? Isolate.run(() => _decodeMetadata(bytes))
-      : _decodeMetadata(bytes);
 }
 
 /// Stable 128-bit FNV-1a digest used only to derive cache file names.
@@ -114,28 +100,10 @@ class LocalCache {
       });
 
   Future<Directory> _initializeDownloads() async {
-    final root = await _root;
     final destination = _locateDownloads == null
-        ? Directory('${root.path}-downloads')
+        ? Directory('${(await _root).path}-downloads')
         : await _locateDownloads();
     await destination.create(recursive: true);
-    final legacy = Directory('${root.path}/originals');
-    if (await legacy.exists()) {
-      final originals = Directory('${destination.path}/originals');
-      await originals.create(recursive: true);
-      await for (final entity in legacy.list()) {
-        if (entity is! File) continue;
-        final target = File(
-          '${originals.path}/${entity.uri.pathSegments.last}',
-        );
-        if (!await target.exists()) {
-          final temp = File('${target.path}.part');
-          await entity.copy(temp.path);
-          await temp.rename(target.path);
-        }
-        await entity.delete();
-      }
-    }
     return destination;
   }
 
@@ -158,16 +126,11 @@ class LocalCache {
     return await File(path).exists() ? await _db : null;
   }
 
-  Future<void> _removeLegacy(File file) async {
-    if (await file.exists()) await file.delete();
-    _totalBytes -= _entries?.remove(file.path)?.size ?? 0;
-  }
-
   Future<void> _index() async {
     if (_entries != null) return;
     final entries = <String, ({int size, DateTime accessed})>{};
     final root = await _root;
-    for (final name in ['thumbs', 'listings', 'indexes']) {
+    for (final name in ['thumbs']) {
       final folder = Directory('${root.path}/$name');
       if (!await folder.exists()) continue;
       await for (final entity in folder.list()) {
@@ -318,20 +281,7 @@ class LocalCache {
   Future<List<CloudFile>?> readListing(String key) => _serialized(() async {
     try {
       final existing = await _existingDatabase;
-      final saved = await existing?.readListing(key);
-      if (saved != null) return saved;
-      final file = await _file('listings', key, '.json');
-      if (!await file.exists()) return null;
-      final json = (await _readMetadata(file)) as List<dynamic>;
-      final files = [
-        for (final item in json)
-          CloudFile.fromJson((item as Map).cast<String, dynamic>()),
-      ];
-      await (await _db).writeListing(key, files);
-      await _removeLegacy(file);
-      await _index();
-      await _trim();
-      return files.take(FileStore.maxFiles).toList();
+      return await existing?.readListing(key);
     } on Object {
       _reportWriteError(
         'Could not read the local library catalogue. Reconnect to reload metadata.',
@@ -344,7 +294,6 @@ class LocalCache {
       _serialized(() async {
         try {
           await (await _db).writeListing(key, files);
-          await _removeLegacy(await _file('listings', key, '.json'));
           await _index();
           await _trim();
         } catch (e) {
@@ -356,18 +305,7 @@ class LocalCache {
       _serialized(() async {
         try {
           final existing = await _existingDatabase;
-          final saved = await existing?.readDocument(key);
-          if (saved != null) return saved;
-          final file = await _file('indexes', key, '.json');
-          if (!await file.exists()) return null;
-          final value = ((await _readMetadata(file)) as Map)
-              .cast<String, dynamic>();
-          await (await _db).writeDocument(key, value);
-          await _removeLegacy(file);
-          final restored = await (await _db).readDocument(key);
-          await _index();
-          await _trim();
-          return restored;
+          return await existing?.readDocument(key);
         } catch (e) {
           _reportWriteError(
             cacheFailureMessage('read the local library catalogue', e),
@@ -380,7 +318,6 @@ class LocalCache {
       _serialized(() async {
         try {
           await (await _db).writeDocument(key, value);
-          await _removeLegacy(await _file('indexes', key, '.json'));
           await _index();
           await _trim();
         } catch (e) {
@@ -398,7 +335,6 @@ class LocalCache {
           final changes = store.persistenceChanges(full: full);
           await db.writeLibrary(key, changes);
           store.acknowledgePersistence(changes);
-          await _removeLegacy(await _file('indexes', key, '.json'));
           await _index();
           await _trim();
         } catch (e) {
@@ -456,13 +392,6 @@ class LocalCache {
   Future<void> invalidateListings(String accountKey) => _serialized(() async {
     try {
       await (await _existingDatabase)?.invalidateListings(accountKey);
-      // Old hashed JSON cannot be scoped safely. Discard disposable legacy
-      // pages rather than resurrecting an invalidated server snapshot.
-      for (final name in ['listings', 'indexes']) {
-        await for (final entity in (await _folder(name)).list()) {
-          if (entity is File) await _removeLegacy(entity);
-        }
-      }
     } on Object {
       _reportWriteError('Could not invalidate cached library pages.');
     }
@@ -470,13 +399,6 @@ class LocalCache {
 
   Future<void> clearDocuments() => _serialized(() async {
     await (await _existingDatabase)?.clearDocuments();
-    final folder = await _folder('indexes');
-    await for (final entity in folder.list()) {
-      if (entity is File) {
-        await entity.delete();
-        _totalBytes -= _entries?.remove(entity.path)?.size ?? 0;
-      }
-    }
   });
 
   Future<File> _downloadFile(
@@ -491,12 +413,7 @@ class LocalCache {
 
   Future<List<CloudFile>> readOfflineListing(String key) async {
     final file = await _downloadFile('listings', key, '.json');
-    if (!await file.exists()) {
-      final legacy = await readListing(key);
-      if (legacy == null) return [];
-      await writeOfflineListing(key, legacy);
-      return legacy;
-    }
+    if (!await file.exists()) return [];
     final rows = jsonDecode(await file.readAsString()) as List;
     return [
       for (final row in rows)
@@ -575,7 +492,7 @@ class LocalCache {
     try {
       final root = await _root;
       if (!await root.exists()) return 0;
-      for (final name in ['thumbs', 'indexes', 'listings']) {
+      for (final name in ['thumbs']) {
         final folder = Directory('${root.path}/$name');
         if (!await folder.exists()) continue;
         await for (final entity in folder.list()) {
@@ -602,7 +519,14 @@ class LocalCache {
     await _database?.close();
     _database = null;
     final root = await _root;
-    if (await root.exists()) await root.delete(recursive: true);
+    if (await root.exists()) {
+      await for (final entity in root.list()) {
+        if (entity is Directory && entity.path == '${root.path}/originals') {
+          continue;
+        }
+        await entity.delete(recursive: true);
+      }
+    }
     _entries = null;
     _totalBytes = 0;
     _writeError = null;
@@ -616,6 +540,11 @@ class LocalCache {
   Future<void> clearAll() async {
     await clear();
     await _serialized(() async {
+      final root = await _root;
+      final legacyOriginals = Directory('${root.path}/originals');
+      if (await legacyOriginals.exists()) {
+        await legacyOriginals.delete(recursive: true);
+      }
       final downloads = await _downloads;
       if (await downloads.exists()) await downloads.delete(recursive: true);
       _downloadsDirectory = null;

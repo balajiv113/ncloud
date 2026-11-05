@@ -8,26 +8,77 @@ import 'package:http/testing.dart';
 import 'package:ncloud/app_controller.dart';
 import 'package:ncloud/models.dart';
 import 'package:ncloud/nextcloud_client.dart';
+import 'package:ncloud/cloud_backend.dart';
 
 import 'app_test.dart' show MemoryStore;
 import 'nextcloud_client_test.dart' show account;
 
-CloudFile photo({String? id = '42', int size = 1024, DateTime? modified}) =>
-    CloudFile(
-      path: const ['Photos', 'Sun & sky.png'],
-      name: 'Sun & sky.png',
-      isDirectory: false,
-      contentType: 'image/png',
-      id: id,
-      size: size,
-      modified: modified,
-    );
+CloudFile photo({
+  String? id = '42',
+  int size = 1024,
+  DateTime? modified,
+  String? etag,
+}) => CloudFile(
+  path: const ['Photos', 'Sun & sky.png'],
+  name: 'Sun & sky.png',
+  isDirectory: false,
+  contentType: 'image/png',
+  id: id,
+  size: size,
+  modified: modified,
+  etag: etag,
+);
 
 final png = base64Decode(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGOQqMgGAAGnAPzLMdOkAAAAAElFTkSuQmCC',
 );
 
 void main() {
+  test('an in-flight preview cannot survive clearing the cache', () async {
+    final response = Completer<http.Response>();
+    final requested = Completer<void>();
+    final controller = AppController(
+      store: MemoryStore(),
+      client: NextcloudClient(
+        transport: MockClient((_) {
+          requested.complete();
+          return response.future;
+        }),
+      ),
+    )..account = account;
+    addTearDown(controller.dispose);
+    final pending = controller.preview(photo());
+    final cancelled = expectLater(pending, throwsA(isA<PreviewCancelled>()));
+    await requested.future;
+    await controller.clearCache();
+    response.complete(http.Response.bytes(png, 200));
+    await cancelled;
+    expect(controller.cachedPreview(photo()), isNull);
+  });
+
+  test('an in-flight preview is discarded when its account changes', () async {
+    final response = Completer<http.Response>();
+    final requested = Completer<void>();
+    final controller = AppController(
+      store: MemoryStore(),
+      client: NextcloudClient(
+        transport: MockClient((_) {
+          requested.complete();
+          return response.future;
+        }),
+      ),
+    )..account = account;
+    addTearDown(controller.dispose);
+    final pending = controller.preview(photo());
+    final cancelled = expectLater(pending, throwsA(isA<PreviewCancelled>()));
+    await requested.future;
+    controller.account = null;
+    response.complete(http.Response.bytes(png, 200));
+    await cancelled;
+    controller.account = account;
+    expect(controller.cachedPreview(photo()), isNull);
+  });
+
   test(
     'small preview requests retain authentication and subfolder paths',
     () async {

@@ -10,6 +10,7 @@ import 'package:ncloud/local_cache.dart';
 import 'package:ncloud/main.dart';
 import 'package:ncloud/models.dart';
 import 'package:ncloud/nextcloud_client.dart';
+import 'package:ncloud/cloud_backend.dart';
 
 import 'app_test.dart' show MemoryStore;
 import 'nextcloud_client_test.dart' show account, multistatus, responseEntry;
@@ -52,7 +53,7 @@ void main() {
                 ),
               )
               ..account = account
-              ..memoriesAvailable = false;
+              ..timelineIndexAvailable = false;
         addTearDown(c.dispose);
         var sawFirstPage = false;
         c.addListener(() {
@@ -99,7 +100,7 @@ void main() {
               ),
             )
             ..account = account
-            ..memoriesAvailable = false;
+            ..timelineIndexAvailable = false;
       addTearDown(c.dispose);
       await c.load();
       final timeline = c.loadNextPage();
@@ -129,7 +130,7 @@ void main() {
             ),
           )
           ..account = account
-          ..memoriesAvailable = false;
+          ..timelineIndexAvailable = false;
     addTearDown(c.dispose);
     await c.load();
     await c.loadNextPage();
@@ -159,7 +160,7 @@ void main() {
             ),
           )
           ..account = account
-          ..memoriesAvailable = false;
+          ..timelineIndexAvailable = false;
     await first.load();
     await first.loadNextPage();
     expect(first.error, isNotNull);
@@ -212,7 +213,7 @@ void main() {
               ),
             )
             ..account = account
-            ..memoriesAvailable = false;
+            ..timelineIndexAvailable = false;
       addTearDown(c.dispose);
       await c.load();
       await c.loadNextPage();
@@ -306,7 +307,7 @@ void main() {
   testWidgets(
     'first folders with media become Smart albums and native albums remain separate',
     (tester) async {
-      final c = AppController(store: MemoryStore());
+      final c = AppController(store: MemoryStore(), client: NextcloudClient());
       await tester.pumpWidget(NcloudApp(controller: c));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Try demo'));
@@ -331,12 +332,12 @@ void main() {
       );
       expect(find.text('Shared with you'), findsOneWidget);
       await tester.scrollUntilVisible(
-        find.byKey(const ValueKey('View all Nextcloud albums')),
+        find.byKey(const ValueKey('View all Cloud albums')),
         200,
         scrollable: find.byType(Scrollable).first,
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('View all Nextcloud albums')));
+      await tester.tap(find.byKey(const ValueKey('View all Cloud albums')));
       await tester.pumpAndSettle();
       expect(find.text('Best days'), findsOneWidget);
       expect(find.text('Kyoto'), findsNothing);
@@ -372,7 +373,7 @@ void main() {
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
-      final c = AppController(store: MemoryStore());
+      final c = AppController(store: MemoryStore(), client: NextcloudClient());
       await tester.pumpWidget(NcloudApp(controller: c));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Try demo'));
@@ -406,7 +407,12 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     await tester.pumpWidget(
-      NcloudApp(controller: AppController(store: MemoryStore())),
+      NcloudApp(
+        controller: AppController(
+          store: MemoryStore(),
+          client: NextcloudClient(),
+        ),
+      ),
     );
     await tester.pumpAndSettle();
     await tester.tap(find.text('Try demo'));

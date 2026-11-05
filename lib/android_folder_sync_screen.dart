@@ -4,7 +4,7 @@ import 'app_controller.dart';
 import 'folder_sync.dart';
 import 'library_actions.dart' show chooseFolder;
 import 'sync_background.dart';
-import 'nextcloud_client.dart' show CloudException;
+import 'cloud_backend.dart' show CloudException;
 import 'screens.dart' show showError;
 import 'sync_rules.dart';
 
@@ -70,7 +70,7 @@ class _AndroidFolderSyncScreenState extends State<AndroidFolderSyncScreen> {
             const Padding(
               padding: EdgeInsets.symmetric(vertical: 28),
               child: Text(
-                'No folders added. Choose a device folder and a Nextcloud location.',
+                'No folders added. Choose a device folder and a cloud location.',
               ),
             ),
           const SizedBox(height: 16),
@@ -114,7 +114,7 @@ class _AndroidFolderSyncScreenState extends State<AndroidFolderSyncScreen> {
             ),
             Text(pair.folder.name),
             const SizedBox(height: 8),
-            Text('Nextcloud: /${pair.cloudRoot.join('/')}'),
+            Text('Cloud: /${pair.cloudRoot.join('/')}'),
             const SizedBox(height: 10),
             Wrap(
               spacing: 8,
@@ -390,7 +390,7 @@ class _AndroidSyncSetupState extends State<AndroidSyncSetup> {
           ListTile(
             contentPadding: EdgeInsets.zero,
             leading: const Icon(Icons.cloud_outlined),
-            title: const Text('Nextcloud location'),
+            title: const Text('Cloud location'),
             subtitle: Text(
               destination == null
                   ? 'Choose a folder'
@@ -630,7 +630,7 @@ class SyncCloudPreview extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            download ? 'Cloud source' : 'Saved in Nextcloud',
+            download ? 'Cloud source' : 'Saved in cloud',
             style: Theme.of(context).textTheme.labelLarge,
           ),
           const SizedBox(height: 10),
@@ -643,7 +643,7 @@ class SyncCloudPreview extends StatelessWidget {
                   leading: const Icon(Icons.cloud_outlined),
                   title: Text(
                     destination.isEmpty
-                        ? 'Nextcloud root'
+                        ? 'Cloud root'
                         : destination.join('  /  '),
                   ),
                   subtitle: const Text('Your chosen location'),

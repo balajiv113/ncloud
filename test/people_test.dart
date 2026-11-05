@@ -239,7 +239,7 @@ void main() {
               ),
             )
             ..account = account
-            ..memoriesAvailable = true;
+            ..timelineIndexAvailable = true;
       addTearDown(c.dispose);
       c.fileStore.putAll([photo()]);
       final opening = c.openPerson(samplePerson);
@@ -298,7 +298,7 @@ void main() {
             )
             ..account = account
             ..tab = 4
-            ..memoriesAvailable = true
+            ..timelineIndexAvailable = true
             ..people = [
               const RecognizedPerson(id: 12, name: 'Most', count: 30),
               const RecognizedPerson(id: 13, name: 'Next', count: 20),
@@ -329,7 +329,7 @@ void main() {
       );
       await tester.tap(find.byKey(const ValueKey('View all People')));
       await tester.pumpAndSettle();
-      expect(find.text('Recognize · most photos first'), findsOneWidget);
+      expect(find.text('People · most photos first'), findsOneWidget);
       await tester.tap(find.bySemanticsLabel('Most, 30 photos'));
       await tester.pumpAndSettle();
       expect(c.activePerson!.id, 12);
@@ -338,7 +338,7 @@ void main() {
       expect(find.byTooltip('Album actions'), findsNothing);
       await tester.tap(find.byTooltip('Back'));
       await tester.pumpAndSettle();
-      expect(find.text('Recognize · most photos first'), findsOneWidget);
+      expect(find.text('People · most photos first'), findsOneWidget);
       await tester.pumpWidget(const SizedBox.shrink());
       c.dispose();
     },

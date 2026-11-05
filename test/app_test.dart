@@ -23,7 +23,12 @@ void main() {
     tester,
   ) async {
     await tester.pumpWidget(
-      NcloudApp(controller: AppController(store: MemoryStore())),
+      NcloudApp(
+        controller: AppController(
+          store: MemoryStore(),
+          client: NextcloudClient(),
+        ),
+      ),
     );
     await tester.pumpAndSettle();
     addTearDown(tester.platformDispatcher.clearPlatformBrightnessTestValue);
@@ -100,7 +105,7 @@ void main() {
     'demo supports folder creation, browsing, and favorites without a server',
     () async {
       final store = MemoryStore();
-      final controller = AppController(store: store);
+      final controller = AppController(store: store, client: NextcloudClient());
       addTearDown(controller.dispose);
       await controller.initialize();
       controller.enterDemo();
@@ -129,7 +134,12 @@ void main() {
     'demo opens on photos, filters, navigates folders and returns to login',
     (tester) async {
       await tester.pumpWidget(
-        NcloudApp(controller: AppController(store: MemoryStore())),
+        NcloudApp(
+          controller: AppController(
+            store: MemoryStore(),
+            client: NextcloudClient(),
+          ),
+        ),
       );
       await tester.pumpAndSettle();
       await tester.tap(find.text('Try demo'));
@@ -172,7 +182,10 @@ void main() {
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
-    final controller = AppController(store: MemoryStore());
+    final controller = AppController(
+      store: MemoryStore(),
+      client: NextcloudClient(),
+    );
     await tester.pumpWidget(NcloudApp(controller: controller));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Try demo'));

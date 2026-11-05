@@ -2,18 +2,40 @@
 
 A single Flutter app for Android and iOS, bringing Nextcloud photos and files into a modern, private interface. **Early functional preview, not full Immich/Google Drive parity.** It connects directly to your server; there is no ncloud backend or telemetry.
 
+## Development policy and architecture
+
+**Until the app is stable, backward compatibility is not a requirement.** Remove obsolete models, aliases, cache formats and migration paths rather than preserving old preview behavior. Preview upgrades may require reconnecting or rebuilding disposable metadata; never delete server files or current-format offline downloads as part of a metadata reset.
+
+UI widgets consume application/domain models and controller operations, not Nextcloud endpoints, DAV paths or authentication headers. `CloudBackend` defines server operations; `NextcloudClient` implements the current adapter and is selected in `main.dart`. A different server implements that contract, including its own authentication, media sources and optional discovery/change hints, without adding server-specific branches to widgets. Folder transfers and change monitoring use the same backend contract.
+
+Async file resolution and previews are scoped to their initiating session. Clearing the preview cache invalidates in-flight results as well as stored entries; late responses cannot refill it. Resuming browsing starts a current change check instead of publishing a failure from the previous inactive session.
+
+Initial and subsequent listing pages are checked against the initiating account and view generation before merging. Original downloads must match the listed byte count; offline saves additionally request the inventoried server revision. Failed transfers are not published as saved originals, and the transfer lock remains held through offline-file and membership publication.
+
+`media_listing.dart` owns cached listing membership/paging, and `timeline_scrubber.dart` owns scrolling gestures and accessibility. The scrubber remains available to screen readers while visually hidden, with date announcements and increase/decrease actions.
+
+## Release readiness and support
+
+This remains a preview, not a production-certified release. Production acceptance requires device evidence for interrupted/conflicting transfers and offline preservation, first login/reconnect through the actual OIDC deployment, signed builds/upgrades, background lifecycle behavior, and profile-mode startup/frame/memory measurements on supported Android and iOS devices. A static security review and passing tests do not replace these gates.
+
+Settings → **Support diagnostics** shows at most 40 failures from the current process. Only UTC time, a fixed failure category and an optional HTTP status are kept in memory. Exception messages, stack traces, filenames, server addresses and credentials are not captured. Nothing is uploaded; **Copy** is explicit, **Clear** removes the events, and disconnect/restart clears them. This is diagnostic information, not a durable audit log.
+
+Regression checks include viewport-limited construction for a million-photo timeline, bounded encoded-preview memory, and 10,000 random index lookups across 100,000 dates (10.1 million timeline entries). The lookup test reports host elapsed time with a generous 10-second regression ceiling; it is not a mobile frame-rate or startup benchmark. Run `flutter test test/timeline_layout_test.dart test/preview_test.dart` for these checks and `flutter analyze` plus `flutter test` before release.
+
+Keep previews labeled as previews and use the existing private preview distribution until the device acceptance gates and production signing are complete. Preview metadata may be rebuilt without migration; originals on the server and current-format offline downloads must remain intact. Bug reports should include the app version, platform, reproduction steps and an explicitly copied diagnostic summary, not credentials or private photos.
+
 ## Install and try on Android
 
 1. Sign in to GitHub with access to this private repository. Open **Releases** and choose the newest **ncloud Android preview**.
 2. Download `ncloud-android.apk` on your phone. Open it and allow installation from your browser/file manager when Android asks.
 3. Open **ncloud → Try demo** to explore immediately without an account. Demo illustrations and changes are local and reset when leaving demo.
-4. To use your own files, leave demo from Settings and enter your server's full **HTTPS** address (including any Nextcloud subfolder). Choose **Connect Nextcloud**, approve access in your browser, then return to ncloud.
+4. To use your own files, leave demo from Settings and enter your server's full **HTTPS** address (including any Nextcloud subfolder). Choose **Connect server**, approve access in your browser, then return to ncloud.
 
 If browser login is unavailable, create an **app password** in Nextcloud → Personal settings → Security and use the alternative sign-in form. Do not enter your main password. Self-signed/untrusted certificates and plain HTTP are intentionally not supported; install a valid certificate.
 
-Every successful `main` build publishes an APK to a private prerelease and retains an Actions artifact for 30 days. Preview APKs use a **cached development signing key, not production signing**. If the cache expires and Android rejects an update because its signer changed, uninstall the old preview first (this clears its saved account), then install the new one. Do not distribute these builds as production releases.
+Browser approval keeps its one-time credential exchange while retrying temporary connection or account-verification failures, so returning from an OIDC redirect does not require starting another login. Retries are bounded and permanent failures remain visible. A Cloudflare Access deployment must allow the app's API traffic; browser cookies are not copied into the app and cross-origin redirects are not followed with credentials.
 
-**Upgrading from 0.1:** uninstall that preview before installing 0.2 or later; its signing key differs. This clears your saved login and app cache, not files on Nextcloud. Later builds reuse the cached signer while it remains available, and CI verifies each APK against it.
+Every successful `main` build publishes an APK to a private prerelease and retains an Actions artifact for 30 days. Preview APKs use a **cached development signing key, not production signing**. If the cache expires and Android rejects an update because its signer changed, uninstall the old preview first (this clears its saved account), then install the new one. Do not distribute these builds as production releases.
 
 ## People and Map (feature branch)
 
@@ -29,7 +51,9 @@ Local compatibility verification uses Nextcloud 32, Memories 7.8.2 and Recognize
 
 ## 0.5.5: instant timeline
 
-The app has three destinations: **Timeline**, **Albums**, and **Drive**. Compact floating headers, a tight edge-to-edge timeline, lightweight date headers and a floating navigation pill keep content in focus. Search lives in the header; filters, sort and 2–6-column density live in **View options**. Pinching keeps the current photo row in view. A Google Photos-style scrubber appears while scrolling: hold and drag it through the entire library with a month bubble and year markers, and release to land on that month.
+The app has three destinations: **Timeline**, **Albums**, and **Drive**. Compact floating headers, a tight edge-to-edge timeline, lightweight date headers and a floating navigation pill keep content in focus. Search lives in the header; filters, sort and 2–6-column density live in **View options**. Pinching keeps the current photo row in view. On long timelines, press and drag the right edge in one gesture to scrub through the entire library, with a month bubble and year markers during dragging. The handle also appears during scrolling and fades away when idle; no separate activation press is needed.
+
+Destination changes use directional fade/slide motion and retain each destination's scroll position; reduced-motion settings disable the animation. Swipe horizontally between Timeline, Albums and Drive at their top level. Swipes are disabled in nested views, search, selection and multi-touch interactions so they do not steal folder navigation, selection or pinch gestures. The leading title updates for every destination.
 
 - **Instant thumbnails:** thumbnails are cache-first. Cached ones paint on the first frame from memory (64 MiB) or disk; tiles without one show a calm tinted placeholder (never a spinner) and fade in. Each cached thumbnail records the file revision; after an edit the previous thumbnail stays visible while the new one loads (hot update). With Memories, visible tiles are fetched together through its `multipreview` endpoint, newest requests first, and tiles scrolled past are dropped from the queue; otherwise up to four single previews load at a time.
 - **Ahead-of-scroll caching:** the three-year preparation covers metadata, not every thumbnail. With persistent caching enabled, recent loaded Timeline photos now continue priming thumbnails in background batches of 48, beyond the first 60. These batches pause for metadata loading and outside the Timeline; visible tiles reuse the same requests. Prefetch work is bounded to the shared store's 40,000-file limit. Thumbnails share the 500 MiB browsing budget with library metadata. A first visit to uncached photos can still show tinted tiles; returning to cached ones does not require another download. Indexed background metadata fetching no longer shows a page-level loading bar.

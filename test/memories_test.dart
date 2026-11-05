@@ -185,7 +185,7 @@ void main() {
               ),
             )
             ..account = account.withPhotoRoot(['Photos'])
-            ..memoriesAvailable = false;
+            ..timelineIndexAvailable = false;
       addTearDown(c.dispose);
       await c.selectTab(4);
       expect(c.error, isNull);
@@ -488,7 +488,7 @@ void main() {
               ),
             )
             ..account = account
-            ..memoriesAvailable = false;
+            ..timelineIndexAvailable = false;
       addTearDown(c.dispose);
       await c.load();
       expect(c.items, hasLength(1));
@@ -524,7 +524,7 @@ void main() {
       addTearDown(c.dispose);
       await c.load();
       expect(calls, 1);
-      expect(c.memoriesAvailable, isTrue);
+      expect(c.timelineIndexAvailable, isTrue);
       expect(c.items, isEmpty);
       expect(c.hasMore, isFalse);
       expect(c.error, isNull);
@@ -561,12 +561,12 @@ void main() {
         }),
       );
       addTearDown(client.close);
-      final days = await client.memoryDays(
+      final days = await client.timelineDays(
         account,
         path: ['Photos', 'Trip & family'],
         favorites: true,
       );
-      final photos = await client.memoryDayFiles(
+      final photos = await client.timelineDayFiles(
         account,
         [days!.single.id],
         path: ['Photos', 'Trip & family'],
@@ -633,7 +633,7 @@ void main() {
       )..account = account;
       addTearDown(c.dispose);
       await c.load();
-      expect(c.memoriesAvailable, isTrue);
+      expect(c.timelineIndexAvailable, isTrue);
       expect(c.indexedDays, hasLength(30));
       expect(c.items, hasLength(180));
       expect(calls, hasLength(4));
@@ -975,7 +975,7 @@ void main() {
               ),
             )
             ..account = account
-            ..memoriesAvailable = false;
+            ..timelineIndexAvailable = false;
       await tester.pumpWidget(NcloudApp(controller: c));
       await tester.pumpAndSettle();
       expect(searches, 1);
@@ -1066,7 +1066,7 @@ void main() {
             )
             ..account = account.withPhotoRoot(['Photos'])
             ..tab = 5
-            ..memoriesAvailable = false;
+            ..timelineIndexAvailable = false;
       await tester.pumpWidget(NcloudApp(controller: c));
       await tester.pumpAndSettle();
       expect(searches, 2);
@@ -1158,19 +1158,42 @@ void main() {
     final scroll = tester.state<ScrollableState>(find.byType(Scrollable).first);
     final max = scroll.position.maxScrollExtent;
     expect(max, greaterThan(scroll.position.viewportDimension * 10));
-    scroll.position.jumpTo(40);
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 300));
+    expect(scroll.position.pixels, 0);
     final thumb = find.byKey(const ValueKey('timeline-scrubber'));
+    final edge = find.byKey(const ValueKey('timeline-scrubber-edge'));
+    final visibility = find.byKey(
+      const ValueKey('timeline-scrubber-visibility'),
+    );
     expect(thumb, findsOneWidget);
+    expect(tester.widget<AnimatedOpacity>(visibility).opacity, 0);
+    expect(thumb.hitTestable(), findsNothing);
+    expect(edge.hitTestable(), findsOneWidget);
+    await tester.pump(const Duration(seconds: 2));
+    final gesture = await tester.startGesture(
+      tester.getTopRight(edge) + const Offset(-12, 24),
+    );
+    await gesture.moveBy(const Offset(0, 80));
+    await tester.pump();
+    expect(tester.widget<AnimatedOpacity>(visibility).opacity, 1);
+    await tester.pump(const Duration(milliseconds: 200));
     final semantics = tester.ensureSemantics();
     expect(find.bySemanticsLabel('Scrub timeline by date'), findsOneWidget);
     semantics.dispose();
-    await tester.drag(thumb, const Offset(0, 1200));
+    await gesture.moveBy(const Offset(0, 1200));
+    await gesture.up();
     await tester.pumpAndSettle();
     expect(scroll.position.pixels, greaterThan(max * .9));
     expect(c.dayLoaded(c.indexedDays.last.id), isTrue);
     expect(c.error, isNull);
     await tester.pump(const Duration(seconds: 2));
+    await tester.pumpAndSettle();
+    expect(tester.widget<AnimatedOpacity>(visibility).opacity, 0);
+    expect(thumb.hitTestable(), findsNothing);
+    await tester.dragFrom(
+      tester.getBottomRight(edge) + const Offset(-12, -24),
+      const Offset(0, -1200),
+    );
+    await tester.pumpAndSettle();
+    expect(scroll.position.pixels, lessThan(max * .1));
   });
 }

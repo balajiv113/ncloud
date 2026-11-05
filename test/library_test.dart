@@ -8,6 +8,7 @@ import 'package:ncloud/app_controller.dart';
 import 'package:ncloud/main.dart';
 import 'package:ncloud/models.dart';
 import 'package:ncloud/nextcloud_client.dart';
+import 'package:ncloud/cloud_backend.dart';
 import 'package:ncloud/asset_viewer.dart';
 
 import 'app_test.dart' show MemoryStore;
@@ -17,7 +18,7 @@ void main() {
   testWidgets(
     'photo opening uses a brief fade without a stretching hero flight',
     (tester) async {
-      final c = AppController(store: MemoryStore());
+      final c = AppController(store: MemoryStore(), client: NextcloudClient());
       await tester.pumpWidget(NcloudApp(controller: c));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Try demo'));
@@ -134,7 +135,7 @@ void main() {
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
-      final c = AppController(store: MemoryStore());
+      final c = AppController(store: MemoryStore(), client: NextcloudClient());
       await tester.pumpWidget(NcloudApp(controller: c));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Try demo'));
@@ -183,7 +184,12 @@ void main() {
         const FakeAccessibilityFeatures(disableAnimations: true);
     addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
     await tester.pumpWidget(
-      NcloudApp(controller: AppController(store: MemoryStore())),
+      NcloudApp(
+        controller: AppController(
+          store: MemoryStore(),
+          client: NextcloudClient(),
+        ),
+      ),
     );
     await tester.pumpAndSettle();
     await tester.tap(find.text('Try demo'));
@@ -235,7 +241,7 @@ void main() {
   test(
     'demo albums are actual folders and copy/move/rename/restore update paths',
     () async {
-      final c = AppController(store: MemoryStore());
+      final c = AppController(store: MemoryStore(), client: NextcloudClient());
       addTearDown(c.dispose);
       await c.initialize();
       c.enterDemo();
@@ -320,7 +326,7 @@ void main() {
               client: NextcloudClient(transport: transport),
             )
             ..account = account
-            ..memoriesAvailable = false;
+            ..timelineIndexAvailable = false;
       addTearDown(c.dispose);
       await c.load();
       expect(offsets, [0]);
@@ -436,7 +442,7 @@ void main() {
   testWidgets('albums open folders, selection favorites and viewer swipes', (
     tester,
   ) async {
-    final c = AppController(store: MemoryStore());
+    final c = AppController(store: MemoryStore(), client: NextcloudClient());
     await tester.pumpWidget(NcloudApp(controller: c));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Try demo'));
@@ -480,7 +486,7 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
-    final c = AppController(store: MemoryStore());
+    final c = AppController(store: MemoryStore(), client: NextcloudClient());
     await tester.pumpWidget(NcloudApp(controller: c));
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.text('Try demo'));

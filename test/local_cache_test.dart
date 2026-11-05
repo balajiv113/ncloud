@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:ncloud/app_controller.dart';
+import 'package:ncloud/cloud_backend.dart';
 import 'package:ncloud/file_store.dart';
 import 'package:ncloud/local_cache.dart';
 import 'package:ncloud/models.dart';
@@ -28,6 +29,21 @@ class _SqliteFailure extends DatabaseException {
 
   @override
   Object? get result => null;
+}
+
+class _BlockingOfflineCache extends LocalCache {
+  _BlockingOfflineCache(Directory root)
+    : super(() async => Directory('${root.path}/cache'));
+
+  final publishing = Completer<void>();
+  final release = Completer<void>();
+
+  @override
+  Future<void> writeOfflineListing(String key, List<CloudFile> files) async {
+    publishing.complete();
+    await release.future;
+    await super.writeOfflineListing(key, files);
+  }
 }
 
 class _FailingFactory implements DatabaseFactory {
@@ -436,25 +452,36 @@ void main() {
     },
   );
 
-  test('legacy compressed JSON migrates lazily into SQLite metadata', () async {
-    final large = {'rows': List.filled(500, 'repeated library metadata')};
-    final file = File(
-      '${root.path}/cache/indexes/${cacheDigest('large')}.json',
-    );
-    await file.parent.create(recursive: true);
-    await file.writeAsBytes(gzip.encode(utf8.encode(jsonEncode(large))));
-    expect(await cache.readDocument('large'), large);
-    expect(await file.exists(), isFalse);
-    await cache.writeListing('large-list', List.filled(50, photo()));
-    expect(await cache.readListing('large-list'), hasLength(50));
-    await cache.writeDocument('small', {'value': 1});
-    final small = File(
-      '${root.path}/cache/indexes/${cacheDigest('small')}.json',
-    );
-    expect(await small.exists(), isFalse);
-    expect(await cache.readDocument('small'), {'value': 1});
-    expect(await File('${root.path}/cache/catalogue.sqlite3').exists(), isTrue);
-  });
+  test(
+    'legacy compressed JSON is ignored in favor of current SQLite cache',
+    () async {
+      final large = {'rows': List.filled(500, 'repeated library metadata')};
+      final oldDocument = File(
+        '${root.path}/cache/indexes/${cacheDigest('large')}.json',
+      );
+      final oldListing = File(
+        '${root.path}/cache/listings/${cacheDigest('large-list')}.json',
+      );
+      await oldDocument.parent.create(recursive: true);
+      await oldDocument.writeAsBytes(
+        gzip.encode(utf8.encode(jsonEncode(large))),
+      );
+      await oldListing.parent.create(recursive: true);
+      await oldListing.writeAsString(jsonEncode([photo().toJson()]));
+      expect(await cache.readDocument('large'), isNull);
+      expect(await cache.readListing('large-list'), isNull);
+      expect(await oldDocument.exists(), isTrue);
+      expect(await oldListing.exists(), isTrue);
+      await cache.writeListing('large-list', List.filled(50, photo()));
+      expect(await cache.readListing('large-list'), hasLength(50));
+      await cache.writeDocument('large', {'value': 1});
+      expect(await cache.readDocument('large'), {'value': 1});
+      expect(
+        await File('${root.path}/cache/catalogue.sqlite3').exists(),
+        isTrue,
+      );
+    },
+  );
 
   test(
     'saved originals and membership survive eviction, clear and restart',
@@ -481,27 +508,22 @@ void main() {
   );
 
   test(
-    'legacy downloads and manifest migrate before browsing eviction',
+    'legacy downloads and online listings are ignored without deleting originals',
     () async {
       final legacy = Directory('${root.path}/cache/originals');
       await legacy.create(recursive: true);
       final oldOriginal = File('${legacy.path}/${cacheDigest('saved')}.jpg');
       await oldOriginal.writeAsBytes(png);
       await cache.writeListing('offline', [photo()]);
-      await cache.close();
-      cache = LocalCache(
-        () async => Directory('${root.path}/cache'),
-        budget: 1,
-      );
-      expect(await cache.readOfflineListing('offline'), hasLength(1));
+      final currentOriginal = await cache.original('current', 'photo.jpg');
+      await currentOriginal.writeAsBytes(png);
+      expect(await cache.readOfflineListing('offline'), isEmpty);
+      expect(await oldOriginal.exists(), isTrue);
       await cache.trim();
       await cache.clear();
-      expect(await oldOriginal.exists(), isFalse);
-      expect(
-        await (await cache.original('saved', 'photo.jpg')).readAsBytes(),
-        png,
-      );
-      expect(await cache.readOfflineListing('offline'), hasLength(1));
+      expect(await oldOriginal.exists(), isTrue);
+      expect(await currentOriginal.readAsBytes(), png);
+      expect(await cache.readOfflineListing('offline'), isEmpty);
     },
   );
 
@@ -533,14 +555,17 @@ void main() {
   test(
     'Memories metadata preserves originals saved by previous previews',
     () async {
-      final old = photo();
+      final old = photo(size: png.length);
       final key =
           'original|${account.server}|${account.userId}|${old.id ?? old.key}|'
           '${old.modified?.microsecondsSinceEpoch}|${old.size}';
       final saved = await cache.original(key, old.name);
       await saved.writeAsBytes(png);
-      final c = AppController(store: MemoryStore(), cache: cache)
-        ..account = account;
+      final c = AppController(
+        store: MemoryStore(),
+        cache: cache,
+        client: NextcloudClient(),
+      )..account = account;
       addTearDown(c.dispose);
       final indexed = old.withCaptureDate(
         DateTime.utc(2026, 1, 1),
@@ -729,7 +754,8 @@ void main() {
   });
 
   test('video streams keep credentials in headers, not the URL', () {
-    final c = AppController(store: MemoryStore())..account = account;
+    final c = AppController(store: MemoryStore(), client: NextcloudClient())
+      ..account = account;
     addTearDown(c.dispose);
     final source = c.streamSource(photo())!;
     expect(source.uri.userInfo, isEmpty);
@@ -741,12 +767,14 @@ void main() {
     'saved originals reopen offline without requesting image previews',
     (tester) async {
       var networkCalls = 0;
+      final original = photo(size: png.length, etag: 'saved-revision');
       final controller = AppController(
         store: MemoryStore(),
         cache: cache,
         client: NextcloudClient(
-          transport: MockClient((_) async {
+          transport: MockClient((request) async {
             networkCalls++;
+            expect(request.headers['If-Match'], '"saved-revision"');
             return http.Response.bytes(png, 200);
           }),
         ),
@@ -764,7 +792,7 @@ void main() {
         ),
       );
       await tester.runAsync(() async {
-        await controller.saveOffline(photo());
+        await controller.saveOffline(original);
         await controller.clearCache();
         await controller.selectTab(6);
       });
@@ -796,10 +824,159 @@ void main() {
       expect(networkCalls, 1);
       expect(tester.takeException(), isNull);
       await tester.runAsync(() async {
-        await (await controller.offlineCopy(photo()))!.delete();
+        await (await controller.offlineCopy(original))!.delete();
         await controller.load();
       });
       expect(controller.items, isEmpty);
     },
   );
+
+  group('original download integrity', () {
+    setUp(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+            const MethodChannel('plugins.flutter.io/path_provider'),
+            (_) async => root.path,
+          );
+    });
+    tearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+            const MethodChannel('plugins.flutter.io/path_provider'),
+            null,
+          );
+    });
+
+    test(
+      'offline publication holds the transfer lock until membership is saved',
+      () async {
+        final blocked = _BlockingOfflineCache(root);
+        cache = blocked;
+        final controller = AppController(
+          store: MemoryStore(),
+          cache: cache,
+          client: NextcloudClient(
+            transport: MockClient((_) async => http.Response.bytes(png, 200)),
+          ),
+        )..account = account;
+        addTearDown(controller.dispose);
+        final original = photo(size: png.length, etag: 'revision-a');
+        final pending = controller.saveOffline(original);
+        await blocked.publishing.future;
+        expect(controller.busy, isTrue);
+        await controller.signOut();
+        expect(controller.account, same(account));
+        await expectLater(
+          controller.saveOffline(original),
+          throwsA(isA<CloudException>()),
+        );
+        blocked.release.complete();
+        expect(await (await pending).readAsBytes(), png);
+        expect(controller.busy, isFalse);
+      },
+    );
+
+    test('truncated originals are not published and can be retried', () async {
+      var attempts = 0;
+      final original = photo(size: png.length, etag: 'revision-a');
+      final controller = AppController(
+        store: MemoryStore(),
+        cache: cache,
+        client: NextcloudClient(
+          transport: MockClient((request) async {
+            expect(request.headers['If-Match'], '"revision-a"');
+            return http.Response.bytes(++attempts == 1 ? [1, 2, 3] : png, 200);
+          }),
+        ),
+      )..account = account;
+      addTearDown(controller.dispose);
+      await expectLater(
+        controller.saveOffline(original),
+        throwsA(isA<CloudException>()),
+      );
+      expect(controller.busy, isFalse);
+      expect(await controller.offlineCopy(original), isNull);
+      final key = 'offline|${account.server}|${account.userId}';
+      expect(await cache.readOfflineListing(key), isEmpty);
+      final saved = await controller.saveOffline(original);
+      expect(await saved.readAsBytes(), png);
+      expect(await cache.readOfflineListing(key), hasLength(1));
+      await controller.saveOffline(original);
+      expect(attempts, 2);
+      expect(
+        await Directory('${root.path}/ncloud-downloads').list().toList(),
+        isEmpty,
+      );
+    });
+
+    test('a corrupt existing original is rejected and replaced', () async {
+      final original = photo(size: png.length, etag: 'revision-a');
+      final controller = AppController(
+        store: MemoryStore(),
+        cache: cache,
+        client: NextcloudClient(
+          transport: MockClient((_) async => http.Response.bytes(png, 200)),
+        ),
+      )..account = account;
+      addTearDown(controller.dispose);
+      final saved = await controller.saveOffline(original);
+      await saved.writeAsBytes([1, 2, 3]);
+      expect(await controller.offlineCopy(original), isNull);
+      expect(await (await controller.saveOffline(original)).readAsBytes(), png);
+    });
+
+    test(
+      'changed revisions fail without publishing offline membership',
+      () async {
+        final original = photo(size: png.length, etag: 'old-revision');
+        final controller = AppController(
+          store: MemoryStore(),
+          cache: cache,
+          client: NextcloudClient(
+            transport: MockClient((request) async {
+              expect(request.headers['If-Match'], '"old-revision"');
+              return http.Response('', 412);
+            }),
+          ),
+        )..account = account;
+        addTearDown(controller.dispose);
+        await expectLater(
+          controller.saveOffline(original),
+          throwsA(isA<CloudException>()),
+        );
+        expect(await controller.offlineCopy(original), isNull);
+        expect(
+          await cache.readOfflineListing(
+            'offline|${account.server}|${account.userId}',
+          ),
+          isEmpty,
+        );
+        expect(controller.busy, isFalse);
+      },
+    );
+
+    test(
+      'regular downloads reject mismatched sizes and remove temporary files',
+      () async {
+        final controller = AppController(
+          store: MemoryStore(),
+          client: NextcloudClient(
+            transport: MockClient(
+              (_) async => http.Response.bytes([1, 2, 3], 200),
+            ),
+          ),
+        )..account = account;
+        addTearDown(controller.dispose);
+        await expectLater(
+          controller.download(photo()),
+          throwsA(isA<CloudException>()),
+        );
+        expect(controller.busy, isFalse);
+        expect(
+          await Directory('${root.path}/ncloud-downloads').list().toList(),
+          isEmpty,
+        );
+      },
+    );
+  });
 }

@@ -2,6 +2,34 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ncloud/models.dart';
 
 void main() {
+  test(
+    'cloud album references and timeline days use neutral cache records',
+    () {
+      const file = CloudFile(
+        path: ['Albums', 'cover'],
+        name: 'cover.jpg',
+        isDirectory: false,
+        contentType: 'image/jpeg',
+        albumReference: ['collection-token', 'member-token'],
+      );
+      final copy = CloudFile.fromJson(file.toJson());
+      expect(copy.albumReference, file.albumReference);
+      expect(
+        copy.atPath(['Renamed', 'cover.jpg']).albumReference,
+        file.albumReference,
+      );
+      expect(copy.readOnly, isTrue);
+      expect(copy.toJson(), isNot(contains('albumDavPath')));
+      const day = TimelineDay(21000, 12);
+      expect(day.toJson(), {'id': 21000, 'count': 12});
+      expect(TimelineDay.fromJson(day.toJson()).count, 12);
+      expect(
+        () => CloudFile.fromJson(file.toJson()..remove('favorite')),
+        throwsA(isA<TypeError>()),
+      );
+    },
+  );
+
   test('normalizes HTTPS subfolder installs without losing encoded paths', () {
     final server = normalizeServer(' https://example.com/nextcloud/ ');
     expect(server.toString(), 'https://example.com/nextcloud');
@@ -31,7 +59,7 @@ void main() {
     }
   });
 
-  test('round trips accounts with a separate login name and DAV id', () {
+  test('round trips accounts with a separate login name and account id', () {
     final account = Account(
       server: normalizeServer('https://example.com'),
       loginName: 'user@example.com',
@@ -43,7 +71,7 @@ void main() {
     expect(result.userId, 'internal-id');
     expect(result.loginName, 'user@example.com');
     expect(result.appPassword, 'a:b');
-    expect(result.authorization, startsWith('Basic '));
+    expect(result.displayName, 'Example');
   });
 
   test('validates names and formats sizes', () {
@@ -138,7 +166,8 @@ void main() {
         original.withPhotoRoot(['Photos', 'Family']).encode(),
       );
       expect(updated.photoRoot, ['Photos', 'Family']);
-      expect(updated.authorization, original.authorization);
+      expect(updated.loginName, original.loginName);
+      expect(updated.appPassword, original.appPassword);
       expect(Account.decode(original.encode()).photoRoot, isNull);
     },
   );

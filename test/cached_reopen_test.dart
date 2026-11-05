@@ -175,9 +175,10 @@ void main() {
       await cache.writeDocument(browseKey, {
         'keys': [file.key],
         'days': [
-          {'dayid': 21000, 'count': 1},
+          {'id': 21000, 'count': 1},
         ],
         'loaded': [21000],
+        'staleDays': <int>[],
         'offset': 0,
         'more': false,
         'updated': old,
@@ -252,9 +253,10 @@ void main() {
       await cache.writeDocument(browseKey, {
         'keys': [file.key],
         'days': [
-          {'dayid': 21000, 'count': 1},
+          {'id': 21000, 'count': 1},
         ],
         'loaded': [21000],
+        'staleDays': <int>[],
         'offset': 0,
         'more': false,
         'updated': old,

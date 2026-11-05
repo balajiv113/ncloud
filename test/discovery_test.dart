@@ -5,6 +5,8 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:ncloud/discovery_models.dart';
 import 'package:ncloud/nextcloud_client.dart';
+import 'package:ncloud/cloud_backend.dart';
+import 'package:ncloud/nextcloud_discovery.dart';
 
 import 'nextcloud_client_test.dart' show account;
 import 'preview_test.dart' show png;
@@ -30,7 +32,7 @@ void main() {
         ),
       );
       addTearDown(client.close);
-      final people = await client.memoryPeople(account);
+      final people = await client.people(account);
       expect(people!.map((p) => p.count), [21, 15, 8, 8]);
       expect(people.map((p) => p.id), [9, 2, 3, 7]);
     },
@@ -65,7 +67,7 @@ void main() {
         }),
       );
       addTearDown(client.close);
-      final people = await client.memoryPeople(
+      final people = await client.people(
         account,
         path: ['Photos', 'Trip & family'],
       );
@@ -88,7 +90,7 @@ void main() {
           ),
         );
         addTearDown(client.close);
-        final result = client.memoryPeople(account, optional: true);
+        final result = client.people(account, optional: true);
         if (status == 200) {
           expect(await result, isEmpty);
         } else if (status == 404 || status == 405) {
@@ -151,13 +153,13 @@ void main() {
         }),
       );
       addTearDown(client.close);
-      await client.memoryDays(
+      await client.timelineDays(
         account,
         path: ['Photos'],
         person: person,
         mapBounds: bounds,
       );
-      final files = await client.memoryDayFiles(
+      final files = await client.timelineDayFiles(
         account,
         [21000],
         path: ['Photos'],
@@ -202,7 +204,7 @@ void main() {
         }),
       );
       addTearDown(client.close);
-      final clusters = await client.memoryMapClusters(
+      final clusters = await client.mapClusters(
         account,
         bounds: bounds,
         zoom: 8,
@@ -227,9 +229,9 @@ void main() {
       }),
     );
     addTearDown(client.close);
-    await client.memoryMapClusters(account, bounds: bounds, zoom: 8);
-    await client.memoryDays(account, mapBounds: bounds);
-    await client.memoryDayFiles(
+    await client.mapClusters(account, bounds: bounds, zoom: 8);
+    await client.timelineDays(account, mapBounds: bounds);
+    await client.timelineDayFiles(
       account,
       [21000],
       mapBounds: bounds,
@@ -252,10 +254,10 @@ void main() {
         }),
       );
       addTearDown(client.close);
-      final position = await client.memoryMapPosition(account);
+      final position = await client.mapPosition(account);
       expect(position!.latitude, 45.8);
       expect(position.longitude, 9.2);
-      expect(await client.memoryMapPosition(account), isNull);
+      expect(await client.mapPosition(account), isNull);
     },
   );
 
@@ -267,7 +269,7 @@ void main() {
         {'id': 1, 'name': '', 'count': -1},
         {'id': 1, 'name': '', 'count': 1, 'cover': 'invalid'},
       ]) {
-        expect(() => RecognizedPerson.fromJson(row), throwsFormatException);
+        expect(() => parseNextcloudPerson(row), throwsFormatException);
       }
       expect(() => PhotoLocation(double.nan, 0), throwsFormatException);
       expect(() => PhotoLocation(91, 0), throwsFormatException);
@@ -281,7 +283,7 @@ void main() {
         throwsFormatException,
       );
       expect(
-        () => PhotoMapCluster.fromJson({
+        () => parseNextcloudMapCluster({
           'id': 1,
           'center': [40],
           'count': 2,
@@ -289,7 +291,7 @@ void main() {
         throwsFormatException,
       );
       expect(
-        () => PhotoMapCluster.fromJson({
+        () => parseNextcloudMapCluster({
           'id': 1,
           'center': [40, 10],
           'count': 1.5,
@@ -305,7 +307,7 @@ void main() {
       );
       addTearDown(client.close);
       await expectLater(
-        client.memoryMapClusters(account, bounds: bounds, zoom: 23),
+        client.mapClusters(account, bounds: bounds, zoom: 23),
         throwsFormatException,
       );
       expect(network, isFalse);
@@ -324,9 +326,9 @@ void main() {
         transport: MockClient((_) async => jsonResponse(body)),
       );
       addTearDown(client.close);
-      await expectLater(client.memoryPeople(account), throwsFormatException);
+      await expectLater(client.people(account), throwsFormatException);
       await expectLater(
-        client.memoryMapClusters(account, bounds: bounds, zoom: 4),
+        client.mapClusters(account, bounds: bounds, zoom: 4),
         throwsFormatException,
       );
     }
@@ -334,6 +336,6 @@ void main() {
       transport: MockClient((_) async => jsonResponse({})),
     );
     addTearDown(client.close);
-    await expectLater(client.memoryMapPosition(account), throwsFormatException);
+    await expectLater(client.mapPosition(account), throwsFormatException);
   });
 }

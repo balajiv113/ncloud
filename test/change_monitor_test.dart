@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:ncloud/change_monitor.dart';
+import 'package:ncloud/cloud_backend.dart';
 import 'package:ncloud/nextcloud_client.dart';
 
 import 'nextcloud_client_test.dart' show account;
@@ -28,6 +29,46 @@ http.Response capabilities([String? endpoint]) => http.Response(
 );
 
 void main() {
+  testWidgets(
+    'resuming waits out an old check without publishing its failure',
+    (tester) async {
+      final oldCheck = Completer<bool>();
+      var checks = 0;
+      final errors = <Object>[];
+      final client = NextcloudClient(
+        transport: MockClient((_) async => capabilities()),
+      );
+      final monitor = ChangeMonitor(
+        client: client,
+        account: account,
+        check: (_, _) {
+          checks++;
+          return checks == 1 ? oldCheck.future : Future.value(false);
+        },
+        onActive: (_) {},
+        onError: errors.add,
+      );
+      addTearDown(() {
+        monitor.dispose();
+        client.close();
+      });
+      monitor.activity();
+      await tester.pump();
+      monitor.setForeground(false);
+      monitor.setForeground(true);
+      oldCheck.completeError(StateError('Previous connection failed'));
+      await tester.pump();
+      expect(errors, isEmpty);
+      expect(
+        checks,
+        2,
+        reason: 'resume must immediately check the current session',
+      );
+      await tester.pump(const Duration(minutes: 2));
+      expect(checks, 2, reason: 'the monitor has become idle');
+    },
+  );
+
   testWidgets('idle and background stop every monitor timer and request', (
     tester,
   ) async {
@@ -139,6 +180,7 @@ void main() {
             '${account.server.toString().replaceFirst('https:', 'wss:')}/push/ws',
           ),
         ),
+        connectPush: (_) => WebSocket.connect('ws://127.0.0.1:${server.port}'),
       );
       final monitor = ChangeMonitor(
         client: client,
@@ -149,7 +191,6 @@ void main() {
         },
         onActive: (_) {},
         onError: (e) => fail('$e'),
-        connect: (_) => WebSocket.connect('ws://127.0.0.1:${server.port}'),
       );
       addTearDown(() async {
         monitor.dispose();

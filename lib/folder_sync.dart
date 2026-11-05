@@ -9,7 +9,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
 
 import 'models.dart';
-import 'nextcloud_client.dart';
+import 'cloud_backend.dart';
 import 'sync_rules.dart';
 import 'sync_background.dart';
 
@@ -237,14 +237,12 @@ class FolderPair {
     remote: (value['remote'] as List).cast<String>(),
     mode: SyncMode.values.byName(value['mode'] as String),
     repeat: value['repeat'] as bool,
-    wifiOnly: value['wifiOnly'] as bool? ?? true,
-    chargingOnly: value['chargingOnly'] as bool? ?? false,
+    wifiOnly: value['wifiOnly'] as bool,
+    chargingOnly: value['chargingOnly'] as bool,
     lastRun: DateTime.tryParse(value['lastRun'] as String? ?? ''),
-    rules: value['rules'] == null
-        ? const SyncRules.all()
-        : SyncRules.fromJson((value['rules'] as Map).cast<String, dynamic>()),
-    uploadConcurrency: value['uploadConcurrency'] as int? ?? 1,
-    background: value['background'] as bool? ?? false,
+    rules: SyncRules.fromJson((value['rules'] as Map).cast<String, dynamic>()),
+    uploadConcurrency: value['uploadConcurrency'] as int,
+    background: value['background'] as bool,
   );
 }
 
@@ -382,7 +380,7 @@ class FolderSyncController extends ChangeNotifier {
        backgroundService = backgroundService ?? NativeSyncBackground(),
        android = android ?? Platform.isAndroid;
 
-  final NextcloudClient client;
+  final CloudBackend client;
   final Account? Function() account;
   final FolderAccess access;
   final SyncJournal journal;
@@ -809,7 +807,7 @@ class FolderSyncController extends ChangeNotifier {
       }
     }
     directories.add([]);
-    phase = 'Reading Nextcloud destination';
+    phase = 'Reading cloud destination';
     _notify();
     if (pair.includesSourceFolder) {
       final children = await client.listFiles(session, pair.remote);
@@ -821,7 +819,7 @@ class FolderSyncController extends ChangeNotifier {
         await client.createFolder(session, pair.cloudRoot);
       } else if (!folder.isDirectory) {
         throw const FormatException(
-          'A file blocks the selected folder name in Nextcloud. Choose another destination.',
+          'A file blocks the selected folder name on the server. Choose another destination.',
         );
       }
     }
@@ -840,7 +838,7 @@ class FolderSyncController extends ChangeNotifier {
         // Never follow a server listing outside the requested direct children.
         final expected = [...pair.cloudRoot, ...path, item.name];
         checkSyncPath(expected);
-        if (_key(expected) != _key(item.path) || item.albumDavPath != null) {
+        if (_key(expected) != _key(item.path) || item.albumReference != null) {
           throw const FormatException(
             'The server returned an unexpected file path.',
           );

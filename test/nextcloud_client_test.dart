@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:ncloud/models.dart';
 import 'package:ncloud/nextcloud_client.dart';
+import 'package:ncloud/cloud_backend.dart';
 
 final account = Account(
   server: normalizeServer('https://cloud.example/nextcloud'),
@@ -233,6 +234,7 @@ void main() {
     );
     addTearDown(client.close);
     final flow = await client.startLogin(account.server);
+    expect(flow.login.path, '/nextcloud/login/v2/flow/abc');
     expect(await client.pollLogin(account.server, flow), isNull);
   });
 

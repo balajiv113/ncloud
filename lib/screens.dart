@@ -64,7 +64,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                   const SizedBox(height: 16),
                   Text(
-                    'Every moment. Every file.\nA beautiful home for your Nextcloud.',
+                    'Every moment. Every file.\nA beautiful home for your cloud.',
                     style: theme.textTheme.titleLarge?.copyWith(
                       fontWeight: FontWeight.w400,
                     ),
@@ -80,7 +80,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     keyboardType: TextInputType.url,
                     autocorrect: false,
                     decoration: const InputDecoration(
-                      labelText: 'Nextcloud server',
+                      labelText: 'Server address',
                       hintText: 'https://cloud.example.com',
                       prefixIcon: Icon(Icons.lock_outline),
                     ),
@@ -99,7 +99,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     icon: const Icon(Icons.arrow_forward_rounded),
                     label: const Padding(
                       padding: EdgeInsets.all(14),
-                      child: Text('Connect Nextcloud'),
+                      child: Text('Connect server'),
                     ),
                   ),
                   if (c.signingIn) ...[
@@ -109,6 +109,10 @@ class _LoginScreenState extends State<LoginScreen> {
                     const Text(
                       'Approve access in your browser, then return here.',
                     ),
+                    if (c.notice case final notice?) ...[
+                      const SizedBox(height: 8),
+                      MessageCard(message: notice),
+                    ],
                     TextButton(
                       onPressed: c.canCancelLogin ? c.cancelLogin : null,
                       child: const Text('Cancel sign-in'),
@@ -129,7 +133,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     tilePadding: EdgeInsets.zero,
                     children: [
                       const Text(
-                        'Create an app password in Nextcloud → Personal settings → Security. Never use your main password.',
+                        'Create an app password in your server’s security settings. Never use your main password.',
                       ),
                       const SizedBox(height: 12),
                       TextField(

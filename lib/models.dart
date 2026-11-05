@@ -15,7 +15,7 @@ Uri normalizeServer(String input) {
       uri.hasQuery ||
       uri.hasFragment) {
     throw const FormatException(
-      'Enter a full HTTPS Nextcloud address, such as https://cloud.example.com.',
+      'Enter a full HTTPS server address, such as https://cloud.example.com.',
     );
   }
   final segments = uri.pathSegments.where((s) => s.isNotEmpty).toList();
@@ -63,9 +63,6 @@ class Account {
     photoRoot: List.unmodifiable(path),
   );
 
-  String get authorization =>
-      'Basic ${base64Encode(utf8.encode('$loginName:$appPassword'))}';
-
   String encode() => jsonEncode({
     'server': server.toString(),
     'loginName': loginName,
@@ -99,7 +96,7 @@ class CloudFile {
     this.id,
     this.favorite = false,
     this.demoColor,
-    this.albumDavPath,
+    this.albumReference,
     this.taken,
     this.captureDay,
     this.etag,
@@ -114,7 +111,9 @@ class CloudFile {
   final String? id;
   final bool favorite;
   final int? demoColor;
-  final List<String>? albumDavPath;
+
+  /// Backend-owned location for an album member without an account file path.
+  final List<String>? albumReference;
   final DateTime? taken;
   final int? captureDay;
   final String? etag;
@@ -129,7 +128,7 @@ class CloudFile {
     return taken ?? modified;
   }
 
-  bool get readOnly => albumDavPath != null;
+  bool get readOnly => albumReference != null;
 
   Map<String, dynamic> toJson() => {
     'path': path,
@@ -141,7 +140,7 @@ class CloudFile {
     'id': id,
     'favorite': favorite,
     'color': demoColor,
-    'albumDavPath': albumDavPath,
+    'albumReference': albumReference,
     'taken': taken?.toIso8601String(),
     'captureDay': captureDay,
     'etag': etag,
@@ -150,22 +149,24 @@ class CloudFile {
   factory CloudFile.fromJson(Map<String, dynamic> json) => CloudFile(
     path: (json['path'] as List<dynamic>).cast<String>(),
     name: json['name'] as String,
-    isDirectory: json['dir'] as bool? ?? false,
-    contentType: json['type'] as String? ?? '',
-    size: json['size'] as int? ?? 0,
+    isDirectory: json['dir'] as bool,
+    contentType: json['type'] as String,
+    size: json['size'] as int,
     modified: json['modified'] == null
         ? null
         : DateTime.parse(json['modified'] as String),
     id: json['id'] as String?,
-    favorite: json['favorite'] as bool? ?? false,
+    favorite: json['favorite'] as bool,
     demoColor: json['color'] as int?,
-    albumDavPath: (json['albumDavPath'] as List<dynamic>?)?.cast<String>(),
-    taken: DateTime.tryParse(json['taken'] as String? ?? ''),
+    albumReference: (json['albumReference'] as List<dynamic>?)?.cast<String>(),
+    taken: json['taken'] == null
+        ? null
+        : DateTime.parse(json['taken'] as String),
     captureDay: json['captureDay'] as int?,
     etag: json['etag'] as String?,
   );
 
-  /// Root of placeholder paths for timeline items whose real WebDAV path is
+  /// Root of placeholder paths for timeline items whose real file path is
   /// still being looked up; such files are addressed by [id] only.
   static const pendingRoot = '\u0001pending';
   bool get pending => path.length == 2 && path.first == pendingRoot;
@@ -185,7 +186,7 @@ class CloudFile {
     id: id,
     favorite: value,
     demoColor: demoColor,
-    albumDavPath: albumDavPath,
+    albumReference: albumReference,
     taken: taken,
     captureDay: captureDay,
     etag: etag,
@@ -201,6 +202,7 @@ class CloudFile {
     id: id,
     favorite: favorite,
     demoColor: demoColor,
+    albumReference: albumReference,
     taken: taken,
     captureDay: captureDay,
     etag: etag,
@@ -220,23 +222,25 @@ class CloudFile {
     id: id,
     favorite: favorite,
     demoColor: demoColor,
-    albumDavPath: albumDavPath,
+    albumReference: albumReference,
     taken: date,
     captureDay: day,
     etag: revision,
   );
 }
 
-class NativeAlbum {
-  const NativeAlbum({
+class CloudAlbum {
+  const CloudAlbum({
     required this.name,
-    required this.davPath,
+    required this.reference,
     required this.count,
     this.coverId,
     this.shared = false,
   });
   final String name;
-  final List<String> davPath;
+
+  /// Opaque backend reference, not an account-relative folder path.
+  final List<String> reference;
   final int count;
   final String? coverId;
   final bool shared;
@@ -260,23 +264,25 @@ class SmartAlbum {
   );
 }
 
-class MemoryDay {
-  const MemoryDay(this.id, this.count);
+class TimelineDay {
+  const TimelineDay(this.id, this.count);
+
+  /// Calendar day as a count of days since the UTC Unix epoch.
   final int id;
   final int count;
-  Map<String, dynamic> toJson() => {'dayid': id, 'count': count};
-  factory MemoryDay.fromJson(Map<String, dynamic> json) {
-    final id = json['dayid'];
+  Map<String, dynamic> toJson() => {'id': id, 'count': count};
+  factory TimelineDay.fromJson(Map<String, dynamic> json) {
+    final id = json['id'];
     final count = json['count'];
     if (id is! int || count is! int || count < 0) {
-      throw const FormatException('Unsupported Memories day index.');
+      throw const FormatException('Invalid timeline day.');
     }
-    return MemoryDay(id, count);
+    return TimelineDay(id, count);
   }
 }
 
-class MemoryFolder {
-  const MemoryFolder(this.path, this.previews);
+class TimelineFolder {
+  const TimelineFolder(this.path, this.previews);
   final List<String> path;
   final List<CloudFile> previews;
 }

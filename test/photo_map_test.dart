@@ -65,7 +65,7 @@ void main() {
           )
           ..account = account
           ..tab = 4
-          ..memoriesAvailable = true;
+          ..timelineIndexAvailable = true;
     await tester.pumpWidget(
       MaterialApp(
         home: ListenableBuilder(
@@ -159,18 +159,12 @@ void main() {
         west: 170,
         east: 190,
       );
-      final days = await client.memoryMapDays(account, bounds);
+      final days = await client.mapDays(account, bounds);
       expect(days.map((d) => d.id), [21000, 20999]);
       expect(days.map((d) => d.count), [2, 2]);
-      expect(
-        await client.memoryMapDayFiles(account, [21000], bounds),
-        hasLength(1),
-      );
+      expect(await client.mapDayFiles(account, [21000], bounds), hasLength(1));
       expect(requests, hasLength(4));
-      await expectLater(
-        client.memoryMapDays(account, []),
-        throwsFormatException,
-      );
+      await expectLater(client.mapDays(account, []), throwsFormatException);
     },
   );
 
@@ -218,7 +212,7 @@ void main() {
               name: 'Sample',
               count: 10,
             )
-            ..memoriesAvailable = true;
+            ..timelineIndexAvailable = true;
       addTearDown(c.dispose);
       await c.openMapArea(bounds);
       expect(c.activePerson, isNull);

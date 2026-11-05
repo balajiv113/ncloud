@@ -18,7 +18,7 @@ class LibraryDatabase {
   }) : path = File(path).absolute.path,
        _factory = factory ?? databaseFactory;
 
-  static const schemaVersion = 3;
+  static const schemaVersion = 4;
   final String path;
   final DatabaseFactory _factory;
   final void Function(String) onError;
@@ -58,15 +58,19 @@ class LibraryDatabase {
           await db.execute('PRAGMA cache_size = -2048');
         },
         onCreate: (db, version) async {
-          await _createV1(db);
-          await _upgrade(db, 1, version);
+          await _createSchema(db);
         },
-        onUpgrade: _upgrade,
+        onUpgrade: (db, oldVersion, newVersion) async {
+          await db.execute('DROP TABLE IF EXISTS members');
+          await db.execute('DROP TABLE IF EXISTS collections');
+          await db.execute('DROP TABLE IF EXISTS files');
+          await _createSchema(db);
+        },
       ),
     );
   }
 
-  static Future<void> _createV1(Database db) async {
+  static Future<void> _createSchema(Database db) async {
     await db.execute('''
       CREATE TABLE files (
         account TEXT NOT NULL, file_key TEXT NOT NULL, path_key TEXT NOT NULL,
@@ -74,6 +78,7 @@ class LibraryDatabase {
         content_type TEXT NOT NULL, size INTEGER NOT NULL, modified TEXT,
         file_id TEXT, favorite INTEGER NOT NULL, color INTEGER, album_path TEXT,
         taken TEXT, capture_day INTEGER, etag TEXT,
+        observed_at INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY (account, file_key)
       ) WITHOUT ROWID
     ''');
@@ -92,40 +97,23 @@ class LibraryDatabase {
       ) WITHOUT ROWID
     ''');
     await db.execute('CREATE INDEX files_path ON files(account, path_key)');
+    await db.execute(
+      'CREATE INDEX files_timeline ON files(account, capture_day, taken)',
+    );
+    await db.execute(
+      'CREATE INDEX files_type ON files(account, content_type, favorite)',
+    );
     await db.execute('CREATE INDEX members_file ON members(file_key)');
+    await db.execute('CREATE INDEX members_path ON members(path_key)');
+    await db.execute(
+      'CREATE INDEX members_lookup ON members(collection_key, path_key)',
+    );
     await db.execute(
       'CREATE INDEX collections_access ON collections(accessed)',
     );
-  }
-
-  static Future<void> _upgrade(Database db, int old, int version) async {
-    if (old < 2 && version >= 2) {
-      await db.execute(
-        'CREATE INDEX IF NOT EXISTS members_path ON members(path_key)',
-      );
-      await db.execute(
-        'CREATE INDEX IF NOT EXISTS members_lookup '
-        'ON members(collection_key, path_key)',
-      );
-      await db.execute(
-        'CREATE INDEX IF NOT EXISTS collections_account '
-        'ON collections(account, kind)',
-      );
-      await db.execute(
-        'CREATE INDEX files_timeline ON files(account, capture_day, taken)',
-      );
-      await db.execute(
-        'CREATE INDEX files_type ON files(account, content_type, favorite)',
-      );
-    }
-    if (old < 3 && version >= 3) {
-      final columns = await db.rawQuery('PRAGMA table_info(files)');
-      if (!columns.any((column) => column['name'] == 'observed_at')) {
-        await db.execute(
-          'ALTER TABLE files ADD COLUMN observed_at INTEGER NOT NULL DEFAULT 0',
-        );
-      }
-    }
+    await db.execute(
+      'CREATE INDEX collections_account ON collections(account, kind)',
+    );
   }
 
   bool _corrupt(Object error) {
@@ -193,9 +181,9 @@ class LibraryDatabase {
       'file_id': file.id,
       'favorite': file.favorite ? 1 : 0,
       'color': file.demoColor,
-      'album_path': file.albumDavPath == null
+      'album_path': file.albumReference == null
           ? null
-          : jsonEncode(file.albumDavPath),
+          : jsonEncode(file.albumReference),
       'taken': value['taken'],
       'capture_day': file.captureDay,
       'etag': file.etag,
@@ -212,7 +200,7 @@ class LibraryDatabase {
     'id': row['file_id'],
     'favorite': row['favorite'] == 1,
     'color': row['color'],
-    'albumDavPath': row['album_path'] == null
+    'albumReference': row['album_path'] == null
         ? null
         : jsonDecode(row['album_path'] as String),
     'taken': row['taken'],
@@ -625,11 +613,6 @@ class LibraryDatabase {
   );
 
   Future<void> writeDocument(String key, Map<String, dynamic> value) async {
-    if (key.startsWith('library-v1|') && value['files'] is List) {
-      final store = FileStore()..restore(value);
-      await writeLibrary(key, store.persistenceChanges(full: true));
-      return;
-    }
     await _run(
       (db) => db.transaction((txn) async {
         final payload = Map<String, dynamic>.of(value);

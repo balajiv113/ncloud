@@ -401,10 +401,14 @@ void main() {
         contentType: 'image/jpeg',
         id: 'album',
         captureDay: 20454,
-        albumDavPath: ['Albums', 'member.jpg'],
+        albumReference: ['Albums', 'member.jpg'],
       );
       store.putAll([same, album]);
       await cache.writeLibrary(library, store);
+      expect(
+        (await cache.readFilesByIds(library, ['album'])).single.albumReference,
+        ['Albums', 'member.jpg'],
+      );
       final fresh = await cache.readDayFiles(library, [
         20454,
       ], freshSince: cutoff);
@@ -424,82 +428,37 @@ void main() {
     },
   );
 
-  test('legacy compressed library and plain listing migrate lazily', () async {
-    final file = photo('Photos/a.jpg', id: '7');
-    final store = FileStore()..putFolder(['Photos'], [file], etag: 'v1');
-    final oldLibrary = File(
-      '${root.path}/indexes/${cacheDigest(library)}.json',
+  for (final version in [1, 2, 3]) {
+    test(
+      'schema $version resets metadata without touching offline originals',
+      () async {
+        final file = photo('a.jpg', id: '7');
+        await cache.writeListing(listing, [file]);
+        final original = await cache.original('saved', file.name);
+        await original.writeAsBytes([1, 2, 3]);
+        await cache.writeOfflineListing('saved', [file]);
+        await cache.close();
+        final old = await inspect();
+        await old.execute('PRAGMA user_version=$version');
+        await old.close();
+        expect(await cache.readListing(listing), isNull);
+        expect(await original.readAsBytes(), [1, 2, 3]);
+        expect((await cache.readOfflineListing('saved')).single.id, '7');
+        final upgraded = await inspect();
+        addTearDown(upgraded.close);
+        expect(
+          (await upgraded.rawQuery('PRAGMA user_version')).single.values.single,
+          LibraryDatabase.schemaVersion,
+        );
+        expect(await upgraded.query('files'), isEmpty);
+        final indexes = await upgraded.rawQuery('PRAGMA index_list(files)');
+        expect(indexes.map((row) => row['name']), contains('files_timeline'));
+        final columns = await upgraded.rawQuery('PRAGMA table_info(files)');
+        expect(columns.map((row) => row['name']), contains('observed_at'));
+        expect(await upgraded.query('collections'), isEmpty);
+      },
     );
-    final oldListing = File(
-      '${root.path}/listings/${cacheDigest(listing)}.json',
-    );
-    await oldLibrary.parent.create(recursive: true);
-    await oldListing.parent.create(recursive: true);
-    await oldLibrary.writeAsBytes(
-      gzip.encode(utf8.encode(jsonEncode(store.toJson()))),
-    );
-    await oldListing.writeAsString(jsonEncode([file.toJson()]));
-    expect(await File(getPath()).exists(), isFalse);
-    expect((await cache.readDocument(library))!['files'], hasLength(1));
-    expect(await oldLibrary.exists(), isFalse);
-    expect(await oldListing.exists(), isTrue);
-    expect((await cache.readListing(listing))!.single.id, '7');
-    expect(await oldListing.exists(), isFalse);
-    final db = await inspect();
-    addTearDown(db.close);
-    expect(await db.query('files'), hasLength(1));
-    expect(
-      (await db.rawQuery('PRAGMA journal_mode')).single.values.single,
-      'wal',
-    );
-    expect((await db.rawQuery('PRAGMA auto_vacuum')).single.values.single, 2);
-  });
-
-  test('schema version one migrates in place without losing records', () async {
-    await cache.writeListing(listing, [photo('a.jpg', id: '7')]);
-    await cache.close();
-    final old = await inspect();
-    await old.execute('DROP INDEX files_timeline');
-    await old.execute('DROP INDEX files_type');
-    await old.execute('PRAGMA user_version=1');
-    await old.close();
-    expect((await cache.readListing(listing))!.single.id, '7');
-    final upgraded = await inspect();
-    addTearDown(upgraded.close);
-    expect(
-      (await upgraded.rawQuery('PRAGMA user_version')).single.values.single,
-      LibraryDatabase.schemaVersion,
-    );
-    final indexes = await upgraded.rawQuery('PRAGMA index_list(files)');
-    expect(indexes.map((row) => row['name']), contains('files_timeline'));
-  });
-
-  test(
-    'version two migration keeps old rows conservatively unobserved',
-    () async {
-      await cache.writeListing(listing, [photo('a.jpg', id: '7')]);
-      await cache.close();
-      final old = await inspect();
-      await old.execute('ALTER TABLE files DROP COLUMN observed_at');
-      await old.execute('PRAGMA user_version=2');
-      await old.close();
-      expect((await cache.readDayFiles(library, [20454])).single.id, '7');
-      expect(
-        await cache.readDayFiles(library, [
-          20454,
-        ], freshSince: DateTime.fromMillisecondsSinceEpoch(1)),
-        isEmpty,
-      );
-      final store = FileStore()..putAll([photo('a.jpg', id: '7')]);
-      await cache.writeLibrary(library, store);
-      expect(
-        (await cache.readDayFiles(library, [
-          20454,
-        ], freshSince: DateTime.fromMillisecondsSinceEpoch(1))).single.id,
-        '7',
-      );
-    },
-  );
+  }
 
   test(
     'persistent invalidation is account scoped and preserves originals',

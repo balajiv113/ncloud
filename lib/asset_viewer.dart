@@ -7,7 +7,7 @@ import 'app_controller.dart';
 import 'library_actions.dart';
 import 'media_tile.dart';
 import 'models.dart';
-import 'nextcloud_client.dart';
+import 'cloud_backend.dart';
 import 'screens.dart';
 
 class AssetViewer extends StatefulWidget {

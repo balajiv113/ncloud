@@ -125,7 +125,7 @@ void main() {
           }),
         ),
       )..account = account;
-      controller.memoriesAvailable = true;
+      controller.timelineIndexAvailable = true;
       addTearDown(controller.dispose);
       final results = await Future.wait([
         for (var i = 0; i < 6; i++) controller.preview(photo(id: '$i')),
