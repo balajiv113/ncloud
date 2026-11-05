@@ -152,6 +152,44 @@ void main() {
     expect(calls, 2);
   });
 
+  testWidgets('a visible thumbnail reloads when its indexed revision changes', (
+    tester,
+  ) async {
+    var calls = 0;
+    final controller = AppController(
+      store: MemoryStore(),
+      client: NextcloudClient(
+        transport: MockClient((_) async {
+          calls++;
+          return http.Response.bytes(png, 200);
+        }),
+      ),
+    )..account = account;
+    addTearDown(controller.dispose);
+    Widget tile(String revision) => MaterialApp(
+      home: SizedBox(
+        width: 128,
+        height: 128,
+        child: MediaTile(
+          controller: controller,
+          file: photo().withCaptureDate(
+            DateTime.utc(2026, 1, 1),
+            revision,
+            day: 20454,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpWidget(tile('first'));
+    await tester.pumpAndSettle();
+    expect(calls, 1);
+    await tester.pumpWidget(tile('edited'));
+    await tester.pumpAndSettle();
+    expect(calls, 2);
+    expect(find.byType(Image), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   test('cached listings show instantly and survive refresh errors', () async {
     var fail = false;
     AppController controller() => AppController(

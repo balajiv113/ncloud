@@ -39,6 +39,7 @@ class _MediaTileState extends State<MediaTile> {
         oldWidget.file.modified != widget.file.modified ||
         oldWidget.file.size != widget.file.size ||
         oldWidget.file.id != widget.file.id ||
+        oldWidget.file.etag != widget.file.etag ||
         oldWidget.previewSize != widget.previewSize ||
         oldWidget.controller != widget.controller) {
       _preview = null;
