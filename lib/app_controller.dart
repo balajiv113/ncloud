@@ -113,7 +113,9 @@ class AppController extends ChangeNotifier {
       tab == 4 &&
       !smartAlbumOpen &&
       activeNativeAlbum == null &&
-      activePerson == null;
+      activePerson == null &&
+      activeMapBounds == null;
+  List<PhotoMapBounds>? activeMapBounds;
   List<RecognizedPerson> people = [];
   RecognizedPerson? activePerson;
   bool loadingPeople = false;
@@ -512,6 +514,7 @@ class AppController extends ChangeNotifier {
       nativeAlbums = [];
       activeNativeAlbum = null;
       activePerson = null;
+      activeMapBounds = null;
       people = [];
       loadingPeople = false;
       peopleAvailable = null;
@@ -536,6 +539,7 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> selectTab(int value) async {
+    activeMapBounds = null;
     tab = value;
     directory = [];
     activeNativeAlbum = null;
@@ -545,6 +549,7 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> openFolder(CloudFile folder) async {
+    activeMapBounds = null;
     tab = 1;
     activeNativeAlbum = null;
     activePerson = null;
@@ -554,6 +559,7 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> goTo(List<String> path) async {
+    activeMapBounds = null;
     directory = [...path];
     activeNativeAlbum = null;
     activePerson = null;
@@ -562,6 +568,7 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> openSmartAlbum(List<String> path) async {
+    activeMapBounds = null;
     tab = 4;
     directory = [...path];
     activeNativeAlbum = null;
@@ -576,7 +583,9 @@ class AppController extends ChangeNotifier {
   /// The main timeline resolves paths on demand; albums need paths for their
   /// sub-folder chips.
   bool _pathless(int currentTab) =>
-      (activePerson != null || (pathlessTimeline && currentTab == 0)) &&
+      (activeMapBounds != null ||
+          activePerson != null ||
+          (pathlessTimeline && currentTab == 0)) &&
       activeNativeAlbum == null;
 
   /// Metadata-only batches are cheap, so the timeline asks for many more
@@ -584,9 +593,24 @@ class AppController extends ChangeNotifier {
   int _dayBatchLimit(int currentTab) => _pathless(currentTab) ? 1500 : 200;
 
   bool _recursiveMedia(int currentTab, List<String> path) =>
-      activePerson != null || currentTab != 4 || !listEquals(path, photoRoot);
+      activeMapBounds != null ||
+      activePerson != null ||
+      currentTab != 4 ||
+      !listEquals(path, photoRoot);
+
+  Future<void> openMapArea(List<PhotoMapBounds> bounds) async {
+    if (bounds.isEmpty) throw const FormatException('Choose a map area.');
+    activeMapBounds = List.unmodifiable(bounds);
+    activePerson = null;
+    activeNativeAlbum = null;
+    smartAlbumOpen = false;
+    tab = 4;
+    directory = [];
+    await load(refresh: false);
+  }
 
   Future<void> openPerson(RecognizedPerson person) async {
+    activeMapBounds = null;
     activePerson = person;
     activeNativeAlbum = null;
     smartAlbumOpen = false;
@@ -596,6 +620,7 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> openNativeAlbum(NativeAlbum album) async {
+    activeMapBounds = null;
     activePerson = null;
     activeNativeAlbum = album;
     smartAlbumOpen = false;
@@ -605,6 +630,7 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> openSharedAlbum(List<String> path) async {
+    activeMapBounds = null;
     tab = 5;
     directory = [...path];
     activeNativeAlbum = null;
@@ -638,6 +664,7 @@ class AppController extends ChangeNotifier {
     final path = [...directory];
     final native = activeNativeAlbum;
     final person = activePerson;
+    final mapBounds = activeMapBounds;
     final listingKey = _listingKey();
     final keepItems = listingKey != null && listingKey == _visibleListingKey;
     loading = true;
@@ -760,8 +787,15 @@ class AppController extends ChangeNotifier {
             'Browsing people requires Memories and Recognize on your server.',
           );
         }
+        if (mapBounds != null && memoriesAvailable != true) {
+          throw const CloudException(
+            'Browsing the photo map requires Memories on your server.',
+          );
+        }
         if (memoriesAvailable == true && currentTab != 5) {
-          listing.days = currentTab == 0 && _initialDays != null
+          listing.days = mapBounds != null
+              ? await client.memoryMapDays(session, mapBounds)
+              : currentTab == 0 && _initialDays != null
               ? _initialDays
               : await client.memoryDays(
                   session,
@@ -820,7 +854,11 @@ class AppController extends ChangeNotifier {
   /// Files the shared store already knows for a view, shown instantly while
   /// the server confirms the authoritative list.
   List<CloudFile> _seed(int tab, List<String> path, NativeAlbum? native) {
-    if (native != null || activePerson != null || tab == 3 || tab == 6) {
+    if (native != null ||
+        activePerson != null ||
+        activeMapBounds != null ||
+        tab == 3 ||
+        tab == 6) {
       return [];
     }
     if (tab == 1) return fileStore.folder(path, fresh: false) ?? [];
@@ -936,15 +974,17 @@ class AppController extends ChangeNotifier {
         count += day.count;
       }
       if (ids.isEmpty) return (files: <CloudFile>[], days: ids, scanned: 0);
-      final files = await client.memoryDayFiles(
-        session,
-        ids,
-        path: path,
-        favorites: currentTab == 2,
-        recursive: recursive,
-        resolvePaths: !_pathless(currentTab),
-        person: activePerson,
-      );
+      final files = activeMapBounds != null
+          ? await client.memoryMapDayFiles(session, ids, activeMapBounds!)
+          : await client.memoryDayFiles(
+              session,
+              ids,
+              path: path,
+              favorites: currentTab == 2,
+              recursive: recursive,
+              resolvePaths: !_pathless(currentTab),
+              person: activePerson,
+            );
       return (files: files, days: ids, scanned: files.length);
     }
     final page = await client.searchPage(
@@ -1163,15 +1203,17 @@ class AppController extends ChangeNotifier {
         final currentTab = tab;
         final path = [...directory];
         final key = _listingKey();
-        final files = await client.memoryDayFiles(
-          session,
-          batch,
-          path: path,
-          favorites: currentTab == 2,
-          recursive: _recursiveMedia(currentTab, path),
-          resolvePaths: !_pathless(currentTab),
-          person: activePerson,
-        );
+        final files = activeMapBounds != null
+            ? await client.memoryMapDayFiles(session, batch, activeMapBounds!)
+            : await client.memoryDayFiles(
+                session,
+                batch,
+                path: path,
+                favorites: currentTab == 2,
+                recursive: _recursiveMedia(currentTab, path),
+                resolvePaths: !_pathless(currentTab),
+                person: activePerson,
+              );
         if (version != _loadVersion ||
             _disposed ||
             !identical(_activeListing, listing)) {
@@ -1196,7 +1238,8 @@ class AppController extends ChangeNotifier {
     if (demo || session == null || tab == 3) return null;
     return 'browse-v4|${session.server}|${session.userId}|$tab|$smartAlbumOpen|'
         '${directory.join('/')}|${activeNativeAlbum?.davPath.join('/') ?? ''}'
-        '${activePerson == null ? '' : '|person:${activePerson!.id}'}';
+        '${activePerson == null ? '' : '|person:${activePerson!.id}'}'
+        '${activeMapBounds == null ? '' : '|map:${activeMapBounds!.map((b) => b.query).join(';')}'}';
   }
 
   Future<void> loadPeople({bool refresh = false}) async {

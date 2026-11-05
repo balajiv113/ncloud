@@ -103,6 +103,40 @@ class PhotoMapBounds {
   final double west;
   final double east;
   String get query => '$south,$north,$west,$east';
+
+  static List<PhotoMapBounds> viewport({
+    required double south,
+    required double north,
+    required double west,
+    required double east,
+  }) {
+    if (![south, north, west, east].every((v) => v.isFinite) ||
+        south > north ||
+        south < -90 ||
+        north > 90) {
+      throw const FormatException('Invalid map viewport.');
+    }
+    var width = east - west;
+    if (width < 0) width = width % 360;
+    if (width >= 360) {
+      return [
+        PhotoMapBounds(south: south, north: north, west: -180, east: 180),
+      ];
+    }
+    final start = (west + 180) % 360 - 180;
+    final end = start + width;
+    return end <= 180
+        ? [PhotoMapBounds(south: south, north: north, west: start, east: end)]
+        : [
+            PhotoMapBounds(south: south, north: north, west: start, east: 180),
+            PhotoMapBounds(
+              south: south,
+              north: north,
+              west: -180,
+              east: end - 360,
+            ),
+          ];
+  }
 }
 
 class PhotoMapCluster {

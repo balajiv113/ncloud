@@ -500,7 +500,7 @@ class NextcloudClient {
       {'folder': '/${path.join('/')}', 'recursive': '1'},
       optional: optional,
       disabledMessage:
-          'Recognize is not enabled or needs an update on this server.',
+          'Recognize face recognition is not enabled or needs an update on this server.',
     );
     if (rows == null) return null;
     final people = [
@@ -552,14 +552,11 @@ class NextcloudClient {
   Future<PhotoLocation?> memoryMapPosition(Account account) async {
     final response = await _request(
       'GET',
-      serverEndpoint(account.server, [
-        'index.php',
-        'apps',
-        'memories',
-        'api',
-        'map',
-        'init',
-      ]),
+      serverEndpoint(
+        account.server,
+        ['index.php', 'apps', 'memories', 'api', 'map', 'init'],
+        {'folder': '/', 'recursive': '1'},
+      ),
       account: account,
       headers: {'Accept': 'application/json', 'OCS-APIRequest': 'true'},
     );
@@ -602,6 +599,48 @@ class NextcloudClient {
         else
           throw const FormatException('Unsupported photo map cluster.'),
     ];
+  }
+
+  Future<List<MemoryDay>> memoryMapDays(
+    Account account,
+    List<PhotoMapBounds> bounds,
+  ) async {
+    if (bounds.isEmpty) throw const FormatException('Choose a map area.');
+    final counts = <int, int>{};
+    for (final area in bounds) {
+      final days = await memoryDays(account, mapBounds: area);
+      for (final day in days!) {
+        counts.update(
+          day.id,
+          (count) => count + day.count,
+          ifAbsent: () => day.count,
+        );
+      }
+    }
+    return [
+      for (final id in counts.keys.toList()..sort((a, b) => b.compareTo(a)))
+        MemoryDay(id, counts[id]!),
+    ];
+  }
+
+  Future<List<CloudFile>> memoryMapDayFiles(
+    Account account,
+    List<int> dayIds,
+    List<PhotoMapBounds> bounds,
+  ) async {
+    if (bounds.isEmpty) throw const FormatException('Choose a map area.');
+    final files = <String, CloudFile>{};
+    for (final area in bounds) {
+      for (final file in await memoryDayFiles(
+        account,
+        dayIds,
+        mapBounds: area,
+        resolvePaths: false,
+      )) {
+        files[file.key] = file;
+      }
+    }
+    return files.values.toList();
   }
 
   /// Thumbnails for many files in one streamed Memories request. Files whose

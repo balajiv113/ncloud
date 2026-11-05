@@ -1088,6 +1088,12 @@ void main() {
       await tester.pumpAndSettle();
       expect(c.tab, 4);
       expect(find.text('Shared'), findsNothing);
+      await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('View all Shared with you')),
+        150,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.pumpAndSettle();
       expect(find.text('Shared with you'), findsOneWidget);
       expect(find.text('Trip'), findsOneWidget);
       await tester.ensureVisible(

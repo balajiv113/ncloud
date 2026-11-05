@@ -12,6 +12,7 @@ import 'library_actions.dart';
 import 'media_tile.dart';
 import 'models.dart';
 import 'people_bubble.dart';
+import 'photo_map_screen.dart';
 import 'screens.dart';
 import 'timeline_layout.dart';
 
@@ -67,7 +68,8 @@ class _LibraryScreenState extends State<LibraryScreen>
       !c.smartAlbumOpen &&
       c.directory.isEmpty &&
       c.activeNativeAlbum == null &&
-      c.activePerson == null;
+      c.activePerson == null &&
+      c.activeMapBounds == null;
   bool get _collection => const [2, 5, 6].contains(c.tab);
   bool get _sharedHome => c.sharedAlbumHome;
   bool get _selecting => _selected.isNotEmpty;
@@ -374,6 +376,7 @@ class _LibraryScreenState extends State<LibraryScreen>
         (_albumHome && _albumsExpanded) ||
         (!_albumHome && (_album || _collection));
     final title =
+        (c.activeMapBounds == null ? null : 'Photos in this area') ??
         c.activePerson?.label ??
         c.activeNativeAlbum?.name ??
         (_collection
@@ -648,7 +651,8 @@ class _LibraryScreenState extends State<LibraryScreen>
                         if ((_album || (c.tab == 5 && !_sharedHome)) &&
                             !_albumHome &&
                             c.activeNativeAlbum == null &&
-                            c.activePerson == null)
+                            c.activePerson == null &&
+                            c.activeMapBounds == null)
                           SliverToBoxAdapter(child: _albumContext()),
                         if (c.loading &&
                             c.items.isEmpty &&
@@ -971,6 +975,23 @@ class _LibraryScreenState extends State<LibraryScreen>
     setState(() => _reset(keepAlbumSection: true));
     if (_scroll.hasClients) _scroll.jumpTo(0);
     c.openPerson(person);
+  }
+
+  void _openMap() {
+    Navigator.push<void>(
+      context,
+      MaterialPageRoute(
+        builder: (mapContext) => PhotoMapScreen(
+          controller: c,
+          onOpenArea: (bounds) {
+            Navigator.pop(mapContext);
+            setState(() => _reset(keepAlbumSection: true));
+            if (_scroll.hasClients) _scroll.jumpTo(0);
+            c.openMapArea(bounds);
+          },
+        ),
+      ),
+    );
   }
 
   void _expandPeople() {
@@ -1320,6 +1341,20 @@ class _LibraryScreenState extends State<LibraryScreen>
             ),
           ),
         ..._peopleSlivers(),
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            child: Card(
+              child: ListTile(
+                leading: const Icon(Icons.map_outlined),
+                title: const Text('Map'),
+                subtitle: const Text('All photos with a saved location'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: _openMap,
+              ),
+            ),
+          ),
+        ),
         _albumSectionHeading(
           'Shared with you',
           expand: () => _openCollection(5),
@@ -2102,6 +2137,8 @@ class _LibraryScreenState extends State<LibraryScreen>
                 ? 'Photos you share from Nextcloud will appear here.'
                 : c.activePerson != null
                 ? 'This Recognize group has no photos here. Refresh People to check for changes.'
+                : c.activeMapBounds != null
+                ? 'No photos with saved coordinates in this area. Try a wider map view.'
                 : _query.isNotEmpty || _filter != MediaFilter.all
                 ? 'Try another search or view option.'
                 : 'Add files in Drive to start your collection.',
