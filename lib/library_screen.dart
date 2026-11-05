@@ -116,10 +116,12 @@ class _LibraryScreenState extends State<LibraryScreen> {
   List<CloudFile> get _visible {
     final files = c.items.where((f) {
       if (_query.isNotEmpty &&
-          !f.name.toLowerCase().contains(_query.toLowerCase()))
+          !f.name.toLowerCase().contains(_query.toLowerCase())) {
         return false;
-      if (_subfolder != null && !pathStartsWith(f.path, _subfolder!))
+      }
+      if (_subfolder != null && !pathStartsWith(f.path, _subfolder!)) {
         return false;
+      }
       if (f.isDirectory) return _drive;
       if (!_drive && !f.isMedia && !_collection) return false;
       return switch (_filter) {
@@ -205,20 +207,21 @@ class _LibraryScreenState extends State<LibraryScreen> {
         final row = _rowPositions
             .where((r) => r.files.any((f) => f.key == anchor))
             .firstOrNull;
-        if (row != null)
+        if (row != null) {
           _scroll.jumpTo(
             (_timelineStart + row.offset).clamp(
               0,
               _scroll.position.maxScrollExtent,
             ),
           );
+        }
       });
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final files = _visible;
+    final files = _albumHome ? <CloudFile>[] : _visible;
     final theme = Theme.of(context);
     final detail = !_albumHome && (_album || _collection);
     final title =
@@ -264,8 +267,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
                     if (_pointers.length != 2 ||
                         _drive ||
                         _albumHome ||
-                        _pinchStart <= 0)
+                        _pinchStart <= 0) {
                       return;
+                    }
                     final scale = _span / _pinchStart;
                     final next = scale > 1.3
                         ? (_pinchBase - 1).clamp(2, 6)
@@ -381,6 +385,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                                               .toUpperCase(),
                                     style: TextStyle(
                                       fontSize: 11,
+                                      height: 1.4,
                                       fontWeight: FontWeight.w700,
                                       color: theme.colorScheme.primary,
                                     ),
@@ -717,7 +722,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   List<Widget> _albumHomeSlivers() {
     final root = c.photoRoot;
-    var albums = c.smartAlbums
+    final smartAlbums = c.smartAlbums;
+    var albums = smartAlbums
         .where(
           (a) =>
               (_group == null || pathStartsWith(a.path, _group!)) &&
@@ -731,14 +737,15 @@ class _LibraryScreenState extends State<LibraryScreen> {
       DateTime date(SmartAlbum album) => album.files
           .map((f) => f.modified ?? DateTime(1970))
           .reduce((a, b) => a.isAfter(b) ? a : b);
+      final dates = {for (final album in albums) album.key: date(album)};
       albums.sort(
         (a, b) => _sort == LibrarySort.newest
-            ? date(b).compareTo(date(a))
-            : date(a).compareTo(date(b)),
+            ? dates[b.key]!.compareTo(dates[a.key]!)
+            : dates[a.key]!.compareTo(dates[b.key]!),
       );
     }
     final groups = <String, List<String>>{};
-    for (final album in c.smartAlbums) {
+    for (final album in smartAlbums) {
       for (var depth = root.length + 1; depth < album.path.length; depth++) {
         final path = album.path.take(depth).toList();
         groups[path.map(Uri.encodeComponent).join('/')] = path;
@@ -992,7 +999,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
         final width =
             (constraints.crossAxisExtent - (columns - 1) * 12) / columns;
         final scale = MediaQuery.textScalerOf(context);
-        final infoHeight = scale.scale(14) + scale.scale(11) * 2 + 23;
+        final infoHeight = (scale.scale(14) + scale.scale(11) * 2) * 1.4 + 16;
         return SliverGrid(
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: columns,
@@ -1041,6 +1048,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         fontSize: 14,
+                        height: 1.4,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
@@ -1092,7 +1100,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                   if (action == 'drive') {
                     final folder = CloudFile(
                       path: [...c.directory],
-                      name: c.directory.last,
+                      name: c.directory.lastOrNull ?? 'My drive',
                       isDirectory: true,
                     );
                     setState(_reset);
@@ -1109,12 +1117,16 @@ class _LibraryScreenState extends State<LibraryScreen> {
                     );
                   }
                 },
-                itemBuilder: (_) => const [
-                  PopupMenuItem(value: 'drive', child: Text('Open in Drive')),
-                  PopupMenuItem(
-                    value: 'actions',
-                    child: Text('Folder actions'),
+                itemBuilder: (_) => [
+                  const PopupMenuItem(
+                    value: 'drive',
+                    child: Text('Open in Drive'),
                   ),
+                  if (c.directory.isNotEmpty)
+                    const PopupMenuItem(
+                      value: 'actions',
+                      child: Text('Folder actions'),
+                    ),
                 ],
               ),
             ],
@@ -1234,7 +1246,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   List<Widget> _timelineSlivers(List<CloudFile> files) {
     final media = files.where((f) => f.isMedia).toList();
-    if (media.isEmpty) return [];
+    if (media.isEmpty) {
+      _dateStops.clear();
+      _rowPositions.clear();
+      return [];
+    }
     final groups = <String, List<CloudFile>>{};
     for (final file in media) {
       final date = file.modified?.toLocal();
@@ -1463,7 +1479,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
           ),
           subtitle: Text(
             file.isDirectory ? 'Folder' : formatBytes(file.size),
-            style: const TextStyle(fontSize: 11),
+            style: const TextStyle(fontSize: 11, height: 1.4),
           ),
           trailing: _selecting
               ? null
@@ -1621,7 +1637,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
   Future<void> _chooseMonth() async {
     final labels = _dateStops.map((s) => s.label).toList();
     final monthDates =
-        c.items
+        _visible
             .map((f) => f.modified?.toLocal())
             .nonNulls
             .map((d) => DateTime(d.year, d.month))

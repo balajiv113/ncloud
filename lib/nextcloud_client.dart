@@ -229,8 +229,9 @@ class NextcloudClient {
       final segments = uri.pathSegments.where((s) => s.isNotEmpty).toList();
       if (segments.length != root.length + 1 ||
           !pathStartsWith(segments, root) ||
-          segments.any((s) => s == '.' || s == '..' || s.contains('/')))
+          segments.any((s) => s == '.' || s == '..' || s.contains('/'))) {
         continue;
+      }
       final props = _successfulProps(entry);
       if (props.isEmpty) continue;
       String value(String name, String ns) =>
@@ -306,8 +307,9 @@ class NextcloudClient {
       final segments = uri.pathSegments.where((s) => s.isNotEmpty).toList();
       if (segments.length != root.length + 1 ||
           !pathStartsWith(segments, root) ||
-          segments.any((s) => s == '.' || s == '..' || s.contains('/')))
+          segments.any((s) => s == '.' || s == '..' || s.contains('/'))) {
         continue;
+      }
       final props = _successfulProps(entry);
       if (props.isEmpty) continue;
       String value(String name, [String ns = 'DAV:']) =>

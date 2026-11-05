@@ -48,8 +48,9 @@ void main() {
         addTearDown(c.dispose);
         var sawFirstPage = false;
         c.addListener(() {
-          if (c.items.length == 200 && c.loadingMore && !c.loading)
+          if (c.items.length == 200 && c.loadingMore && !c.loading) {
             sawFirstPage = true;
+          }
         });
         await c.selectTab(tab);
         expect(offsets, [0, 200, 400], reason: 'tab $tab');
@@ -71,8 +72,9 @@ void main() {
         store: MemoryStore(),
         client: NextcloudClient(
           transport: MockClient((request) async {
-            if (request.method == 'PROPFIND')
+            if (request.method == 'PROPFIND') {
               return http.Response(multistatus(''), 207);
+            }
             final second = request.body.contains(
               '<sd:firstresult>200</sd:firstresult>',
             );
