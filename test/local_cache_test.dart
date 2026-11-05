@@ -82,6 +82,52 @@ void main() {
     expect(odd.path, isNot(contains('..')));
   });
 
+  test(
+    'Memories metadata preserves originals saved by previous previews',
+    () async {
+      final old = photo();
+      final key =
+          'original|${account.server}|${account.userId}|${old.id ?? old.key}|'
+          '${old.modified?.microsecondsSinceEpoch}|${old.size}';
+      final saved = await cache.original(key, old.name);
+      await saved.writeAsBytes(png);
+      final c = AppController(store: MemoryStore(), cache: cache)
+        ..account = account;
+      addTearDown(c.dispose);
+      final indexed = old.withCaptureDate(
+        DateTime.utc(2026, 1, 1),
+        'known-etag',
+        day: 20454,
+      );
+      expect((await c.offlineCopy(indexed))?.path, saved.path);
+    },
+  );
+
+  test(
+    'quoted DAV and Memories etags reuse previews while edited revisions invalidate them',
+    () async {
+      var calls = 0;
+      final c = AppController(
+        store: MemoryStore(),
+        client: NextcloudClient(
+          transport: MockClient((_) async {
+            calls++;
+            return http.Response.bytes(png, 200);
+          }),
+        ),
+      )..account = account;
+      addTearDown(c.dispose);
+      final file = photo();
+      CloudFile revision(String etag) =>
+          file.withCaptureDate(DateTime.utc(2026, 1, 1), etag, day: 20454);
+      await c.preview(revision('"same"'));
+      await c.preview(revision('same'));
+      expect(calls, 1);
+      await c.preview(revision('edited'));
+      expect(calls, 2);
+    },
+  );
+
   test('previews are served from disk across app restarts', () async {
     var calls = 0;
     AppController controller() => AppController(

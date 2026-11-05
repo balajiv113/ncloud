@@ -1013,7 +1013,7 @@ class AppController extends ChangeNotifier {
     }
     final key =
         '${session.server}|${session.userId}|${file.id ?? file.key}|'
-        '${file.modified?.microsecondsSinceEpoch}|${file.size}|${file.etag ?? ''}|$size';
+        '${file.modified?.microsecondsSinceEpoch}|${file.size}|${(file.etag ?? '').replaceAll('"', '')}|$size';
     if (retry) _discardPreview(key);
     final cached = _previews.remove(key);
     if (cached != null) {
@@ -1065,8 +1065,7 @@ class AppController extends ChangeNotifier {
 
   String _originalKey(Account session, CloudFile file) =>
       'original|${session.server}|${session.userId}|${file.id ?? file.key}|'
-      '${file.modified?.microsecondsSinceEpoch}|${file.size}'
-      '${file.etag == null ? '' : '|${file.etag}'}';
+      '${file.modified?.microsecondsSinceEpoch}|${file.size}';
 
   /// Direct authenticated WebDAV stream for the platform video player.
   ({Uri uri, Map<String, String> headers})? streamSource(CloudFile file) {

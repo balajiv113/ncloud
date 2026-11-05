@@ -270,8 +270,9 @@ void main() {
         store: MemoryStore(),
         client: NextcloudClient(
           transport: MockClient((request) async {
-            if (request.method == 'PROPFIND')
+            if (request.method == 'PROPFIND') {
               return http.Response(multistatus(''), 207);
+            }
             if (request.url.path.endsWith('/folders/sub')) {
               walks++;
               started.complete();
