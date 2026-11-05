@@ -96,13 +96,16 @@ jobs:
         run: flutter build apk --release --build-number=${{ github.run_number }}
       - name: Verify APK uses the cached preview signer
         run: |
+          set -euo pipefail
           apksigner=$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)
           test -n "$apksigner"
           expected=$(keytool -list -v -keystore "$NCLOUD_PREVIEW_KEYSTORE" \
             -storepass android -alias androiddebugkey \
             | sed -n 's/^[[:space:]]*SHA256: //p' | tr -d ':' | tr 'A-F' 'a-f')
-          actual=$("$apksigner" verify --print-certs build/app/outputs/flutter-apk/app-release.apk \
-            | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
+          "$apksigner" verify --verbose --print-certs \
+            build/app/outputs/flutter-apk/app-release.apk | tee "$RUNNER_TEMP/ncloud-apk-signature.txt"
+          actual=$(sed -n 's/^.*certificate SHA-256 digest: //p' \
+            "$RUNNER_TEMP/ncloud-apk-signature.txt" | tr -d '[:space:]' | tr 'A-F' 'a-f')
           echo "Expected signer: $expected"
           echo "APK signer:      $actual"
           if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then
