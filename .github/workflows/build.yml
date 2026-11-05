@@ -77,17 +77,17 @@ jobs:
             --dart-define=LIVE_NEXTCLOUD=true \
             --dart-define=NEXTCLOUD_TEST_PASSWORD="$NEXTCLOUD_TEST_PASSWORD"
       - name: Set Android preview signing location
-        run: echo "ANDROID_USER_HOME=$RUNNER_TEMP/ncloud-android" >> "$GITHUB_ENV"
+        run: echo "NCLOUD_PREVIEW_KEYSTORE=$RUNNER_TEMP/ncloud-android/debug.keystore" >> "$GITHUB_ENV"
       - name: Reuse development preview signer when available
         uses: actions/cache@v4
         with:
-          path: ${{ env.ANDROID_USER_HOME }}/debug.keystore
+          path: ${{ env.NCLOUD_PREVIEW_KEYSTORE }}
           key: ncloud-android-preview-signer-v1
       - name: Initialize development preview signer
         run: |
-          mkdir -p "$ANDROID_USER_HOME"
-          if [ ! -f "$ANDROID_USER_HOME/debug.keystore" ]; then
-            keytool -genkeypair -keystore "$ANDROID_USER_HOME/debug.keystore" \
+          mkdir -p "$(dirname "$NCLOUD_PREVIEW_KEYSTORE")"
+          if [ ! -f "$NCLOUD_PREVIEW_KEYSTORE" ]; then
+            keytool -genkeypair -keystore "$NCLOUD_PREVIEW_KEYSTORE" \
               -storepass android -keypass android -alias androiddebugkey \
               -keyalg RSA -keysize 2048 -validity 10000 \
               -dname "CN=Android Debug,O=Android,C=US"
@@ -98,7 +98,7 @@ jobs:
         run: |
           apksigner=$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)
           test -n "$apksigner"
-          expected=$(keytool -exportcert -keystore "$ANDROID_USER_HOME/debug.keystore" \
+          expected=$(keytool -exportcert -keystore "$NCLOUD_PREVIEW_KEYSTORE" \
             -storepass android -alias androiddebugkey | sha256sum | cut -d ' ' -f 1)
           actual=$("$apksigner" verify --print-certs build/app/outputs/flutter-apk/app-release.apk \
             | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')

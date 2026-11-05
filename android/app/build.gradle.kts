@@ -30,6 +30,10 @@ android {
         versionName = flutter.versionName
     }
 
+    System.getenv("NCLOUD_PREVIEW_KEYSTORE")?.let {
+        signingConfigs.getByName("debug").storeFile = file(it)
+    }
+
     buildTypes {
         release {
             // TODO: Add your own signing config for the release build.
