@@ -25,6 +25,8 @@ jobs:
   android:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      ANDROID_USER_HOME: ${{ runner.temp }}/ncloud-android
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-java@v5
@@ -79,10 +81,31 @@ jobs:
       - name: Reuse development preview signer when available
         uses: actions/cache@v4
         with:
-          path: ~/.android/debug.keystore
+          path: ${{ env.ANDROID_USER_HOME }}/debug.keystore
           key: ncloud-android-preview-signer-v1
+      - name: Initialize development preview signer
+        run: |
+          mkdir -p "$ANDROID_USER_HOME"
+          if [ ! -f "$ANDROID_USER_HOME/debug.keystore" ]; then
+            keytool -genkeypair -keystore "$ANDROID_USER_HOME/debug.keystore" \
+              -storepass android -keypass android -alias androiddebugkey \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
       - name: Build installable preview
         run: flutter build apk --release --build-number=${{ github.run_number }}
+      - name: Verify APK uses the cached preview signer
+        run: |
+          apksigner=$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)
+          test -n "$apksigner"
+          expected=$(keytool -exportcert -keystore "$ANDROID_USER_HOME/debug.keystore" \
+            -storepass android -alias androiddebugkey | sha256sum | cut -d ' ' -f 1)
+          actual=$("$apksigner" verify --print-certs build/app/outputs/flutter-apk/app-release.apk \
+            | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
+          if [ "$expected" != "$actual" ]; then
+            echo "APK signing certificate does not match the cached preview key"
+            exit 1
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: ncloud-android
@@ -113,7 +136,7 @@ jobs:
           gh release create "v0.2.0-preview.${{ github.run_number }}" ncloud-android.apk \
             --target "${{ github.sha }}" --prerelease \
             --title "ncloud Android preview #${{ github.run_number }}" \
-            --notes "Library redesign: photo timeline, folder albums, separate Drive, multi-select organization, swipe/zoom viewer, slideshow, in-app video, read-only sharing links and trash restore. Download ncloud-android.apk on Android and choose Try demo or connect Nextcloud. Development signing only; see README for implemented features and remaining non-AI roadmap."
+            --notes "Library redesign: photo timeline, folder albums, separate Drive, multi-select organization, swipe/zoom viewer, slideshow, in-app video, read-only sharing links and trash restore. Download ncloud-android.apk on Android and choose Try demo or connect Nextcloud. When upgrading from 0.1, uninstall the old preview first because its signing key differs; this clears the saved account, not server files. Development signing only; see README for implemented features and remaining non-AI roadmap."
 
   ios:
     if: github.event_name == 'workflow_dispatch' && inputs.build_ios

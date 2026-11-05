@@ -13,6 +13,8 @@ If browser login is unavailable, create an **app password** in Nextcloud → Per
 
 Every successful `main` build publishes an APK to a private prerelease and retains an Actions artifact for 30 days. Preview APKs use a **cached development signing key, not production signing**. If the cache expires and Android rejects an update because its signer changed, uninstall the old preview first (this clears its saved account), then install the new one. Do not distribute these builds as production releases.
 
+**Upgrading from 0.1:** uninstall that preview before installing 0.2; its signing key differs. This clears your saved login and app cache, not files on Nextcloud. Later 0.2 builds reuse the cached signer while it remains available.
+
 ## iPhone / iPad testing
 
 iOS does **not** allow an arbitrary unsigned download to be installed like an APK. The complete iOS project is included, but a Mac with Xcode and Apple signing is required:
