@@ -612,16 +612,17 @@ class SettingsScreen extends StatelessWidget {
               'Dates use file modification time. Load older pages as you browse. Albums are real folders, not duplicate uploads.',
             ),
           ),
+          if (!controller.demo) _CacheTile(controller: controller),
           const ListTile(
             leading: Icon(Icons.construction_outlined),
             title: Text('Still on the roadmap'),
             subtitle: Text(
-              'Automatic camera backup, offline sync, EXIF capture dates, maps, photo editing, Live Photos and multi-account libraries. AI features are intentionally excluded.',
+              'Automatic camera backup, folder sync, EXIF capture dates, maps, photo editing, Live Photos and multi-account libraries. AI features are intentionally excluded.',
             ),
           ),
           const ListTile(
             leading: Icon(Icons.info_outline),
-            title: Text('ncloud 0.2 · library preview'),
+            title: Text('ncloud 0.3 · streaming & offline cache'),
             subtitle: Text(
               'Keep the app open during transfers. Public links are read-only. Server permissions and retention rules apply.',
             ),
@@ -667,6 +668,43 @@ class SettingsScreen extends StatelessWidget {
                   },
           ),
         ],
+      ),
+    ),
+  );
+}
+
+class _CacheTile extends StatefulWidget {
+  const _CacheTile({required this.controller});
+  final AppController controller;
+  @override
+  State<_CacheTile> createState() => _CacheTileState();
+}
+
+class _CacheTileState extends State<_CacheTile> {
+  late Future<int> _size = widget.controller.cacheSize();
+
+  String _format(int bytes) => bytes < 1024 * 1024
+      ? '${(bytes / 1024).toStringAsFixed(0)} KB'
+      : bytes < 1024 * 1024 * 1024
+      ? '${(bytes / 1024 / 1024).toStringAsFixed(1)} MB'
+      : '${(bytes / 1024 / 1024 / 1024).toStringAsFixed(2)} GB';
+
+  @override
+  Widget build(BuildContext context) => FutureBuilder<int>(
+    future: _size,
+    builder: (context, snapshot) => ListTile(
+      leading: const Icon(Icons.offline_bolt_outlined),
+      title: const Text('Offline cache'),
+      subtitle: Text(
+        '${snapshot.hasData ? _format(snapshot.data!) : 'Measuring…'} · '
+        'thumbnails, library pages and saved videos load instantly on reopen.',
+      ),
+      trailing: TextButton(
+        onPressed: () async {
+          await widget.controller.clearCache();
+          if (mounted) setState(() => _size = widget.controller.cacheSize());
+        },
+        child: const Text('Clear'),
       ),
     ),
   );

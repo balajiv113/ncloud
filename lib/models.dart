@@ -98,6 +98,32 @@ class CloudFile {
   final bool favorite;
   final int? demoColor;
 
+  Map<String, dynamic> toJson() => {
+    'path': path,
+    'name': name,
+    'dir': isDirectory,
+    'type': contentType,
+    'size': size,
+    'modified': modified?.toUtc().toIso8601String(),
+    'id': id,
+    'favorite': favorite,
+    'color': demoColor,
+  };
+
+  factory CloudFile.fromJson(Map<String, dynamic> json) => CloudFile(
+    path: (json['path'] as List<dynamic>).cast<String>(),
+    name: json['name'] as String,
+    isDirectory: json['dir'] as bool? ?? false,
+    contentType: json['type'] as String? ?? '',
+    size: json['size'] as int? ?? 0,
+    modified: json['modified'] == null
+        ? null
+        : DateTime.parse(json['modified'] as String),
+    id: json['id'] as String?,
+    favorite: json['favorite'] as bool? ?? false,
+    demoColor: json['color'] as int?,
+  );
+
   String get key => path.map(Uri.encodeComponent).join('/');
   bool get isImage => contentType.startsWith('image/');
   bool get isVideo => contentType.startsWith('video/');

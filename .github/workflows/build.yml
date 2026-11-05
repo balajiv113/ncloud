@@ -139,10 +139,10 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           mv app-release.apk ncloud-android.apk
-          gh release create "v0.2.0-preview.${{ github.run_number }}" ncloud-android.apk \
+          gh release create "v0.3.0-preview.${{ github.run_number }}" ncloud-android.apk \
             --target "${{ github.sha }}" --prerelease \
             --title "ncloud Android preview #${{ github.run_number }}" \
-            --notes "Library redesign: photo timeline, folder albums, separate Drive, multi-select organization, swipe/zoom viewer, slideshow, in-app video, read-only sharing links and trash restore. Download ncloud-android.apk on Android and choose Try demo or connect Nextcloud. When upgrading from 0.1, uninstall the old preview first because its signing key differs; this clears the saved account, not server files. Development signing only; see README for implemented features and remaining non-AI roadmap."
+            --notes "ncloud 0.3: instant video streaming with buffering, scrubbing and save-offline replay; persistent thumbnail and library cache for fast reopen; faster, more reliable thumbnails; On this day memories, pinch-to-zoom grid and fast scrubber. Includes the 0.2 timeline, folder albums, Drive, sharing and trash. Updates install over earlier 0.2/0.3 previews signed with the same development key; uninstall 0.1 first. See README for details and the non-AI roadmap."
 
   ios:
     if: github.event_name == 'workflow_dispatch' && inputs.build_ios

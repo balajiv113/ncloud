@@ -7,6 +7,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'demo.dart';
+import 'local_cache.dart';
 import 'models.dart';
 import 'nextcloud_client.dart';
 
@@ -48,11 +49,17 @@ String errorMessage(Object error) => switch (error) {
 };
 
 class AppController extends ChangeNotifier {
-  AppController({required this.store, NextcloudClient? client})
+  AppController({required this.store, NextcloudClient? client, this.cache})
     : client = client ?? NextcloudClient();
 
   final SessionStore store;
   final NextcloudClient client;
+
+  /// Optional persistent cache; tests run purely in memory without it.
+  final LocalCache? cache;
+
+  /// True while showing locally cached results that are being refreshed.
+  bool refreshing = false;
   Account? account;
   bool demo = false;
   bool starting = true;
@@ -212,6 +219,7 @@ class AppController extends ChangeNotifier {
           '${(await getTemporaryDirectory()).path}/ncloud-downloads',
         );
         if (await cache.exists()) await cache.delete(recursive: true);
+        await this.cache?.clear();
       }
       _loadVersion++;
       _loginVersion++;
@@ -255,12 +263,23 @@ class AppController extends ChangeNotifier {
     final version = ++_loadVersion;
     _covers.clear();
     loading = true;
+    refreshing = false;
     loadingMore = false;
     hasMore = false;
     _offset = 0;
     error = null;
     items = [];
     notifyListeners();
+    final listingKey = _listingKey();
+    if (listingKey != null && cache != null) {
+      final cached = await cache!.readListing(listingKey);
+      if (version != _loadVersion) return;
+      if (cached != null && cached.isNotEmpty) {
+        items = cached;
+        refreshing = true;
+        notifyListeners();
+      }
+    }
     try {
       final List<CloudFile> result;
       if (tab == 3) {
@@ -299,6 +318,9 @@ class AppController extends ChangeNotifier {
       if (version == _loadVersion) {
         items = result;
         _offset = result.length;
+        if (listingKey != null) {
+          unawaited(cache?.writeListing(listingKey, result));
+        }
         hasMore =
             !demo &&
             (tab == 0 || tab == 2) &&
@@ -309,9 +331,17 @@ class AppController extends ChangeNotifier {
     } finally {
       if (version == _loadVersion) {
         loading = false;
+        refreshing = false;
         notifyListeners();
       }
     }
+  }
+
+  String? _listingKey() {
+    final session = account;
+    if (demo || session == null || tab == 3) return null;
+    return 'listing|${session.server}|${session.userId}|$tab|'
+        '${directory.join('/')}';
   }
 
   Future<void> loadMore() async {
@@ -586,29 +616,90 @@ class AppController extends ChangeNotifier {
       return cached;
     }
     late final Future<Uint8List> pending;
-    pending = client
-        .preview(session, file, size: size)
-        .then(
-          (bytes) {
-            if (identical(_previews[key], pending)) {
-              _previewSizes[key] = bytes.length;
-              _previewBytes += bytes.length;
-              while (_previewBytes > 24 * 1024 * 1024 && _previews.isNotEmpty) {
-                _discardPreview(_previews.keys.first);
-              }
-            }
-            return bytes;
-          },
-          onError: (Object error, StackTrace stack) {
-            if (identical(_previews[key], pending)) _discardPreview(key);
-            Error.throwWithStackTrace(error, stack);
-          },
-        );
+    final disk = cache;
+    Future<Uint8List> fetch() async {
+      if (!retry && disk != null) {
+        final stored = await disk.readThumbnail(key);
+        if (stored != null) return stored;
+      }
+      final bytes = await client.preview(session, file, size: size);
+      unawaited(disk?.writeThumbnail(key, bytes));
+      return bytes;
+    }
+
+    pending = fetch().then(
+      (bytes) {
+        if (identical(_previews[key], pending)) {
+          _previewSizes[key] = bytes.length;
+          _previewBytes += bytes.length;
+          while (_previewBytes > 24 * 1024 * 1024 && _previews.isNotEmpty) {
+            _discardPreview(_previews.keys.first);
+          }
+        }
+        return bytes;
+      },
+      onError: (Object error, StackTrace stack) {
+        if (identical(_previews[key], pending)) _discardPreview(key);
+        Error.throwWithStackTrace(error, stack);
+      },
+    );
     _previews[key] = pending;
     while (_previews.length > 128) {
       _discardPreview(_previews.keys.first);
     }
     return pending;
+  }
+
+  /// Previously saved original for offline replay, if any.
+  Future<File?> offlineCopy(CloudFile file) async {
+    final session = account;
+    if (cache == null || session == null) return null;
+    final copy = await cache!.original(_originalKey(session, file), file.name);
+    return await copy.exists() ? copy : null;
+  }
+
+  String _originalKey(Account session, CloudFile file) =>
+      'original|${session.server}|${session.userId}|${file.id ?? file.key}|'
+      '${file.modified?.microsecondsSinceEpoch}|${file.size}';
+
+  /// Direct authenticated WebDAV stream for the platform video player.
+  ({Uri uri, Map<String, String> headers})? streamSource(CloudFile file) {
+    final session = account;
+    if (demo || session == null) return null;
+    return (
+      uri: client.davUri(session, file.path),
+      headers: {'Authorization': session.authorization},
+    );
+  }
+
+  /// Keeps a full copy of [file] in the cache so it replays without network.
+  Future<File> saveOffline(CloudFile file) async {
+    final session = account;
+    if (cache == null || session == null) {
+      throw const CloudException('Offline copies need a connected server.');
+    }
+    final target = await cache!.original(
+      _originalKey(session, file),
+      file.name,
+    );
+    if (await target.exists()) return target;
+    final downloaded = await download(file);
+    try {
+      await downloaded.copy(target.path);
+    } finally {
+      await downloaded.parent.delete(recursive: true);
+    }
+    unawaited(cache!.trim());
+    return target;
+  }
+
+  Future<int> cacheSize() async => await cache?.size() ?? 0;
+
+  Future<void> clearCache() async {
+    _clearPreviews();
+    _covers.clear();
+    await cache?.clear();
+    notifyListeners();
   }
 
   Future<File> download(CloudFile file) async {

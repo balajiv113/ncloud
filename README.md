@@ -13,7 +13,13 @@ If browser login is unavailable, create an **app password** in Nextcloud → Per
 
 Every successful `main` build publishes an APK to a private prerelease and retains an Actions artifact for 30 days. Preview APKs use a **cached development signing key, not production signing**. If the cache expires and Android rejects an update because its signer changed, uninstall the old preview first (this clears its saved account), then install the new one. Do not distribute these builds as production releases.
 
-**Upgrading from 0.1:** uninstall that preview before installing 0.2; its signing key differs. This clears your saved login and app cache, not files on Nextcloud. Later 0.2 builds reuse the cached signer while it remains available.
+**Upgrading from 0.1:** uninstall that preview before installing 0.2 or later; its signing key differs. This clears your saved login and app cache, not files on Nextcloud. Later builds reuse the cached signer while it remains available, and CI verifies each APK against it.
+
+## 0.3: streaming, offline cache and faster browsing
+
+- **Instant video streaming** with buffering indicator, scrubbing, mute and optional save-offline replay.
+- **Persistent local cache**: thumbnails (up to 256 MiB, least recently used evicted) and the first page of each timeline, favorites, album and Drive listing are stored on device. Reopening the app shows cached content instantly and refreshes it in the background; saved videos are capped at 1 GiB. Settings → Offline cache shows usage and clears it. Disconnecting clears it.
+- **On this day** memories from earlier years (based on modification dates), a draggable fast-scroll scrubber and **pinch to change grid density** (2–6 columns).
 
 ## iPhone / iPad testing
 
@@ -49,9 +55,9 @@ Album cards come from folder listings, **not** from guessing albums from the fir
 
 Selection operations run sequentially and report how many completed if a later item fails; they are not atomic. Deletion affects server originals and folder contents, not just the current view. Trash recovery depends on server configuration/retention. Nextcloud handles restore conflicts by choosing a new name; if the original folder is unavailable, it may restore to your root folder. There is intentionally no permanent-delete or empty-trash button in this preview.
 
-Video playback downloads the original to app cache before playing through the native player, avoiding authenticated URL redirects. Large videos need free device space and a foreground transfer; codec support follows the device. Slideshows operate on the loaded viewer collection and pause when the app backgrounds. Demo videos are illustrations, not playable files.
+Videos **stream immediately** from WebDAV through the native player (ExoPlayer/AVPlayer) with the Authorization header kept in request headers, never in the URL. The viewer shows buffering, elapsed/total time, scrubbing and mute. **Save offline** keeps a full copy in app cache so later replays work without network; offline copies are used automatically. Codec support follows the device; if streaming fails, save offline or export the original. Slideshows operate on the loaded viewer collection and pause when the app backgrounds. Demo videos are illustrations, not playable files.
 
-**Still not full non-AI Immich parity:** automatic camera backup/background queues, offline sync, EXIF/capture-date indexing, maps, editing, Live Photos, archive/locked folders, partner libraries, shared-album collaboration/comments, and account switching remain future work. There are no fake controls for these capabilities. AI/face/semantic features are excluded from this milestone.
+**Still not full non-AI Immich parity:** automatic camera backup/background queues, two-way folder sync, EXIF/capture-date indexing, maps, editing, Live Photos, archive/locked folders, partner libraries, shared-album collaboration/comments, and account switching remain future work. There are no fake controls for these capabilities. AI/face/semantic features are excluded from this milestone.
 
 ## Foundation capabilities
 
@@ -66,7 +72,7 @@ Video playback downloads the original to app cache before playing through the na
 
 Photos use WebDAV SEARCH, not an Immich API. Dates are file modification times, **not EXIF capture dates**. Previews depend on your server's preview providers (especially HEIC and video); unavailable previews have a retry state. Search/preview API errors are displayed, never replaced with fake demo data. Pagination uses Nextcloud SEARCH offsets; refreshing restarts the listing, and concurrent server changes can shift page boundaries.
 
-Thumbnail requests are limited to four concurrent transfers. Grids request 384px previews and the viewer requests 1280px, with bounded decoding and a session-scoped 24 MiB/128-entry LRU cache. Transient server overload is retried once; failed requests are not permanently cached. If the preview provider cannot supply a small JPEG/PNG/WebP/GIF, the app can display its original instead (up to 2 MiB). Larger originals, HEIC and video still require working Nextcloud preview providers. This cache is not offline sync.
+Thumbnail requests are limited to four concurrent transfers. Grids request 384px previews and the viewer requests 1280px, with bounded decoding, a 24 MiB/128-entry in-memory LRU cache and the persistent disk cache described above. Transient server overload is retried once; failed requests are not permanently cached. If the preview provider cannot supply a small JPEG/PNG/WebP/GIF, the app can display its original instead (up to 2 MiB). Larger originals, HEIC and video still require working Nextcloud preview providers. The cache speeds up browsing; it is not two-way offline sync.
 
 Transfers require the app to stay open. Uploads never overwrite existing filenames. There is no background/resumable transfer queue or camera-library access yet. Downloads are streamed to temporary app storage and handed to the system share sheet; choose Save to Files or an appropriate app. Disconnect removes credentials and ncloud's downloaded cache, but not files you saved/shared elsewhere. Revoke the app password in Nextcloud Security settings to revoke server access.
 

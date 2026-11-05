@@ -28,6 +28,12 @@ class _LibraryScreenState extends State<LibraryScreen> {
   LibrarySort _sort = LibrarySort.newest;
   DateTime? _month;
   int _density = 3;
+  int _pinchBase = 3;
+  double _pinchStart = 0;
+  final Map<int, Offset> _pointers = {};
+  double get _span => _pointers.length == 2
+      ? (_pointers.values.first - _pointers.values.last).distance
+      : 0;
   bool _searching = false;
   String _query = '';
   AppController get c => widget.controller;
@@ -158,344 +164,405 @@ class _LibraryScreenState extends State<LibraryScreen> {
               setState(() => _selected.clear());
               await c.load();
             },
-            child: CustomScrollView(
-              controller: _scroll,
-              physics: const AlwaysScrollableScrollPhysics(),
-              slivers: [
-                SliverAppBar(
-                  pinned: true,
-                  automaticallyImplyLeading: false,
-                  title: _selecting
-                      ? Text('${_selected.length} selected')
-                      : Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              Icons.all_inclusive_rounded,
-                              color: theme.colorScheme.primary,
-                              size: 30,
-                            ),
-                            const SizedBox(width: 8),
-                            const Flexible(
-                              child: Text(
-                                'ncloud',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontWeight: FontWeight.w800,
-                                  letterSpacing: -1,
+            child: Listener(
+              onPointerDown: (event) {
+                _pointers[event.pointer] = event.position;
+                if (_pointers.length == 2) {
+                  _pinchBase = _density;
+                  _pinchStart = _span;
+                }
+              },
+              onPointerMove: (event) {
+                if (!_pointers.containsKey(event.pointer)) return;
+                _pointers[event.pointer] = event.position;
+                if (_pointers.length != 2 || _drive || _library) return;
+                if (_pinchStart <= 0) return;
+                final scale = _span / _pinchStart;
+                final next = scale > 1.3
+                    ? (_pinchBase - 1).clamp(2, 6).toInt()
+                    : scale < 0.75
+                    ? (_pinchBase + 1).clamp(2, 6).toInt()
+                    : _density;
+                if (next != _density) {
+                  HapticFeedback.selectionClick();
+                  setState(() => _density = next);
+                }
+              },
+              onPointerUp: (event) => _pointers.remove(event.pointer),
+              onPointerCancel: (event) => _pointers.remove(event.pointer),
+              child: Scrollbar(
+                controller: _scroll,
+                interactive: true,
+                thickness: 6,
+                radius: const Radius.circular(8),
+                child: CustomScrollView(
+                  controller: _scroll,
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  slivers: [
+                    SliverAppBar(
+                      pinned: true,
+                      automaticallyImplyLeading: false,
+                      title: _selecting
+                          ? Text('${_selected.length} selected')
+                          : Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.all_inclusive_rounded,
+                                  color: theme.colorScheme.primary,
+                                  size: 30,
                                 ),
-                              ),
-                            ),
-                          ],
-                        ),
-                  leading: _selecting
-                      ? IconButton(
-                          tooltip: 'Cancel selection',
-                          onPressed: () => setState(() => _selected.clear()),
-                          icon: const Icon(Icons.close),
-                        )
-                      : c.directory.isEmpty
-                      ? null
-                      : IconButton(
-                          tooltip: 'Parent folder',
-                          icon: const Icon(Icons.arrow_back),
-                          onPressed: () {
-                            setState(_reset);
-                            c.goTo(
-                              c.directory.sublist(0, c.directory.length - 1),
-                            );
-                          },
-                        ),
-                  actions: [
-                    if (c.demo && !_selecting)
-                      Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 18),
-                        child: Text(
-                          'DEMO',
-                          style: TextStyle(
-                            fontSize: 10,
-                            letterSpacing: 1.5,
-                            color: theme.colorScheme.primary,
-                          ),
-                        ),
-                      ),
-                    IconButton(
-                      tooltip: 'Search loaded items',
-                      icon: Icon(_searching ? Icons.search_off : Icons.search),
-                      onPressed: () => setState(() {
-                        _searching = !_searching;
-                        if (!_searching) {
-                          _query = '';
-                          _search.clear();
-                        }
-                      }),
-                    ),
-                    IconButton(
-                      tooltip: 'Settings',
-                      onPressed: () => Navigator.push(
-                        context,
-                        MaterialPageRoute<void>(
-                          builder: (_) => SettingsScreen(controller: c),
-                        ),
-                      ),
-                      icon: CircleAvatar(
-                        radius: 16,
-                        backgroundColor: theme.colorScheme.primaryContainer,
-                        child: Text(
-                          c.demo
-                              ? 'N'
-                              : (c
-                                            .account
-                                            ?.displayName
-                                            .characters
-                                            .firstOrNull ??
-                                        'N')
-                                    .toUpperCase(),
-                          style: TextStyle(
-                            fontWeight: FontWeight.w700,
-                            fontSize: 12,
-                            color: theme.colorScheme.primary,
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                  ],
-                ),
-                SliverToBoxAdapter(
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          _album
-                              ? 'LIFE, ORGANIZED'
-                              : _drive
-                              ? 'ROOM FOR EVERYTHING'
-                              : _library
-                              ? 'KEEP IT CLOSE'
-                              : 'THE EVERYDAY & THE EXTRAORDINARY',
-                          style: theme.textTheme.labelSmall?.copyWith(
-                            letterSpacing: 2,
-                            color: theme.colorScheme.primary,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.center,
-                          children: [
-                            Expanded(
-                              child: Text(
-                                title,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: theme.textTheme.headlineLarge?.copyWith(
-                                  letterSpacing: -1.5,
-                                  fontWeight: FontWeight.w800,
-                                ),
-                              ),
-                            ),
-                            if (!_drive && !_library)
-                              IconButton(
-                                tooltip: 'Grid density',
-                                onPressed: () => setState(
-                                  () => _density = _density == 3
-                                      ? 4
-                                      : _density == 4
-                                      ? 2
-                                      : 3,
-                                ),
-                                icon: Icon(
-                                  _density == 3
-                                      ? Icons.grid_view_rounded
-                                      : Icons.grid_on_rounded,
-                                ),
-                              ),
-                            PopupMenuButton<LibrarySort>(
-                              tooltip: 'Sort items',
-                              initialValue: _sort,
-                              icon: const Icon(Icons.sort),
-                              onSelected: (value) =>
-                                  setState(() => _sort = value),
-                              itemBuilder: (_) => const [
-                                PopupMenuItem(
-                                  value: LibrarySort.newest,
-                                  child: Text('Newest modified first'),
-                                ),
-                                PopupMenuItem(
-                                  value: LibrarySort.oldest,
-                                  child: Text('Oldest modified first'),
-                                ),
-                                PopupMenuItem(
-                                  value: LibrarySort.name,
-                                  child: Text('Name A–Z'),
-                                ),
-                                PopupMenuItem(
-                                  value: LibrarySort.size,
-                                  child: Text('Largest first'),
+                                const SizedBox(width: 8),
+                                const Flexible(
+                                  child: Text(
+                                    'ncloud',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w800,
+                                      letterSpacing: -1,
+                                    ),
+                                  ),
                                 ),
                               ],
                             ),
-                          ],
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          _album
-                              ? 'Real folders. Beautiful collections.'
-                              : _drive
-                              ? 'Your files, without the noise.'
-                              : _library
-                              ? 'Favorites, shared moments & second chances.'
-                              : 'A home for the moments that make you, you.',
-                          style: theme.textTheme.bodyMedium?.copyWith(
-                            color: theme.colorScheme.onSurfaceVariant,
-                          ),
-                        ),
-                        if (_searching)
+                      leading: _selecting
+                          ? IconButton(
+                              tooltip: 'Cancel selection',
+                              onPressed: () =>
+                                  setState(() => _selected.clear()),
+                              icon: const Icon(Icons.close),
+                            )
+                          : c.directory.isEmpty
+                          ? null
+                          : IconButton(
+                              tooltip: 'Parent folder',
+                              icon: const Icon(Icons.arrow_back),
+                              onPressed: () {
+                                setState(_reset);
+                                c.goTo(
+                                  c.directory.sublist(
+                                    0,
+                                    c.directory.length - 1,
+                                  ),
+                                );
+                              },
+                            ),
+                      actions: [
+                        if (c.demo && !_selecting)
                           Padding(
-                            padding: const EdgeInsets.only(top: 16),
-                            child: TextField(
-                              controller: _search,
-                              autofocus: true,
-                              onChanged: (value) =>
-                                  setState(() => _query = value),
-                              decoration: InputDecoration(
-                                hintText: _drive
-                                    ? 'Filter this folder'
-                                    : 'Filter loaded items',
-                                prefixIcon: const Icon(Icons.search),
-                                suffixIcon: IconButton(
-                                  tooltip: 'Clear search',
-                                  onPressed: () => setState(() {
-                                    _query = '';
-                                    _search.clear();
-                                  }),
-                                  icon: const Icon(Icons.close),
-                                ),
+                            padding: const EdgeInsets.symmetric(vertical: 18),
+                            child: Text(
+                              'DEMO',
+                              style: TextStyle(
+                                fontSize: 10,
+                                letterSpacing: 1.5,
+                                color: theme.colorScheme.primary,
                               ),
                             ),
                           ),
+                        IconButton(
+                          tooltip: 'Search loaded items',
+                          icon: Icon(
+                            _searching ? Icons.search_off : Icons.search,
+                          ),
+                          onPressed: () => setState(() {
+                            _searching = !_searching;
+                            if (!_searching) {
+                              _query = '';
+                              _search.clear();
+                            }
+                          }),
+                        ),
+                        IconButton(
+                          tooltip: 'Settings',
+                          onPressed: () => Navigator.push(
+                            context,
+                            MaterialPageRoute<void>(
+                              builder: (_) => SettingsScreen(controller: c),
+                            ),
+                          ),
+                          icon: CircleAvatar(
+                            radius: 16,
+                            backgroundColor: theme.colorScheme.primaryContainer,
+                            child: Text(
+                              c.demo
+                                  ? 'N'
+                                  : (c
+                                                .account
+                                                ?.displayName
+                                                .characters
+                                                .firstOrNull ??
+                                            'N')
+                                        .toUpperCase(),
+                              style: TextStyle(
+                                fontWeight: FontWeight.w700,
+                                fontSize: 12,
+                                color: theme.colorScheme.primary,
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
                       ],
                     ),
-                  ),
-                ),
-                if (c.busy)
-                  SliverToBoxAdapter(
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 20),
-                      child: Column(
-                        children: [
-                          LinearProgressIndicator(
-                            value: c.total > 0 ? c.completed / c.total : null,
-                          ),
-                          const SizedBox(height: 8),
-                          const Text(
-                            'Working · keep ncloud open',
-                            style: TextStyle(fontSize: 12),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                if (c.error case final error?)
-                  SliverToBoxAdapter(
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: MessageCard(
-                        message: error,
-                        isError: true,
-                        onRetry: c.loading || c.busy ? null : c.load,
-                      ),
-                    ),
-                  ),
-                if (c.notice case final notice?)
-                  SliverToBoxAdapter(
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 20,
-                        vertical: 8,
-                      ),
-                      child: Text(
-                        notice,
-                        style: TextStyle(color: theme.colorScheme.primary),
-                      ),
-                    ),
-                  ),
-                if (_album || _drive) SliverToBoxAdapter(child: _breadcrumbs()),
-                if (_library) SliverToBoxAdapter(child: _libraryShortcuts()),
-                if (!_drive && !_library) SliverToBoxAdapter(child: _filters()),
-                if (!_drive && !_album)
-                  SliverToBoxAdapter(
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
-                      child: Text(
-                        c.demo
-                            ? 'Original demo illustrations · changes are temporary'
-                            : '${c.items.length} loaded${c.hasMore ? ' · more available below' : ''} · modification dates',
-                        style: theme.textTheme.labelSmall?.copyWith(
-                          color: theme.colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ),
-                  ),
-                if (c.loading)
-                  const SliverFillRemaining(
-                    hasScrollBody: false,
-                    child: Center(child: CircularProgressIndicator()),
-                  )
-                else ...[
-                  if (!_drive &&
-                      !_library &&
-                      c.directory.isEmpty &&
-                      !_selecting &&
-                      _query.isEmpty &&
-                      _filter == MediaFilter.all &&
-                      _month == null &&
-                      c.tab == 0 &&
-                      files.isNotEmpty)
-                    SliverToBoxAdapter(child: _spotlight(files)),
-                  if (_album)
-                    ..._albumSlivers(files)
-                  else if (_drive || _library)
-                    _driveSliver(files)
-                  else
-                    ..._timelineSlivers(files),
-                  if (files.isEmpty)
-                    SliverFillRemaining(hasScrollBody: false, child: _empty()),
-                  if (c.hasMore)
                     SliverToBoxAdapter(
                       child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 24,
-                          vertical: 24,
-                        ),
-                        child: OutlinedButton.icon(
-                          onPressed: c.loadingMore || c.busy
-                              ? null
-                              : c.loadMore,
-                          icon: c.loadingMore
-                              ? const SizedBox(
-                                  width: 16,
-                                  height: 16,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
+                        padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _album
+                                  ? 'LIFE, ORGANIZED'
+                                  : _drive
+                                  ? 'ROOM FOR EVERYTHING'
+                                  : _library
+                                  ? 'KEEP IT CLOSE'
+                                  : 'THE EVERYDAY & THE EXTRAORDINARY',
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                letterSpacing: 2,
+                                color: theme.colorScheme.primary,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.center,
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    title,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: theme.textTheme.headlineLarge
+                                        ?.copyWith(
+                                          letterSpacing: -1.5,
+                                          fontWeight: FontWeight.w800,
+                                        ),
                                   ),
-                                )
-                              : const Icon(Icons.expand_more),
-                          label: Text(
-                            c.loadingMore
-                                ? 'Loading earlier moments…'
-                                : 'Load more from Nextcloud',
-                          ),
+                                ),
+                                if (!_drive && !_library)
+                                  IconButton(
+                                    tooltip: 'Grid density',
+                                    onPressed: () => setState(
+                                      () => _density = _density >= 4
+                                          ? 2
+                                          : _density + 1,
+                                    ),
+                                    icon: Icon(
+                                      _density == 3
+                                          ? Icons.grid_view_rounded
+                                          : Icons.grid_on_rounded,
+                                    ),
+                                  ),
+                                PopupMenuButton<LibrarySort>(
+                                  tooltip: 'Sort items',
+                                  initialValue: _sort,
+                                  icon: const Icon(Icons.sort),
+                                  onSelected: (value) =>
+                                      setState(() => _sort = value),
+                                  itemBuilder: (_) => const [
+                                    PopupMenuItem(
+                                      value: LibrarySort.newest,
+                                      child: Text('Newest modified first'),
+                                    ),
+                                    PopupMenuItem(
+                                      value: LibrarySort.oldest,
+                                      child: Text('Oldest modified first'),
+                                    ),
+                                    PopupMenuItem(
+                                      value: LibrarySort.name,
+                                      child: Text('Name A–Z'),
+                                    ),
+                                    PopupMenuItem(
+                                      value: LibrarySort.size,
+                                      child: Text('Largest first'),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              _album
+                                  ? 'Real folders. Beautiful collections.'
+                                  : _drive
+                                  ? 'Your files, without the noise.'
+                                  : _library
+                                  ? 'Favorites, shared moments & second chances.'
+                                  : 'A home for the moments that make you, you.',
+                              style: theme.textTheme.bodyMedium?.copyWith(
+                                color: theme.colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                            if (_searching)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 16),
+                                child: TextField(
+                                  controller: _search,
+                                  autofocus: true,
+                                  onChanged: (value) =>
+                                      setState(() => _query = value),
+                                  decoration: InputDecoration(
+                                    hintText: _drive
+                                        ? 'Filter this folder'
+                                        : 'Filter loaded items',
+                                    prefixIcon: const Icon(Icons.search),
+                                    suffixIcon: IconButton(
+                                      tooltip: 'Clear search',
+                                      onPressed: () => setState(() {
+                                        _query = '';
+                                        _search.clear();
+                                      }),
+                                      icon: const Icon(Icons.close),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                          ],
                         ),
                       ),
                     ),
-                  const SliverToBoxAdapter(child: SizedBox(height: 100)),
-                ],
-              ],
+                    if (c.busy)
+                      SliverToBoxAdapter(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 20),
+                          child: Column(
+                            children: [
+                              LinearProgressIndicator(
+                                value: c.total > 0
+                                    ? c.completed / c.total
+                                    : null,
+                              ),
+                              const SizedBox(height: 8),
+                              const Text(
+                                'Working · keep ncloud open',
+                                style: TextStyle(fontSize: 12),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    if (c.error case final error?)
+                      SliverToBoxAdapter(
+                        child: Padding(
+                          padding: const EdgeInsets.all(16),
+                          child: MessageCard(
+                            message: error,
+                            isError: true,
+                            onRetry: c.loading || c.busy ? null : c.load,
+                          ),
+                        ),
+                      ),
+                    if (c.notice case final notice?)
+                      SliverToBoxAdapter(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 20,
+                            vertical: 8,
+                          ),
+                          child: Text(
+                            notice,
+                            style: TextStyle(color: theme.colorScheme.primary),
+                          ),
+                        ),
+                      ),
+                    if (_album || _drive)
+                      SliverToBoxAdapter(child: _breadcrumbs()),
+                    if (_library)
+                      SliverToBoxAdapter(child: _libraryShortcuts()),
+                    if (!_drive && !_library)
+                      SliverToBoxAdapter(child: _filters()),
+                    if (!_drive && !_album)
+                      SliverToBoxAdapter(
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+                          child: Text(
+                            c.demo
+                                ? 'Original demo illustrations · changes are temporary'
+                                : '${c.items.length} loaded${c.hasMore ? ' · more available below' : ''} · modification dates',
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ),
+                      ),
+                    if (c.refreshing)
+                      const SliverToBoxAdapter(
+                        child: Padding(
+                          padding: EdgeInsets.fromLTRB(20, 0, 20, 8),
+                          child: LinearProgressIndicator(minHeight: 2),
+                        ),
+                      ),
+                    if (c.loading && !c.refreshing)
+                      const SliverFillRemaining(
+                        hasScrollBody: false,
+                        child: Center(child: CircularProgressIndicator()),
+                      )
+                    else ...[
+                      if (!_drive &&
+                          !_library &&
+                          c.directory.isEmpty &&
+                          !_selecting &&
+                          _query.isEmpty &&
+                          _filter == MediaFilter.all &&
+                          _month == null &&
+                          c.tab == 0 &&
+                          files.isNotEmpty)
+                        SliverToBoxAdapter(child: _spotlight(files)),
+                      if (!_drive &&
+                          !_library &&
+                          !_album &&
+                          !_selecting &&
+                          _query.isEmpty &&
+                          _month == null &&
+                          _memories(files).isNotEmpty)
+                        SliverToBoxAdapter(child: _memoryStrip(files)),
+                      if (_album)
+                        ..._albumSlivers(files)
+                      else if (_drive || _library)
+                        _driveSliver(files)
+                      else
+                        ..._timelineSlivers(files),
+                      if (files.isEmpty)
+                        SliverFillRemaining(
+                          hasScrollBody: false,
+                          child: _empty(),
+                        ),
+                      if (c.hasMore)
+                        SliverToBoxAdapter(
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 24,
+                              vertical: 24,
+                            ),
+                            child: OutlinedButton.icon(
+                              onPressed: c.loadingMore || c.busy
+                                  ? null
+                                  : c.loadMore,
+                              icon: c.loadingMore
+                                  ? const SizedBox(
+                                      width: 16,
+                                      height: 16,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                  : const Icon(Icons.expand_more),
+                              label: Text(
+                                c.loadingMore
+                                    ? 'Loading earlier moments…'
+                                    : 'Load more from Nextcloud',
+                              ),
+                            ),
+                          ),
+                        ),
+                      const SliverToBoxAdapter(child: SizedBox(height: 100)),
+                    ],
+                  ],
+                ),
+              ),
             ),
           ),
         ),
@@ -769,6 +836,118 @@ class _LibraryScreenState extends State<LibraryScreen> {
           ),
         ),
       ),
+    );
+  }
+
+  /// Photos taken on this calendar day in earlier years, grouped by year.
+  Map<int, List<CloudFile>> _memories(List<CloudFile> files) {
+    final now = DateTime.now();
+    final years = <int, List<CloudFile>>{};
+    for (final file in files) {
+      final date = file.modified?.toLocal();
+      if (!file.isMedia || date == null || date.year >= now.year) continue;
+      if (date.month == now.month && (date.day - now.day).abs() <= 1) {
+        years.putIfAbsent(date.year, () => []).add(file);
+      }
+    }
+    return Map.fromEntries(
+      years.entries.toList()..sort((a, b) => b.key.compareTo(a.key)),
+    );
+  }
+
+  Widget _memoryStrip(List<CloudFile> files) {
+    final memories = _memories(files);
+    final now = DateTime.now().year;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
+          child: Text(
+            'On this day',
+            style: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+          ),
+        ),
+        SizedBox(
+          height: 168,
+          child: ListView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            children: [
+              for (final entry in memories.entries)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  child: Semantics(
+                    button: true,
+                    label:
+                        '${now - entry.key} years ago, ${entry.value.length} items',
+                    child: GestureDetector(
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute<void>(
+                          builder: (_) => AssetViewer(
+                            files: entry.value,
+                            initialIndex: 0,
+                            controller: c,
+                          ),
+                        ),
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(18),
+                        child: SizedBox(
+                          width: 120,
+                          child: Stack(
+                            fit: StackFit.expand,
+                            children: [
+                              ExcludeSemantics(
+                                child: MediaTile(
+                                  file: entry.value.first,
+                                  controller: c,
+                                ),
+                              ),
+                              const DecoratedBox(
+                                decoration: BoxDecoration(
+                                  gradient: LinearGradient(
+                                    begin: Alignment.center,
+                                    end: Alignment.bottomCenter,
+                                    colors: [
+                                      Colors.transparent,
+                                      Colors.black87,
+                                    ],
+                                  ),
+                                ),
+                              ),
+                              Positioned(
+                                left: 12,
+                                right: 12,
+                                bottom: 12,
+                                child: ExcludeSemantics(
+                                  child: Text(
+                                    now - entry.key == 1
+                                        ? '1 year ago'
+                                        : '${now - entry.key} years ago',
+                                    maxLines: 2,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+      ],
     );
   }
 

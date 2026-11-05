@@ -1,12 +1,20 @@
 import 'package:flutter/material.dart';
 
 import 'app_controller.dart';
+import 'local_cache.dart';
 import 'screens.dart';
 import 'library_screen.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(NcloudApp(controller: AppController(store: SecureSessionStore())));
+  runApp(
+    NcloudApp(
+      controller: AppController(
+        store: SecureSessionStore(),
+        cache: LocalCache.platform(),
+      ),
+    ),
+  );
 }
 
 class NcloudApp extends StatefulWidget {
