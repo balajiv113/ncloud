@@ -25,6 +25,7 @@ class DeviceFolders implements FolderAccess {
   int imports = 0;
   int exports = 0;
   int count = 0;
+  int conditionChecks = 0;
   void Function()? beforeImport;
 
   File file(List<String> path) => File('${root.path}/${path.join('/')}');
@@ -99,8 +100,10 @@ class DeviceFolders implements FolderAccess {
   Future<void> discard(File staged) => staged.delete();
 
   @override
-  Future<SyncConditions> conditions() async =>
-      SyncConditions(wifi: wifi, charging: charging);
+  Future<SyncConditions> conditions() async {
+    conditionChecks++;
+    return SyncConditions(wifi: wifi, charging: charging);
+  }
 }
 
 class CloudFolders extends NextcloudClient {
@@ -272,6 +275,14 @@ void main() {
     expect(cloud.files, hasLength(2));
     await sync.run(value);
     expect(cloud.uploads, 1);
+    final checks = device.conditionChecks;
+    await sync.run(value);
+    expect(
+      device.conditionChecks,
+      checks + 1,
+      reason:
+          'Unchanged files must not repeatedly wake native network monitors.',
+    );
     await sync.disconnect();
     await sync.journal.close();
     sync.dispose();

@@ -670,7 +670,6 @@ class FolderSyncController extends ChangeNotifier {
     if (pair.mode != SyncMode.download) {
       for (final (path, file) in local.values.toList()) {
         _check(pair);
-        await _conditions(pair);
         final receipt = await journal.receipt(pair.id, 'local', path);
         if (receipt != null && receipt['version'] == file.version) {
           final target = remote[_key(_target(receipt))];
@@ -683,6 +682,7 @@ class FolderSyncController extends ChangeNotifier {
         if (remote.containsKey(_key(target))) {
           target = _conflict(path, 'device');
         }
+        await _conditions(pair);
         phase = 'Uploading ${file.name}';
         _notify();
         File? staged;
@@ -728,7 +728,6 @@ class FolderSyncController extends ChangeNotifier {
     if (pair.mode != SyncMode.backup) {
       for (final (path, file) in remote.values.toList()) {
         _check(pair);
-        await _conditions(pair);
         final receipt = await journal.receipt(pair.id, 'remote', path);
         final version = _remoteVersion(file);
         if (receipt != null && receipt['version'] == version) {
@@ -740,6 +739,7 @@ class FolderSyncController extends ChangeNotifier {
         }
         var target = path;
         if (local.containsKey(_key(target))) target = _conflict(path, 'cloud');
+        await _conditions(pair);
         phase = 'Downloading ${file.name}';
         _notify();
         final staged = await access.stage();
