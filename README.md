@@ -24,6 +24,8 @@ Settings → **Support diagnostics** shows at most 40 failures from the current 
 
 Regression checks include viewport-limited construction for a million-photo timeline, bounded encoded-preview memory, and 10,000 random index lookups across 100,000 dates (10.1 million timeline entries). The lookup test reports host elapsed time with a generous 10-second regression ceiling; it is not a mobile frame-rate or startup benchmark. Run `flutter test test/timeline_layout_test.dart test/preview_test.dart` for these checks and `flutter analyze` plus `flutter test` before release.
 
+Android CI shares Gradle dependencies, Flutter/pub caches and SDK packages between release and background-check builds. The SDK cache derives its NDK and platform versions from the pinned Flutter SDK and includes CMake 3.22.1/build-tools 35.0.0; update those explicit versions when changing the Android Gradle toolchain. The emulator job separately caches its API 35 Google APIs x86_64 system image. SDK packages are saved immediately after installation so later build failures do not discard the download cache.
+
 Keep previews labeled as previews and use the existing private preview distribution until the device acceptance gates and production signing are complete. Preview metadata may be rebuilt without migration; originals on the server and current-format offline downloads must remain intact. Bug reports should include the app version, platform, reproduction steps and an explicitly copied diagnostic summary, not credentials or private photos.
 
 ## Install and try on Android

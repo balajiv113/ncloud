@@ -1,0 +1,49 @@
+name: Cached Android toolchain
+description: Reuse the Flutter-selected NDK and Android SDK packages across build jobs.
+
+runs:
+  using: composite
+  steps:
+    - name: Read Flutter Android toolchain versions
+      id: versions
+      shell: bash
+      run: |
+        set -euo pipefail
+        extension="$FLUTTER_ROOT/packages/flutter_tools/gradle/src/main/kotlin/FlutterExtension.kt"
+        ndk=$(sed -n 's/^[[:space:]]*val ndkVersion: String = "\([^"]*\)".*/\1/p' "$extension")
+        platform=$(sed -n 's/^[[:space:]]*val compileSdkVersion: Int = \([0-9]*\).*/\1/p' "$extension")
+        test -n "$ndk"
+        test -n "$platform"
+        echo "sdk-root=${ANDROID_HOME:?ANDROID_HOME is required}" >> "$GITHUB_OUTPUT"
+        echo "ndk=$ndk" >> "$GITHUB_OUTPUT"
+        echo "platform=$platform" >> "$GITHUB_OUTPUT"
+    - name: Restore shared Android SDK packages
+      id: sdk
+      uses: actions/cache/restore@v4
+      with:
+        path: |
+          ${{ steps.versions.outputs.sdk-root }}/ndk/${{ steps.versions.outputs.ndk }}
+          ${{ steps.versions.outputs.sdk-root }}/cmake/3.22.1
+          ${{ steps.versions.outputs.sdk-root }}/platforms/android-${{ steps.versions.outputs.platform }}
+          ${{ steps.versions.outputs.sdk-root }}/build-tools/35.0.0
+        key: android-sdk-v1-${{ runner.os }}-${{ runner.arch }}-ndk-${{ steps.versions.outputs.ndk }}-platform-${{ steps.versions.outputs.platform }}-cmake-3.22.1-tools-35.0.0
+    - name: Install missing Android SDK packages
+      if: steps.sdk.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        sdkmanager --install \
+          "ndk;${{ steps.versions.outputs.ndk }}" \
+          "platforms;android-${{ steps.versions.outputs.platform }}" \
+          "cmake;3.22.1" \
+          "build-tools;35.0.0"
+    - name: Save shared Android SDK packages
+      if: steps.sdk.outputs.cache-hit != 'true' && github.event_name != 'pull_request'
+      uses: actions/cache/save@v4
+      with:
+        path: |
+          ${{ steps.versions.outputs.sdk-root }}/ndk/${{ steps.versions.outputs.ndk }}
+          ${{ steps.versions.outputs.sdk-root }}/cmake/3.22.1
+          ${{ steps.versions.outputs.sdk-root }}/platforms/android-${{ steps.versions.outputs.platform }}
+          ${{ steps.versions.outputs.sdk-root }}/build-tools/35.0.0
+        key: ${{ steps.sdk.outputs.cache-primary-key }}
