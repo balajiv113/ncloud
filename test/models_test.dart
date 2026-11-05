@@ -56,7 +56,7 @@ void main() {
   });
 
   test(
-    'Smart albums skip empty and grouping folders and keep nested collections',
+    'Smart albums stop at the first media folder and include nested media within it',
     () {
       CloudFile photo(List<String> path) => CloudFile(
         path: path,
@@ -82,12 +82,12 @@ void main() {
         photo(['Other', 'Excluded', 'd.jpg']),
       ];
       final albums = buildSmartAlbums(files, ['Photos']);
-      expect(albums.map((a) => a.name), ['Kyoto', 'Kyoto', 'Temples']);
+      expect(albums.map((a) => a.name), ['Kyoto', 'Kyoto']);
       expect(
         albums.where((a) => a.path.contains('Japan')).first.files,
         hasLength(2),
       );
-      expect(albums.map((a) => a.key).toSet(), hasLength(3));
+      expect(albums.map((a) => a.key).toSet(), hasLength(2));
       expect(
         albums.any(
           (a) =>

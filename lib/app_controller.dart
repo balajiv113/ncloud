@@ -621,7 +621,7 @@ class AppController extends ChangeNotifier {
       return;
     }
     final generation = ++_catalogueVersion;
-    final key = 'album-catalogue|$rootKey';
+    final key = 'album-catalogue-v2|$rootKey';
     if (_catalogueRoot != rootKey) {
       _catalogue.clear();
       _catalogueUpdated = null;
@@ -678,7 +678,6 @@ class AppController extends ChangeNotifier {
         List<MemoryFolder> children;
         List<CloudFile> covers;
         if (memoriesAvailable == true) {
-          children = await client.memoryFolders(session, folder.path);
           final direct = await client.memoryDays(
             session,
             path: folder.path,
@@ -690,13 +689,18 @@ class AppController extends ChangeNotifier {
               : folder.previews.isNotEmpty
               ? folder.previews
               : await client.memoryCover(session, folder.path, direct.first.id);
+          children = direct.isEmpty
+              ? await client.memoryFolders(session, folder.path)
+              : [];
         } else {
           final contents = await client.listFiles(session, folder.path);
           covers = contents.where((f) => f.isMedia).take(1).toList();
-          children = contents
-              .where((f) => f.isDirectory)
-              .map((f) => MemoryFolder(f.path, []))
-              .toList();
+          children = covers.isNotEmpty
+              ? []
+              : contents
+                    .where((f) => f.isDirectory)
+                    .map((f) => MemoryFolder(f.path, []))
+                    .toList();
         }
         if (generation != _catalogueVersion ||
             account != session ||
@@ -707,11 +711,13 @@ class AppController extends ChangeNotifier {
           final album = SmartAlbum(path: folder.path, files: covers);
           found[album.key] = album;
         }
-        queue.addAll(
-          memoriesAvailable == true
-              ? children.where((f) => f.previews.isNotEmpty)
-              : children,
-        );
+        if (covers.isEmpty) {
+          queue.addAll(
+            memoriesAvailable == true
+                ? children.where((f) => f.previews.isNotEmpty)
+                : children,
+          );
+        }
         discoveredFolders++;
         _catalogue
           ..clear()

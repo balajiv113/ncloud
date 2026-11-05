@@ -28,6 +28,9 @@ http.Response davForIds(http.Request request) {
   final ids = RegExp(
     r'<d:literal>(\d+)</d:literal>',
   ).allMatches(request.body).map((m) => m[1]!).toList();
+  if (ids.length > 100) {
+    return http.Response('Search operator limit exceeded', 500);
+  }
   return http.Response(
     multistatus(
       ids
@@ -48,6 +51,138 @@ http.Response davForIds(http.Request request) {
 }
 
 void main() {
+  test(
+    'indexed album discovery never requests subfolders once direct media is found',
+    () async {
+      final visited = <String>[];
+      final c = AppController(
+        store: MemoryStore(),
+        client: NextcloudClient(
+          transport: MockClient((request) async {
+            if (request.method == 'PROPFIND') return http.Response('', 404);
+            final folder = request.url.queryParameters['folder'];
+            visited.add('${request.url.pathSegments.last}:$folder');
+            if (request.url.path.endsWith('/folders/sub')) {
+              expect(folder, '/Photos');
+              return jsonResponse([
+                {
+                  'name': 'Trip',
+                  'previews': [
+                    {'fileid': 42},
+                  ],
+                },
+                {'name': 'Empty', 'previews': []},
+              ]);
+            }
+            if (request.url.queryParameters['limit'] == null) {
+              return jsonResponse(index());
+            }
+            return jsonResponse(
+              folder == '/Photos/Trip'
+                  ? [
+                      {'dayid': 21000, 'count': 4},
+                    ]
+                  : [],
+            );
+          }),
+        ),
+      )..account = account.withPhotoRoot(['Photos']);
+      addTearDown(c.dispose);
+      await c.selectTab(4);
+      expect(c.error, isNull);
+      expect(c.smartAlbums.map((a) => a.name), ['Trip']);
+      expect(visited.where((path) => path.startsWith('sub:')), ['sub:/Photos']);
+      expect(c.discoveredFolders, 2);
+      expect(c.smartAlbums.single.files.single.id, '42');
+    },
+  );
+
+  test(
+    'WebDAV album discovery also stops at the first media folder per branch',
+    () async {
+      final paths = <String>[];
+      String directory(String path) =>
+          responseEntry(href: '/nextcloud/remote.php/dav/files/alice/$path/')
+              .replaceFirst(
+                '<d:resourcetype/>',
+                '<d:resourcetype><d:collection/></d:resourcetype>',
+              )
+              .replaceFirst('image/jpeg', 'httpd/unix-directory');
+      final c =
+          AppController(
+              store: MemoryStore(),
+              client: NextcloudClient(
+                transport: MockClient((request) async {
+                  if (request.url.path.contains('/dav/photos/')) {
+                    return http.Response('', 404);
+                  }
+                  expect(request.method, 'PROPFIND');
+                  paths.add(request.url.path);
+                  if (request.url.path.endsWith('/Photos')) {
+                    return http.Response(
+                      multistatus(
+                        directory('Photos/Trip') + directory('Photos/Empty'),
+                      ),
+                      207,
+                    );
+                  }
+                  if (request.url.path.endsWith('/Trip')) {
+                    return http.Response(
+                      multistatus(
+                        responseEntry(
+                              href:
+                                  '/nextcloud/remote.php/dav/files/alice/Photos/Trip/a.jpg',
+                            ) +
+                            directory('Photos/Trip/Nested'),
+                      ),
+                      207,
+                    );
+                  }
+                  expect(request.url.path, endsWith('/Empty'));
+                  return http.Response(multistatus(''), 207);
+                }),
+              ),
+            )
+            ..account = account.withPhotoRoot(['Photos'])
+            ..memoriesAvailable = false;
+      addTearDown(c.dispose);
+      await c.selectTab(4);
+      expect(c.error, isNull);
+      expect(c.smartAlbums.map((a) => a.name), ['Trip']);
+      expect(paths, hasLength(3));
+      expect(paths.any((path) => path.contains('Nested')), isFalse);
+    },
+  );
+
+  test(
+    'a source with direct media is a single album and never lists its children',
+    () async {
+      final c = AppController(
+        store: MemoryStore(),
+        client: NextcloudClient(
+          transport: MockClient((request) async {
+            if (request.method == 'PROPFIND') return http.Response('', 404);
+            expect(request.url.path, isNot(endsWith('/folders/sub')));
+            if (request.url.path.endsWith('/days')) {
+              return jsonResponse([
+                {'dayid': 21000, 'count': 4},
+              ]);
+            }
+            expect(request.url.queryParameters['limit'], '1');
+            return jsonResponse([
+              {'fileid': 42, 'etag': 'cover'},
+            ]);
+          }),
+        ),
+      )..account = account.withPhotoRoot(['Photos']);
+      addTearDown(c.dispose);
+      await c.selectTab(4);
+      expect(c.error, isNull);
+      expect(c.smartAlbums.single.path, ['Photos']);
+      expect(c.discoveredFolders, 1);
+    },
+  );
+
   test(
     'an empty index stops without fetching details or falling back to an entire drive scan',
     () async {
@@ -136,7 +271,7 @@ void main() {
   );
 
   test(
-    'indexed days disable preloading; one scroll batch resolves real paths in one DAV request',
+    'scroll batches resolve real paths below the Nextcloud search operator limit',
     () async {
       final calls = <http.Request>[];
       final c = AppController(
@@ -177,15 +312,16 @@ void main() {
       expect(c.memoriesAvailable, isTrue);
       expect(c.indexedDays, hasLength(30));
       expect(c.items, hasLength(180));
-      expect(calls, hasLength(3));
+      expect(calls, hasLength(4));
       expect(c.items.first.path.first, 'Photos');
       expect(c.items.first.taken, isNotNull);
       expect(c.items.first.modified, DateTime.utc(2026, 11, 4, 10, 11, 12));
       expect(c.items.first.etag, startsWith('revision-'));
       await c.loadNextPage();
       expect(c.items, hasLength(360));
-      expect(calls, hasLength(5));
+      expect(calls, hasLength(7));
       expect(c.hasMore, isTrue);
+      expect(c.error, isNull);
       await c.selectTab(1);
       final before = calls.length;
       await c.selectTab(0);
@@ -355,6 +491,12 @@ void main() {
         isFalse,
       );
       expect(calls.where((r) => r.method == 'SEARCH'), isEmpty);
+      expect(
+        calls
+            .where((r) => r.url.path.endsWith('/folders/sub'))
+            .map((r) => r.url.queryParameters['folder']),
+        ['/Photos', '/Photos/Travel'],
+      );
       final count = calls.length;
       await c.selectTab(4);
       expect(calls.length, count);
@@ -459,7 +601,7 @@ void main() {
       addTearDown(c.dispose);
       await c.load();
       expect(c.items, hasLength(450));
-      expect(requests.where((r) => r.method == 'SEARCH'), hasLength(3));
+      expect(requests.where((r) => r.method == 'SEARCH'), hasLength(5));
       expect(requests.any((r) => r.url.path.endsWith('/days/20999')), isFalse);
       expect(c.hasMore, isTrue);
     },

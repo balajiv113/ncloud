@@ -315,8 +315,14 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byTooltip('Library'), findsNothing);
       expect(find.text('Kyoto'), findsOneWidget);
+      expect(find.text('Favorites'), findsNothing);
+      expect(find.textContaining('Photo source:'), findsNothing);
+      expect(find.text('Your albums'), findsNothing);
+      expect(find.widgetWithText(ChoiceChip, 'Travel'), findsNothing);
       expect(find.text('Empty folder'), findsNothing);
       expect(find.text('Best days'), findsNothing);
+      await tester.tap(find.byTooltip('Album source'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Nextcloud albums'));
       await tester.pumpAndSettle();
       expect(find.text('Best days'), findsOneWidget);
@@ -326,7 +332,11 @@ void main() {
       expect(c.items, hasLength(3));
       await tester.tap(find.byTooltip('Back'));
       await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('View options'));
+      await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(ChoiceChip, 'Travel'));
+      await tester.pumpAndSettle();
+      await tester.tapAt(const Offset(15, 20));
       await tester.pumpAndSettle();
       expect(find.text('Coast & country'), findsNothing);
       await tester.tap(find.text('View all photos'));
@@ -334,6 +344,39 @@ void main() {
       expect(c.directory, ['Photos', 'Travel']);
       expect(c.items, hasLength(8));
       expect(find.bySemanticsLabel('Alpine morning.jpg'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'clean Albums puts covers first and collections stay one tap away',
+    (tester) async {
+      tester.view.physicalSize = const Size(412, 915);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final c = AppController(store: MemoryStore());
+      await tester.pumpWidget(NcloudApp(controller: c));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Try demo'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Albums'));
+      await tester.pumpAndSettle();
+      expect(tester.getTopLeft(find.text('Kyoto')).dy, lessThan(440));
+      await tester.tap(find.byTooltip('Collections'));
+      await tester.pumpAndSettle();
+      for (final name in [
+        'Favorites',
+        'Shared',
+        'Offline',
+        'Recently deleted',
+      ]) {
+        expect(find.text(name), findsOneWidget);
+      }
+      await tester.tap(find.text('Favorites'));
+      await tester.pumpAndSettle();
+      expect(c.tab, 2);
+      expect(c.items.every((f) => f.favorite), isTrue);
       expect(tester.takeException(), isNull);
     },
   );

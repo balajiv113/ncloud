@@ -31,6 +31,8 @@ class NextcloudClient {
   int _activePreviews = 0;
   static const _timeout = Duration(seconds: 45);
   static const photoLimit = 200;
+  // Nextcloud's DAV FileSearchBackend rejects more than 100 comparisons.
+  static const fileIdLimit = 100;
   static const _properties = '''
     <d:displayname/><d:resourcetype/><d:getcontenttype/>
     <d:getcontentlength/><d:getlastmodified/><d:getetag/><oc:fileid/><oc:favorite/>
@@ -48,7 +50,7 @@ class NextcloudClient {
     final request = http.Request(method, uri)
       ..followRedirects = false
       ..headers.addAll({
-        'User-Agent': 'ncloud/0.5.0',
+        'User-Agent': 'ncloud/0.5.1',
         if (account != null) 'Authorization': account.authorization,
         ...headers,
       });
@@ -498,8 +500,8 @@ class NextcloudClient {
     final ids = metadata.keys.toList();
     final files = <CloudFile>[];
     // Resolve real DAV paths in batches, never an info request per photo.
-    for (var start = 0; start < ids.length; start += photoLimit) {
-      final batch = ids.skip(start).take(photoLimit).toList();
+    for (var start = 0; start < ids.length; start += fileIdLimit) {
+      final batch = ids.skip(start).take(fileIdLimit).toList();
       files.addAll(await search(account, fileIds: batch, limit: batch.length));
     }
     return [
@@ -941,7 +943,7 @@ class NextcloudClient {
         'Authorization': account.authorization,
         'Content-Type': 'application/octet-stream',
         'If-None-Match': '*',
-        'User-Agent': 'ncloud/0.5.0',
+        'User-Agent': 'ncloud/0.5.1',
       });
     try {
       final response = await http.Response.fromStream(

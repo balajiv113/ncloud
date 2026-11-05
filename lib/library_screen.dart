@@ -365,6 +365,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
                                       ? '${_selected.length} selected'
                                       : detail
                                       ? title
+                                      : _albumHome
+                                      ? 'Albums'
                                       : 'ncloud',
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
@@ -386,6 +388,12 @@ class _LibraryScreenState extends State<LibraryScreen> {
                                 ),
                               ),
                             if (!_selecting) ...[
+                              if (_albumHome)
+                                IconButton(
+                                  tooltip: 'Collections',
+                                  onPressed: _collections,
+                                  icon: const Icon(Icons.widgets_outlined),
+                                ),
                               IconButton(
                                 tooltip: 'Search loaded items',
                                 icon: Icon(
@@ -476,7 +484,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                               ),
                             ),
                           ),
-                        if (_drive || _albumHome)
+                        if (_drive)
                           SliverToBoxAdapter(
                             child: Padding(
                               padding: const EdgeInsets.fromLTRB(18, 8, 12, 12),
@@ -784,6 +792,40 @@ class _LibraryScreenState extends State<LibraryScreen> {
     ),
   );
 
+  Future<void> _collections() async {
+    final tab = await showModalBottomSheet<int>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final (label, icon, tab) in [
+              ('Favorites', Icons.favorite_border, 2),
+              ('Shared', Icons.people_outline, 5),
+              ('Offline', Icons.offline_bolt_outlined, 6),
+              ('Recently deleted', Icons.restore_from_trash_outlined, 3),
+            ])
+              ListTile(
+                leading: Icon(icon),
+                title: Text(label),
+                onTap: () => Navigator.pop(context, tab),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || tab == null) return;
+    if (tab == 3) {
+      await Navigator.push(
+        context,
+        MaterialPageRoute<void>(builder: (_) => TrashScreen(controller: c)),
+      );
+    } else {
+      _navigate(tab);
+    }
+  }
+
   List<Widget> _albumHomeSlivers() {
     final root = c.photoRoot;
     final smartAlbums = c.smartAlbums;
@@ -807,13 +849,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
             ? dates[b.key]!.compareTo(dates[a.key]!)
             : dates[a.key]!.compareTo(dates[b.key]!),
       );
-    }
-    final groups = <String, List<String>>{};
-    for (final album in smartAlbums) {
-      for (var depth = root.length + 1; depth < album.path.length; depth++) {
-        final path = album.path.take(depth).toList();
-        groups[path.map(Uri.encodeComponent).join('/')] = path;
-      }
+    } else if (_sort == LibrarySort.name) {
+      albums.sort(
+        (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+      );
     }
     final native = c.nativeAlbums
         .where(
@@ -823,82 +862,53 @@ class _LibraryScreenState extends State<LibraryScreen> {
         )
         .toList();
     return [
-      if (c.discoveringAlbums)
-        SliverToBoxAdapter(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(18, 0, 18, 12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const LinearProgressIndicator(minHeight: 2),
-                const SizedBox(height: 8),
-                Text(
-                  'Discovering albums: ${c.discoveredFolders} folders checked',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-              ],
-            ),
-          ),
-        ),
       SliverToBoxAdapter(
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(18, 0, 18, 14),
-          child: Text(
-            'Photo source: My drive${root.isEmpty ? '' : ' / ${root.join(' / ')}'}',
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-        ),
-      ),
-      SliverToBoxAdapter(
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
           child: Row(
             children: [
-              for (final (label, icon, tab) in [
-                ('Favorites', Icons.favorite_border, 2),
-                ('Shared', Icons.people_outline, 5),
-                ('Offline', Icons.offline_bolt_outlined, 6),
-                ('Recently deleted', Icons.restore_from_trash_outlined, 3),
-              ])
-                Padding(
-                  padding: const EdgeInsets.only(right: 8),
-                  child: ActionChip(
-                    avatar: Icon(icon, size: 17),
-                    label: Text(label),
-                    onPressed: () {
-                      if (tab == 3) {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute<void>(
-                            builder: (_) => TrashScreen(controller: c),
-                          ),
-                        );
-                      } else {
-                        _navigate(tab);
-                      }
-                    },
+              PopupMenuButton<bool>(
+                tooltip: 'Album source',
+                initialValue: _showNative,
+                onSelected: (value) => setState(() {
+                  _showNative = value;
+                  _group = null;
+                }),
+                itemBuilder: (_) => [
+                  const PopupMenuItem(
+                    value: false,
+                    child: Text('Smart albums'),
+                  ),
+                  const PopupMenuItem(
+                    value: true,
+                    child: Text('Nextcloud albums'),
+                  ),
+                ],
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        _showNative ? 'Nextcloud albums' : 'Smart albums',
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
+                      const Icon(Icons.expand_more, size: 18),
+                    ],
                   ),
                 ),
-            ],
-          ),
-        ),
-      ),
-      SliverToBoxAdapter(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-          child: Wrap(
-            spacing: 8,
-            children: [
-              ChoiceChip(
-                label: const Text('Smart albums'),
-                selected: !_showNative,
-                onSelected: (_) => setState(() => _showNative = false),
               ),
-              ChoiceChip(
-                label: const Text('Nextcloud albums'),
-                selected: _showNative,
-                onSelected: (_) => setState(() => _showNative = true),
+              const Spacer(),
+              if (c.discoveringAlbums && !_showNative)
+                const SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              const SizedBox(width: 8),
+              Text(
+                '${_showNative ? native.length : albums.length}',
+                style: Theme.of(context).textTheme.labelSmall,
               ),
             ],
           ),
@@ -940,44 +950,18 @@ class _LibraryScreenState extends State<LibraryScreen> {
               .toList(),
         ),
       ],
-      if (c.nativeAlbumError case final error?)
+      if (_showNative && c.nativeAlbumError != null)
         SliverToBoxAdapter(
           child: Padding(
             padding: const EdgeInsets.all(16),
-            child: MessageCard(message: error, isError: true, onRetry: c.load),
+            child: MessageCard(
+              message: c.nativeAlbumError!,
+              isError: true,
+              onRetry: c.load,
+            ),
           ),
         ),
       if (!_showNative) ...[
-        _section('Your albums', subtitle: 'Across all subfolders'),
-        if (groups.isNotEmpty)
-          SliverToBoxAdapter(
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-              child: Row(
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.only(right: 7),
-                    child: ChoiceChip(
-                      label: const Text('All'),
-                      selected: _group == null,
-                      onSelected: (_) => setState(() => _group = null),
-                    ),
-                  ),
-                  for (final path in groups.values)
-                    Padding(
-                      padding: const EdgeInsets.only(right: 7),
-                      child: ChoiceChip(
-                        label: Text(path.skip(root.length).join(' / ')),
-                        selected:
-                            _group != null && listPathEquals(_group!, path),
-                        onSelected: (_) => setState(() => _group = path),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          ),
         if (_group != null)
           SliverToBoxAdapter(
             child: Padding(
@@ -1007,7 +991,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                     ? 'No matching Smart albums.'
                     : c.discoveringAlbums
                     ? 'Discovering your photo folders...'
-                    : 'No photos or videos in this source. Empty folders stay hidden. Choose another photo source above.',
+                    : 'No photo albums yet. Choose a photo source in View options.',
               ),
             ),
           ),
@@ -1024,7 +1008,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                             .skip(root.length)
                             .take(a.path.length - root.length - 1)
                             .join(' / '),
-                  count: c.demo ? '${a.files.length} items' : 'Photos inside',
+                  count: c.demo ? '${a.files.length} items' : '',
                   cover: a.files.first,
                   open: () => _openSmart(a.path),
                 ),
@@ -1034,32 +1018,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
       ],
     ];
   }
-
-  Widget _section(String title, {String? subtitle}) => SliverToBoxAdapter(
-    child: Padding(
-      padding: const EdgeInsets.fromLTRB(18, 10, 18, 12),
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(
-              title,
-              style: Theme.of(
-                context,
-              ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
-            ),
-          ),
-          if (subtitle != null)
-            Flexible(
-              child: Text(
-                subtitle,
-                textAlign: TextAlign.end,
-                style: Theme.of(context).textTheme.labelSmall,
-              ),
-            ),
-        ],
-      ),
-    ),
-  );
 
   Widget _albumCards(
     List<
@@ -1143,7 +1101,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
                           color: Theme.of(context).colorScheme.onSurfaceVariant,
                         ),
                       ),
-                    Text(album.count, style: const TextStyle(fontSize: 11)),
+                    if (album.count.isNotEmpty)
+                      Text(album.count, style: const TextStyle(fontSize: 11)),
                   ],
                 ),
               ),
@@ -1617,6 +1576,19 @@ class _LibraryScreenState extends State<LibraryScreen> {
   );
 
   Future<void> _viewOptions() async {
+    final albumGroups = <String, List<String>>{};
+    if (_albumHome && !_showNative) {
+      for (final album in c.smartAlbums) {
+        for (
+          var depth = c.photoRoot.length + 1;
+          depth < album.path.length;
+          depth++
+        ) {
+          final path = album.path.take(depth).toList();
+          albumGroups[path.map(Uri.encodeComponent).join('/')] = path;
+        }
+      }
+    }
     await showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
@@ -1634,6 +1606,35 @@ class _LibraryScreenState extends State<LibraryScreen> {
                   style: Theme.of(context).textTheme.titleLarge,
                 ),
                 const SizedBox(height: 14),
+                if (_albumHome && !_showNative && albumGroups.isNotEmpty) ...[
+                  const Text('Group'),
+                  Wrap(
+                    spacing: 8,
+                    children: [
+                      ChoiceChip(
+                        label: const Text('All'),
+                        selected: _group == null,
+                        onSelected: (_) {
+                          setState(() => _group = null);
+                          update(() {});
+                        },
+                      ),
+                      for (final path in albumGroups.values)
+                        ChoiceChip(
+                          label: Text(
+                            path.skip(c.photoRoot.length).join(' / '),
+                          ),
+                          selected:
+                              _group != null && listPathEquals(_group!, path),
+                          onSelected: (_) {
+                            setState(() => _group = path);
+                            update(() {});
+                          },
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                ],
                 if (!_drive && !_albumHome) ...[
                   const Text('Show'),
                   Wrap(
@@ -1704,17 +1705,21 @@ class _LibraryScreenState extends State<LibraryScreen> {
                     contentPadding: EdgeInsets.zero,
                     leading: const Icon(Icons.folder_open_outlined),
                     title: const Text('Choose photo source'),
+                    subtitle: Text(
+                      'My drive${c.photoRoot.isEmpty ? '' : ' / ${c.photoRoot.join(' / ')}'}',
+                    ),
                     onTap: () {
                       Navigator.pop(sheetContext);
                       _chooseSource();
                     },
                   ),
-                Text(
-                  c.memoriesAvailable == true
-                      ? 'Memories capture dates. Photos load as you scroll.'
-                      : 'WebDAV modification dates. Photos load as you scroll.',
-                  style: const TextStyle(fontSize: 11),
-                ),
+                if (!_albumHome)
+                  Text(
+                    c.memoriesAvailable == true
+                        ? 'Memories capture dates. Photos load as you scroll.'
+                        : 'WebDAV modification dates. Photos load as you scroll.',
+                    style: const TextStyle(fontSize: 11),
+                  ),
               ],
             ),
           ),

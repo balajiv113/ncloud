@@ -30,15 +30,26 @@ void main() {
         recursive: false,
       );
       expect(days, isNotEmpty);
+      expect(days!.fold<int>(0, (sum, day) => sum + day.count), 201);
+      final allFiles = await client.listFiles(session, ['ncloud-index']);
+      // Reproduce the server's operator-limit failure independently of paging.
+      await expectLater(
+        client.search(
+          session,
+          fileIds: allFiles.take(101).map((f) => f.id!).toList(),
+        ),
+        throwsA(isA<CloudException>()),
+      );
       final files = await client.memoryDayFiles(
         session,
-        [days!.first.id],
+        days.map((d) => d.id).toList(),
         path: ['ncloud-index'],
       );
+      expect(files, hasLength(201));
       final seed = files.singleWhere((f) => f.name == 'seed.png');
       expect(seed.path, ['ncloud-index', 'seed.png']);
       expect(seed.taken, isNotNull);
-      expect(seed.captureDay, days.first.id);
+      expect(days.map((d) => d.id), contains(seed.captureDay));
       expect(seed.etag, isNotEmpty);
       expect(await client.preview(session, seed), isNotEmpty);
     },

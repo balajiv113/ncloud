@@ -276,6 +276,14 @@ List<SmartAlbum> buildSmartAlbums(List<CloudFile> files, List<String> root) {
     final key = path.map(Uri.encodeComponent).join('/');
     parents.putIfAbsent(key, () => SmartAlbum(path: path, files: []));
   }
+  final candidates = parents.values.toList();
+  parents.removeWhere(
+    (key, album) => candidates.any(
+      (parent) =>
+          parent.path.length < album.path.length &&
+          pathStartsWith(album.path, parent.path),
+    ),
+  );
   for (final file in media) {
     for (var depth = root.length; depth < file.path.length; depth++) {
       final key = file.path.take(depth).map(Uri.encodeComponent).join('/');
