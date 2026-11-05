@@ -211,6 +211,7 @@ void main() {
     'simultaneous scroll events coalesce and cancelled results do not advance the cached cursor',
     () async {
       final pending = Completer<http.Response>();
+      final started = Completer<void>();
       var details = 0;
       final c = AppController(
         store: MemoryStore(),
@@ -224,7 +225,10 @@ void main() {
               return jsonResponse(index());
             }
             details++;
-            if (details == 2) return pending.future;
+            if (details == 2) {
+              started.complete();
+              return pending.future;
+            }
             final day = int.parse(
               request.url.pathSegments.last.split(',').first,
             );
@@ -238,6 +242,7 @@ void main() {
       await c.load();
       final first = c.items.single.key;
       final next = c.loadNextPage();
+      await started.future;
       await c.loadNextPage();
       expect(details, 2);
       await c.selectTab(1);
@@ -252,6 +257,41 @@ void main() {
       await c.loadNextPage();
       expect(details, 3);
       expect(c.items, hasLength(2));
+    },
+  );
+
+  test(
+    'revisiting Albums joins an in-progress discovery instead of restarting the folder walk',
+    () async {
+      final started = Completer<void>();
+      final pending = Completer<http.Response>();
+      var walks = 0;
+      final c = AppController(
+        store: MemoryStore(),
+        client: NextcloudClient(
+          transport: MockClient((request) async {
+            if (request.method == 'PROPFIND')
+              return http.Response(multistatus(''), 207);
+            if (request.url.path.endsWith('/folders/sub')) {
+              walks++;
+              started.complete();
+              return pending.future;
+            }
+            return jsonResponse([]);
+          }),
+        ),
+      )..account = account.withPhotoRoot(['Photos']);
+      addTearDown(c.dispose);
+      final first = c.selectTab(4);
+      await started.future;
+      await c.selectTab(1);
+      final revisited = c.selectTab(4);
+      pending.complete(jsonResponse([]));
+      await Future.wait([first, revisited]);
+      expect(walks, 1);
+      expect(c.loading, isFalse);
+      expect(c.discoveringAlbums, isFalse);
+      expect(c.error, isNull);
     },
   );
 

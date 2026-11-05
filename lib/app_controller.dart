@@ -80,6 +80,8 @@ class AppController extends ChangeNotifier {
   List<MemoryDay>? _initialDays;
   Future<void>? _detectingMemories;
   int _catalogueVersion = 0;
+  Future<void>? _catalogueTask;
+  Account? _catalogueSession;
   bool get albumHome =>
       tab == 4 && !smartAlbumOpen && activeNativeAlbum == null;
   List<MemoryDay> get indexedDays => _activeListing?.days ?? [];
@@ -266,6 +268,8 @@ class AppController extends ChangeNotifier {
       _catalogueVersion++;
       _catalogueUpdated = null;
       _catalogueRoot = null;
+      _catalogueTask = null;
+      _catalogueSession = null;
       catalogueError = null;
       memoriesAvailable = null;
       _initialDays = null;
@@ -390,7 +394,19 @@ class AppController extends ChangeNotifier {
       }
       if (session == null) return;
       if (albumHome) {
-        await _loadCatalogue(session, refresh: refresh);
+        final pending = _catalogueTask;
+        if (!refresh && pending != null && _catalogueSession == session) {
+          await pending;
+        } else {
+          final task = _loadCatalogue(session, refresh: refresh);
+          _catalogueTask = task;
+          _catalogueSession = session;
+          try {
+            await task;
+          } finally {
+            if (identical(_catalogueTask, task)) _catalogueTask = null;
+          }
+        }
         return;
       }
       _MediaListing? previous = listingKey == null
@@ -747,6 +763,8 @@ class AppController extends ChangeNotifier {
     _listings.clear();
     _catalogueUpdated = null;
     _catalogueVersion++;
+    _catalogueTask = null;
+    _catalogueSession = null;
     discoveringAlbums = false;
     _initialDays = null;
     await cache?.clearDocuments();
