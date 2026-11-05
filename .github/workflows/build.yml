@@ -170,7 +170,7 @@ jobs:
           gh release create "v0.5.5-preview.${{ github.run_number }}" ncloud-android.apk \
             --target "${{ github.sha }}" --prerelease \
             --title "ncloud Android preview #${{ github.run_number }}" \
-            --notes "ncloud 0.5.5: Fixes Android SQLite initialization rejecting row-returning configuration statements, reported as a SQLite 0 metadata-save failure. No cache reset is required; saved originals are untouched. Includes cached startup and Smart album reuse, metadata-priority preview eviction with bounded storage recovery, the SQLite catalogue, idle-safe monitoring, People and the all-photo Map. Updates reuse the cached development signer."
+            --notes "ncloud 0.5.5: Adds non-destructive Folder sync under Your space: backup, download and additive two-way merge. Never propagates deletions or overwrites; conflicts keep separate copies. Android supports saved folder grants and optional repeat while the app is open. iPhone supports reusable Files-folder access and manual runs, not Apple Photos backup or unattended background sync. Wi-Fi-only defaults on, charging-only is optional, and completed files are checkpointed outside the browsing cache. Includes the Android SQLite 0 fix, cache-first library, People and Map. Updates reuse the cached development signer."
 
   ios:
     if: github.event_name == 'workflow_dispatch' && inputs.build_ios

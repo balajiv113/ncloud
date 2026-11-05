@@ -1425,6 +1425,42 @@ class NextcloudClient {
     }
   }
 
+  /// Downloads exactly the revision inventoried by folder sync.
+  Future<http.StreamedResponse> downloadVersion(
+    Account account,
+    CloudFile file,
+  ) async {
+    if (file.etag?.isNotEmpty != true) {
+      throw const CloudException('A file revision is required for safe sync.');
+    }
+    final tag = file.etag!;
+    if (tag.startsWith('W/')) {
+      throw const CloudException(
+        'Safe sync requires a strong server file revision.',
+      );
+    }
+    final request = http.Request('GET', fileUri(account, file))
+      ..followRedirects = false
+      ..headers['Authorization'] = account.authorization
+      ..headers['If-Match'] = tag.startsWith('"') ? tag : '"$tag"';
+    try {
+      final response = await _transport.send(request).timeout(_timeout);
+      if (response.statusCode != 200) {
+        await response.stream.drain<void>().timeout(_timeout);
+        throw statusError(response.statusCode);
+      }
+      return response;
+    } on TimeoutException {
+      throw const CloudException(
+        'Sync download timed out. Run again to resume.',
+      );
+    } on http.ClientException {
+      throw const CloudException(
+        'Sync download interrupted. Run again to resume.',
+      );
+    }
+  }
+
   Future<Uint8List> preview(
     Account account,
     CloudFile file, {

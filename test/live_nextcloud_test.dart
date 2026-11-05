@@ -225,7 +225,24 @@ void main() {
       expect(photo.modified, isNotNull);
 
       await expectLater(
-        client.upload(account, path, Stream.value(bytes), bytes.length),
+        client.upload(account, path, Stream.value([1, 2, 3]), 3),
+        throwsA(isA<CloudException>()),
+      );
+      final revisionDownload = await client.downloadVersion(account, photo);
+      expect(
+        await revisionDownload.stream.expand((chunk) => chunk).toList(),
+        bytes,
+      );
+      await expectLater(
+        client.downloadVersion(
+          account,
+          CloudFile(
+            path: photo.path,
+            name: photo.name,
+            isDirectory: false,
+            etag: '"not-the-current-revision"',
+          ),
+        ),
         throwsA(isA<CloudException>()),
       );
       await client.setFavorite(account, photo, true);

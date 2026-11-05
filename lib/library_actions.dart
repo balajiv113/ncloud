@@ -1,8 +1,11 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
 
 import 'app_controller.dart';
+import 'folder_sync_screen.dart';
 import 'models.dart';
 import 'screens.dart';
 
@@ -640,12 +643,28 @@ class SettingsScreen extends StatelessWidget {
               'Dates use file modification time. Load older pages as you browse. Albums are real folders, not duplicate uploads.',
             ),
           ),
+          if (!controller.demo && (Platform.isAndroid || Platform.isIOS))
+            ListTile(
+              leading: const Icon(Icons.sync),
+              title: const Text('Folder sync'),
+              subtitle: Text(
+                Platform.isIOS
+                    ? 'Selected Files folders · run manually · no deletions'
+                    : 'Saved folder pairs · no deletions or overwrites',
+              ),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => Navigator.of(context).push<void>(
+                MaterialPageRoute(
+                  builder: (_) => FolderSyncScreen(controller: controller),
+                ),
+              ),
+            ),
           if (!controller.demo) _CacheTile(controller: controller),
           const ListTile(
             leading: Icon(Icons.construction_outlined),
             title: Text('Still on the roadmap'),
             subtitle: Text(
-              'Automatic camera backup, folder sync, EXIF capture dates, maps, photo editing, Live Photos and multi-account libraries. AI features are intentionally excluded.',
+              'Automatic camera-library backup, background folder transfers, photo editing, Live Photos playback and multi-account libraries.',
             ),
           ),
           const ListTile(

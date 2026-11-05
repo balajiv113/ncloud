@@ -42,6 +42,7 @@ class _NcloudAppState extends State<NcloudApp> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     widget.controller.setBrowsingActive(state == AppLifecycleState.resumed);
+    widget.controller.setSyncForeground(state == AppLifecycleState.resumed);
   }
 
   @override

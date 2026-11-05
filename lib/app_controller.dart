@@ -10,6 +10,7 @@ import 'package:path_provider/path_provider.dart';
 import 'demo.dart';
 import 'discovery_models.dart';
 import 'file_store.dart';
+import 'folder_sync.dart';
 import 'local_cache.dart';
 import 'models.dart';
 import 'nextcloud_client.dart';
@@ -60,7 +61,9 @@ class AppController extends ChangeNotifier {
     NextcloudClient? client,
     this.cache,
     this.pathlessTimeline = false,
+    FolderSyncController? folderSyncController,
   }) : client = client ?? NextcloudClient() {
+    _folderSync = folderSyncController;
     cache?.onWriteError = (message) {
       if (_disposed || notice == message) return;
       notice = message;
@@ -77,6 +80,21 @@ class AppController extends ChangeNotifier {
 
   /// Optional persistent cache; tests run purely in memory without it.
   final LocalCache? cache;
+  FolderSyncController? _folderSync;
+  FolderSyncController get folderSync => _folderSync ??= FolderSyncController(
+    client: client,
+    account: () => demo ? null : account,
+  );
+
+  void setSyncForeground(bool active) {
+    _folderSync?.setForeground(active);
+    if (active &&
+        connected &&
+        !demo &&
+        (Platform.isAndroid || Platform.isIOS)) {
+      unawaited(folderSync.load());
+    }
+  }
 
   /// True while showing locally cached results that are being refreshed.
   bool refreshing = false;
@@ -231,6 +249,7 @@ class AppController extends ChangeNotifier {
       notifyListeners();
     }
     if (connected) {
+      setSyncForeground(true);
       try {
         await cache?.readOfflineListing(_offlineListingKey);
       } catch (e) {
@@ -347,6 +366,7 @@ class AppController extends ChangeNotifier {
       await store.write(result.encode());
       account = result;
       demo = false;
+      setSyncForeground(true);
       tab = 0;
       directory = [];
       final preparation = _prepareLibrary();
@@ -527,6 +547,7 @@ class AppController extends ChangeNotifier {
     error = null;
     notifyListeners();
     try {
+      await _folderSync?.disconnect();
       if (!demo) {
         await store.clear();
         final cache = Directory(
@@ -2808,6 +2829,7 @@ class AppController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _folderSync?.dispose();
     _disposed = true;
     _warmTimer?.cancel();
     _thumbnailWarmupTimer?.cancel();
