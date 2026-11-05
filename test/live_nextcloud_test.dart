@@ -106,6 +106,36 @@ void main() {
           .single;
       await client.restore(account, trashed);
       expect((await client.listFiles(account, album)).single.name, copied.name);
+      await client.delete(
+        account,
+        (await client.listFiles(account, album)).single,
+      );
+      final conflictTrash = (await client.trash(account))
+          .where(
+            (e) =>
+                e.originalPath.contains(folder.single) && e.name == copied.name,
+          )
+          .single;
+      final replacement = utf8.encode('Existing content must survive restore');
+      await client.upload(
+        account,
+        copied.path,
+        Stream.value(replacement),
+        replacement.length,
+      );
+      await client.restore(account, conflictTrash);
+      final recovered = await client.listFiles(account, album);
+      expect(recovered, hasLength(2));
+      final existing = recovered.singleWhere((f) => f.name == copied.name);
+      final restored = recovered.singleWhere((f) => f.name != copied.name);
+      expect(
+        await (await client.download(account, existing)).stream.toBytes(),
+        replacement,
+      );
+      expect(
+        await (await client.download(account, restored)).stream.toBytes(),
+        bytes,
+      );
     },
     skip: !enabled,
     timeout: const Timeout(Duration(minutes: 3)),

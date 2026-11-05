@@ -45,7 +45,7 @@ The app now has four distinct spaces: **Timeline**, **Albums**, **Drive**, and *
 
 Album cards come from folder listings, **not** from guessing albums from the first timeline page. Covers use the most recently modified media anywhere under the folder, while opening an album shows its immediate media and subfolders. Empty/non-media folders remain visible with a folder cover. Drive remains a complete file view including photos; it does not duplicate or move files simply by changing tabs.
 
-Selection operations run sequentially and report how many completed if a later item fails; they are not atomic. Deletion affects server originals and folder contents, not just the current view. Trash recovery depends on server configuration/retention. There is intentionally no permanent-delete or empty-trash button in this preview.
+Selection operations run sequentially and report how many completed if a later item fails; they are not atomic. Deletion affects server originals and folder contents, not just the current view. Trash recovery depends on server configuration/retention. Nextcloud handles restore conflicts by choosing a new name; if the original folder is unavailable, it may restore to your root folder. There is intentionally no permanent-delete or empty-trash button in this preview.
 
 Video playback downloads the original to app cache before playing through the native player, avoiding authenticated URL redirects. Large videos need free device space and a foreground transfer; codec support follows the device. Slideshows operate on the loaded viewer collection and pause when the app backgrounds. Demo videos are illustrations, not playable files.
 

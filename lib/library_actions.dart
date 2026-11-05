@@ -504,7 +504,7 @@ class _TrashScreenState extends State<TrashScreen> {
         const Padding(
           padding: EdgeInsets.all(20),
           child: Text(
-            'Recovery follows your Nextcloud server’s retention policy. Restored items return to their original location.',
+            'Recovery follows Nextcloud retention and naming rules. If the original folder is gone, items may restore to your root folder.',
           ),
         ),
         if (_busy) const LinearProgressIndicator(),

@@ -26,7 +26,7 @@ void main() {
           'restore',
           'photo.jpg.d123',
         ]);
-        expect(request.headers['Overwrite'], 'F');
+        expect(request.headers['Overwrite'], isNull);
         return http.Response('', 201);
       }),
     );

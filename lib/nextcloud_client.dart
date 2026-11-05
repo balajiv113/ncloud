@@ -364,8 +364,8 @@ class NextcloudClient {
       _trashUri(account, ['trash', entry.key]),
       account: account,
       headers: {
+        // The virtual restore target requires DAV's default overwrite behavior.
         'Destination': _trashUri(account, ['restore', entry.key]).toString(),
-        'Overwrite': 'F',
       },
     );
     _expect(response, {201, 204});
