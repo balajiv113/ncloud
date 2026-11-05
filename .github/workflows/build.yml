@@ -170,7 +170,7 @@ jobs:
           gh release create "v0.5.5-preview.${{ github.run_number }}" ncloud-android.apk \
             --target "${{ github.sha }}" --prerelease \
             --title "ncloud Android preview #${{ github.run_number }}" \
-            --notes "ncloud 0.5.5: Cached launches skip preparation, including partially prepared libraries. Smart albums reuse matching folder etags and retain cached memberships across refresh and restart. Metadata now has priority over thumbnails: reserved headroom and bounded disk-full recovery evict oldest previews and retry writes without deleting saved originals. Unrecoverable database errors report safe SQLite codes. Includes the SQLite catalogue, idle-safe monitoring, shared 500 MiB browsing cache, separate uncapped saved originals, People and the all-photo Map. Updates reuse the cached development signer."
+            --notes "ncloud 0.5.5: Fixes Android SQLite initialization rejecting row-returning configuration statements, reported as a SQLite 0 metadata-save failure. No cache reset is required; saved originals are untouched. Includes cached startup and Smart album reuse, metadata-priority preview eviction with bounded storage recovery, the SQLite catalogue, idle-safe monitoring, People and the all-photo Map. Updates reuse the cached development signer."
 
   ios:
     if: github.event_name == 'workflow_dispatch' && inputs.build_ios

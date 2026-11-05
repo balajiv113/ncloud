@@ -23,6 +23,78 @@ CloudFile photo(String path, {String? id, bool favorite = false}) => CloudFile(
   etag: 'etag-$path',
 );
 
+// Android's execute bridge uses execSQL, which rejects row-returning PRAGMAs.
+class _AndroidQueryException extends DatabaseException {
+  _AndroidQueryException()
+    : super(
+        'Queries can be performed using SQLiteDatabase query or rawQuery only '
+        '(code 0 SQLITE_OK)',
+      );
+
+  @override
+  int getResultCode() => 0;
+
+  @override
+  Object? get result => null;
+}
+
+class _AndroidConfigureDatabase implements Database {
+  _AndroidConfigureDatabase(this.database);
+  @override
+  final Database database;
+
+  @override
+  Future<void> execute(String sql, [List<Object?>? arguments]) async {
+    if (RegExp(
+      r'^\s*PRAGMA\s+(journal_mode|wal_autocheckpoint|journal_size_limit)\b',
+      caseSensitive: false,
+    ).hasMatch(sql)) {
+      throw _AndroidQueryException();
+    }
+    await database.execute(sql, arguments);
+  }
+
+  @override
+  Future<List<Map<String, Object?>>> rawQuery(
+    String sql, [
+    List<Object?>? arguments,
+  ]) => database.rawQuery(sql, arguments);
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _AndroidConfigureFactory implements DatabaseFactory {
+  final settings = <String, Object?>{};
+
+  @override
+  Future<Database> openDatabase(String path, {OpenDatabaseOptions? options}) =>
+      databaseFactoryFfi.openDatabase(
+        path,
+        options: OpenDatabaseOptions(
+          version: options!.version,
+          singleInstance: options.singleInstance,
+          onConfigure: (db) async {
+            await options.onConfigure?.call(_AndroidConfigureDatabase(db));
+            for (final name in [
+              'journal_mode',
+              'wal_autocheckpoint',
+              'journal_size_limit',
+            ]) {
+              settings[name] = (await db.rawQuery(
+                'PRAGMA $name',
+              )).single.values.single;
+            }
+          },
+          onCreate: options.onCreate,
+          onUpgrade: options.onUpgrade,
+        ),
+      );
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   late Directory root;
@@ -43,6 +115,31 @@ void main() {
   Future<Database> inspect() => databaseFactoryFfi.openDatabase(
     getPath(),
     options: OpenDatabaseOptions(singleInstance: false),
+  );
+
+  test(
+    'Android configuration permits initial writes and cached reopen',
+    () async {
+      final factory = _AndroidConfigureFactory();
+      cache = LocalCache(() async => root, databaseFactory: factory);
+      final store = FileStore()..putFolder(['Photos'], [photo('Photos/a.jpg')]);
+      await cache.writeLibrary(library, store);
+      await cache.writeDocument('warm-marker', {'complete': true});
+      expect(cache.writeError, isNull);
+      expect(store.persistenceChanges().files, isEmpty);
+      await cache.close();
+      cache = LocalCache(() async => root, databaseFactory: factory);
+      expect(await cache.readDocument('warm-marker'), {'complete': true});
+      expect(
+        (await cache.readDocument(library))!['files'] as List,
+        hasLength(1),
+      );
+      expect(factory.settings, {
+        'journal_mode': 'wal',
+        'wal_autocheckpoint': 256,
+        'journal_size_limit': 1048576,
+      });
+    },
   );
 
   test(

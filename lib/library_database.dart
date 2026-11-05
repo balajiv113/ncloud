@@ -53,8 +53,8 @@ class LibraryDatabase {
           await db.execute('PRAGMA foreign_keys = ON');
           await db.rawQuery('PRAGMA journal_mode = WAL');
           await db.execute('PRAGMA synchronous = NORMAL');
-          await db.execute('PRAGMA wal_autocheckpoint = 256');
-          await db.execute('PRAGMA journal_size_limit = 1048576');
+          await db.rawQuery('PRAGMA wal_autocheckpoint = 256');
+          await db.rawQuery('PRAGMA journal_size_limit = 1048576');
           await db.execute('PRAGMA cache_size = -2048');
         },
         onCreate: (db, version) async {
