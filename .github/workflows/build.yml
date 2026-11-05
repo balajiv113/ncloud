@@ -170,8 +170,10 @@ jobs:
           cache: true
       - run: flutter pub get
       - name: Build background service device checks
-        working-directory: android
-        run: ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest -Ptarget-platform=android-x64 --no-daemon --console=plain
+        run: |
+          flutter build apk --debug --no-pub --target-platform android-x64
+          cd android
+          ./gradlew :app:assembleDebugAndroidTest -Ptarget-platform=android-x64 --no-daemon --console=plain
       - name: Allow Android emulator acceleration
         run: if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; fi
       - uses: reactivecircus/android-emulator-runner@v2
