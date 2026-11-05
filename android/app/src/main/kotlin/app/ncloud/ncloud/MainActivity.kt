@@ -100,7 +100,6 @@ class MainActivity : FlutterActivity() {
                                             temp.delete()
                                             throw error
                                         }
-                                        }, unsupported = { result.notImplemented() })
                                     }
                                     else -> {
                                         check(path.isNotEmpty())
@@ -164,6 +163,7 @@ class MainActivity : FlutterActivity() {
                         }
                     }
                 }
+                }, unsupported = { result.notImplemented() })
             }
     }
 
