@@ -22,6 +22,12 @@ class SyncUploadServiceTest {
     val notifications: GrantPermissionRule =
         GrantPermissionRule.grant(Manifest.permission.POST_NOTIFICATIONS)
 
+    private fun awaitState(message: String, condition: () -> Boolean) {
+        val deadline = System.currentTimeMillis() + 10000
+        while (!condition() && System.currentTimeMillis() < deadline) Thread.sleep(50)
+        assertTrue(message, condition())
+    }
+
     @Test
     fun notificationAndEngineSurviveClosedActivityAndReattachUntilStopped() {
         val context = ApplicationProvider.getApplicationContext<Context>()
@@ -40,9 +46,11 @@ class SyncUploadServiceTest {
             assertNull(startError)
             assertTrue(SyncUploadService.running)
             val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            assertTrue(manager.activeNotifications.any { it.notification.actions?.any { action ->
-                action.title.toString() == "Pause"
-            } == true })
+            awaitState("The foreground upload notification with Pause did not appear") {
+                manager.activeNotifications.any { it.notification.actions?.any { action ->
+                    action.title.toString() == "Pause"
+                } == true }
+            }
 
             scenario.close()
             assertFalse(SyncUploadService.hostAttached)
@@ -57,10 +65,9 @@ class SyncUploadServiceTest {
             }
             SyncUploadService.finishing = true
             context.stopService(Intent(context, SyncUploadService::class.java))
-            val deadline = System.currentTimeMillis() + 10000
-            while (SyncUploadService.running && System.currentTimeMillis() < deadline) Thread.sleep(50)
-            assertFalse("Service did not stop", SyncUploadService.running)
-            assertTrue("Upload notification remained after stop", manager.activeNotifications.isEmpty())
+            awaitState("Service or upload notification remained after stop") {
+                !SyncUploadService.running && manager.activeNotifications.isEmpty()
+            }
         } finally {
             SyncUploadService.finishing = true
             context.stopService(Intent(context, SyncUploadService::class.java))

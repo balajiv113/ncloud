@@ -201,12 +201,15 @@ jobs:
             adb install -r debug/app-debug.apk
             adb install -r androidTest/debug/app-debug-androidTest.apk
             adb shell am instrument -w app.ncloud.ncloud.test/androidx.test.runner.AndroidJUnitRunner | tee native-background-result.txt
+            adb logcat -d > native-background-logcat.txt
             grep -q '^OK (' native-background-result.txt
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: android-background-result
-          path: native-background-result.txt
+          path: |
+            native-background-result.txt
+            native-background-logcat.txt
 
   publish:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
