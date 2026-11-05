@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -23,7 +24,7 @@ class MediaTile extends StatefulWidget {
 }
 
 class _MediaTileState extends State<MediaTile> {
-  Future<Uint8List>? _preview;
+  Future<({File? original, Uint8List? bytes})>? _preview;
 
   @override
   void initState() {
@@ -47,12 +48,23 @@ class _MediaTileState extends State<MediaTile> {
 
   void _load({bool retry = false}) {
     if (widget.file.demoColor == null) {
-      _preview = widget.controller.preview(
+      _preview = _source(retry);
+    }
+  }
+
+  Future<({File? original, Uint8List? bytes})> _source(bool retry) async {
+    if (widget.file.isImage) {
+      final original = await widget.controller.offlineCopy(widget.file);
+      if (original != null) return (original: original, bytes: null);
+    }
+    return (
+      original: null,
+      bytes: await widget.controller.preview(
         widget.file,
         retry: retry,
         size: widget.previewSize,
-      );
-    }
+      ),
+    );
   }
 
   @override
@@ -64,7 +76,7 @@ class _MediaTileState extends State<MediaTile> {
       );
     }
     if (_preview == null) return _fallback(context, 'Preview unavailable');
-    return FutureBuilder<Uint8List>(
+    return FutureBuilder<({File? original, Uint8List? bytes})>(
       future: _preview,
       builder: (context, snapshot) {
         if (snapshot.hasError) {
@@ -73,10 +85,13 @@ class _MediaTileState extends State<MediaTile> {
             child: _fallback(context, 'Preview unavailable. Tap to retry.'),
           );
         }
-        if (snapshot.data case final bytes?) {
+        if (snapshot.data case final source?) {
+          final ImageProvider image = source.original != null
+              ? FileImage(source.original!)
+              : MemoryImage(source.bytes!);
           return Image(
             image: ResizeImage(
-              MemoryImage(bytes),
+              image,
               width: widget.previewSize,
               height: widget.previewSize,
               policy: ResizeImagePolicy.fit,
@@ -99,26 +114,34 @@ class _MediaTileState extends State<MediaTile> {
 
   Widget _fallback(BuildContext context, String label) => ColoredBox(
     color: Theme.of(context).colorScheme.surfaceContainerHighest,
-    child: Center(
-      child: Padding(
-        padding: const EdgeInsets.all(8),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              widget.file.isVideo
-                  ? Icons.videocam_outlined
-                  : Icons.image_outlined,
+    child: LayoutBuilder(
+      builder: (context, constraints) {
+        final icon = Icon(
+          widget.file.isVideo ? Icons.videocam_outlined : Icons.image_outlined,
+        );
+        if (constraints.maxWidth < 88 || constraints.maxHeight < 88) {
+          return Center(
+            child: Tooltip(message: label, child: icon),
+          );
+        }
+        return Center(
+          child: Padding(
+            padding: const EdgeInsets.all(8),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                icon,
+                const SizedBox(height: 4),
+                Text(
+                  label,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontSize: 11),
+                ),
+              ],
             ),
-            const SizedBox(height: 4),
-            Text(
-              label,
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 11),
-            ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     ),
   );
 }

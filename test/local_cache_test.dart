@@ -2,11 +2,14 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:ncloud/app_controller.dart';
 import 'package:ncloud/local_cache.dart';
 import 'package:ncloud/models.dart';
+import 'package:ncloud/media_tile.dart';
 import 'package:ncloud/nextcloud_client.dart';
 
 import 'app_test.dart' show MemoryStore;
@@ -14,6 +17,7 @@ import 'nextcloud_client_test.dart' show account, multistatus, responseEntry;
 import 'preview_test.dart' show photo, png;
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   late Directory root;
   late LocalCache cache;
 
@@ -143,4 +147,64 @@ void main() {
     expect(source.uri.path, contains('/remote.php/dav/files/alice/Photos/'));
     expect(source.headers['Authorization'], account.authorization);
   });
+
+  testWidgets(
+    'saved originals reopen offline without requesting image previews',
+    (tester) async {
+      var networkCalls = 0;
+      final controller = AppController(
+        store: MemoryStore(),
+        cache: cache,
+        client: NextcloudClient(
+          transport: MockClient((_) async {
+            networkCalls++;
+            return http.Response.bytes(png, 200);
+          }),
+        ),
+      )..account = account;
+      addTearDown(controller.dispose);
+      const channel = MethodChannel('plugins.flutter.io/path_provider');
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        channel,
+        (_) async => root.path,
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          channel,
+          null,
+        ),
+      );
+      await tester.runAsync(() async {
+        await controller.saveOffline(photo());
+        await controller.selectTab(6);
+      });
+      expect(controller.items.single.key, photo().key);
+      expect(networkCalls, 1);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SizedBox(
+            width: 128,
+            height: 128,
+            child: MediaTile(
+              file: controller.items.single,
+              controller: controller,
+              previewSize: 1280,
+            ),
+          ),
+        ),
+      );
+      await tester.runAsync(() async {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      });
+      await tester.pumpAndSettle();
+      expect(find.byType(Image), findsOneWidget);
+      expect(networkCalls, 1);
+      expect(tester.takeException(), isNull);
+      await tester.runAsync(() async {
+        await (await controller.offlineCopy(photo()))!.delete();
+        await controller.load();
+      });
+      expect(controller.items, isEmpty);
+    },
+  );
 }
