@@ -76,13 +76,13 @@ void main() {
       expect(controller.catalogueError, isNull);
       expect(controller.smartAlbums.map((a) => a.path), [
         ['ncloud-index'],
-        ['ncloud-index', 'Travel'],
+        ['ncloud-index', 'Travel', 'Japan'],
       ]);
       await controller.openSmartAlbum(['ncloud-index']);
       expect(controller.error, isNull);
       expect(controller.items, hasLength(201));
       expect(controller.items.every((f) => f.path.length == 2), isTrue);
-      await controller.openSmartAlbum(['ncloud-index', 'Travel']);
+      await controller.openSmartAlbum(['ncloud-index', 'Travel', 'Japan']);
       expect(controller.error, isNull);
       expect(controller.items.single.path, [
         'ncloud-index',

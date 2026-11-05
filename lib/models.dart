@@ -276,20 +276,43 @@ class MemoryFolder {
   final List<CloudFile> previews;
 }
 
+/// The first folder with its own media on each branch becomes an album that
+/// includes everything below it; grouping-only folders are walked through.
+/// Loose media directly in [root] forms a separate album and never hides the
+/// albums inside the root.
 List<SmartAlbum> buildSmartAlbums(List<CloudFile> files, List<String> root) {
   final media = files
       .where((f) => f.isMedia && pathStartsWith(f.path, root))
       .toList();
   final parents = <String, SmartAlbum>{};
   for (final file in media) {
-    final path = file.path.length == root.length + 1
-        ? root
-        : file.path.take(root.length + 1).toList();
-    final key = path.map(Uri.encodeComponent).join('/');
-    parents
-        .putIfAbsent(key, () => SmartAlbum(path: path, files: []))
-        .files
-        .add(file);
+    final path = file.path.sublist(0, file.path.length - 1);
+    parents.putIfAbsent(
+      path.map(Uri.encodeComponent).join('/'),
+      () => SmartAlbum(path: path, files: []),
+    );
+  }
+  final candidates = parents.values
+      .where((a) => a.path.length > root.length)
+      .toList();
+  parents.removeWhere(
+    (key, album) =>
+        album.path.length > root.length &&
+        candidates.any(
+          (parent) =>
+              parent.path.length < album.path.length &&
+              pathStartsWith(album.path, parent.path),
+        ),
+  );
+  for (final file in media) {
+    if (file.path.length == root.length + 1) {
+      parents[root.map(Uri.encodeComponent).join('/')]?.files.add(file);
+      continue;
+    }
+    for (var depth = root.length + 1; depth < file.path.length; depth++) {
+      final key = file.path.take(depth).map(Uri.encodeComponent).join('/');
+      parents[key]?.files.add(file);
+    }
   }
   return parents.values.toList()..sort((a, b) {
     final name = a.name.toLowerCase().compareTo(b.name.toLowerCase());

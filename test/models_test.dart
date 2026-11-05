@@ -55,7 +55,7 @@ void main() {
     expect(formatBytes(1048576), '1.0 MB');
   });
 
-  test('Smart albums use top-level parents even when all media is nested', () {
+  test('Smart albums stop at the first folder with media on each branch', () {
     CloudFile photo(List<String> path) => CloudFile(
       path: path,
       name: path.last,
@@ -80,14 +80,18 @@ void main() {
       photo(['Other', 'Excluded', 'd.jpg']),
     ];
     final albums = buildSmartAlbums(files, ['Photos']);
-    expect(albums.map((a) => a.name), ['Family', 'Travel']);
-    expect(albums.where((a) => a.name == 'Travel').single.files, hasLength(2));
+    expect(albums.map((a) => a.path), [
+      ['Photos', 'Family', 'Kyoto'],
+      ['Photos', 'Travel', 'Japan', 'Kyoto'],
+    ]);
+    expect(albums.last.files, hasLength(2));
     expect(albums.map((a) => a.key).toSet(), hasLength(2));
     expect(
       albums.any(
         (a) => [
           'Photos',
-          'Kyoto',
+          'Travel',
+          'Family',
           'Japan',
           'Temples',
           'Empty',
@@ -113,7 +117,7 @@ void main() {
         photo(['Photos', 'Family', 'b.jpg']),
       ];
       final albums = buildSmartAlbums(files, ['Photos']);
-      expect(albums.map((a) => a.name), ['Family', 'Photos', 'Travel']);
+      expect(albums.map((a) => a.name), ['Family', 'Japan', 'Photos']);
       expect(albums.expand((a) => a.files).toSet(), files.toSet());
       expect(albums.every((a) => a.files.length == 1), isTrue);
       expect(buildSmartAlbums(files, []).single.name, 'Photos');

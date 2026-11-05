@@ -50,7 +50,7 @@ class NextcloudClient {
     final request = http.Request(method, uri)
       ..followRedirects = false
       ..headers.addAll({
-        'User-Agent': 'ncloud/0.5.3',
+        'User-Agent': 'ncloud/0.5.4',
         if (account != null) 'Authorization': account.authorization,
         ...headers,
       });
@@ -348,7 +348,15 @@ class NextcloudClient {
     return result;
   }
 
-  Future<List<CloudFile>> listFiles(Account account, List<String> path) async {
+  Future<List<CloudFile>> listFiles(Account account, List<String> path) async =>
+      (await listFolder(account, path)).children;
+
+  /// Lists direct children plus the folder's own entry, whose recursive etag
+  /// lets cached listings be reused while nothing below it changed.
+  Future<({CloudFile? self, List<CloudFile> children})> listFolder(
+    Account account,
+    List<String> path,
+  ) async {
     final response = await _request(
       'PROPFIND',
       davUri(account, path),
@@ -362,13 +370,17 @@ class NextcloudClient {
       ''',
     );
     _expect(response, {207});
-    return parseFiles(
-      response.body,
-      account,
-    ).where((file) => file.path.length > path.length).toList()..sort((a, b) {
-      if (a.isDirectory != b.isDirectory) return a.isDirectory ? -1 : 1;
-      return a.name.toLowerCase().compareTo(b.name.toLowerCase());
-    });
+    final entries = parseFiles(response.body, account);
+    return (
+      self: entries.where((f) => f.path.length == path.length).firstOrNull,
+      children: entries.where((file) => file.path.length > path.length).toList()
+        ..sort((a, b) {
+          if (a.isDirectory != b.isDirectory) {
+            return a.isDirectory ? -1 : 1;
+          }
+          return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+        }),
+    );
   }
 
   Future<List<CloudFile>> search(
@@ -972,7 +984,7 @@ class NextcloudClient {
         'Authorization': account.authorization,
         'Content-Type': 'application/octet-stream',
         'If-None-Match': '*',
-        'User-Agent': 'ncloud/0.5.3',
+        'User-Agent': 'ncloud/0.5.4',
       });
     try {
       final response = await http.Response.fromStream(

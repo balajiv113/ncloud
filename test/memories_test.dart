@@ -57,9 +57,32 @@ http.Response davForIds(http.Request request) {
   );
 }
 
+MockClient indexedTransport(List<http.Request> calls) =>
+    MockClient((request) async {
+      calls.add(request);
+      if (request.method == 'PROPFIND') {
+        return http.Response(multistatus(''), 207);
+      }
+      if (request.method == 'SEARCH') return davForIds(request);
+      if (request.url.path.endsWith('/days')) return jsonResponse(index());
+      if (!request.url.path.contains('/days/')) return http.Response('', 404);
+      final days = request.url.pathSegments.last.split(',').map(int.parse);
+      return jsonResponse([
+        for (final day in days)
+          for (var i = 0; i < 60; i++)
+            {
+              'fileid': day * 100 + i,
+              'dayid': day,
+              'etag': 'revision-$day',
+              'epoch': day * 86400 + i,
+              'basename': 'photo.jpg',
+            },
+      ]);
+    });
+
 void main() {
   test(
-    'indexed parent albums need no per-child metadata or subfolder requests',
+    'indexed discovery stops at a folder with media without listing its subfolders',
     () async {
       final visited = <String>[];
       final c = AppController(
@@ -100,17 +123,17 @@ void main() {
       expect(c.error, isNull);
       expect(c.smartAlbums.map((a) => a.name), ['Trip']);
       expect(visited.where((path) => path.startsWith('sub:')), ['sub:/Photos']);
-      expect(visited.any((path) => path.endsWith(':/Photos/Trip')), isFalse);
+      expect(visited, contains('days:/Photos/Trip'));
       expect(c.discoveredFolders, 2);
       expect(c.smartAlbums.single.files.single.id, '42');
     },
   );
 
   test(
-    'WebDAV parent albums use one recursive cover check per child without listing descendants',
+    'WebDAV discovery walks grouping folders and Drive reuses the listings',
     () async {
-      final paths = <String>[];
-      var openingRoot = false;
+      final listed = <String>[];
+      var searches = 0;
       String directory(String path) =>
           responseEntry(href: '/nextcloud/remote.php/dav/files/alice/$path/')
               .replaceFirst(
@@ -118,6 +141,8 @@ void main() {
                 '<d:resourcetype><d:collection/></d:resourcetype>',
               )
               .replaceFirst('image/jpeg', 'httpd/unix-directory');
+      String photo(String path) =>
+          responseEntry(href: '/nextcloud/remote.php/dav/files/alice/$path');
       final c =
           AppController(
               store: MemoryStore(),
@@ -129,55 +154,33 @@ void main() {
                   if (request.url.path.contains('/dav/photos/')) {
                     return http.Response('', 404);
                   }
-                  if (request.method == 'PROPFIND') {
-                    expect(request.url.path, endsWith('/Photos'));
-                    paths.add('root');
+                  if (request.method == 'SEARCH') {
+                    searches++;
+                    expect(request.body, contains('<d:depth>1</d:depth>'));
                     return http.Response(
-                      multistatus(
-                        responseEntry(
-                              href:
-                                  '/nextcloud/remote.php/dav/files/alice/Photos/loose.jpg',
-                            ) +
+                      multistatus(photo('Photos/loose.jpg')),
+                      207,
+                    );
+                  }
+                  expect(request.method, 'PROPFIND');
+                  final path = Uri.decodeFull(
+                    request.url.path,
+                  ).split('/files/alice/').last.replaceAll(RegExp(r'/$'), '');
+                  listed.add(path);
+                  return http.Response(
+                    multistatus(switch (path) {
+                      'Photos' =>
+                        photo('Photos/loose.jpg') +
                             directory('Photos/Trip') +
                             directory('Photos/Empty'),
-                      ),
-                      207,
-                    );
-                  }
-                  expect(request.method, 'SEARCH');
-                  if (openingRoot) {
-                    expect(request.body, contains('<d:depth>1</d:depth>'));
-                    expect(
-                      request.body,
-                      contains('/files/alice/Photos</d:href>'),
-                    );
-                    return http.Response(
-                      multistatus(
-                        responseEntry(
-                          href:
-                              '/nextcloud/remote.php/dav/files/alice/Photos/loose.jpg',
-                        ),
-                      ),
-                      207,
-                    );
-                  }
-                  expect(request.body, contains('<d:depth>infinity</d:depth>'));
-                  expect(request.body, contains('<d:nresults>1</d:nresults>'));
-                  if (request.body.contains('/files/alice/Photos/Trip')) {
-                    paths.add('Trip');
-                    return http.Response(
-                      multistatus(
-                        responseEntry(
-                          href:
-                              '/nextcloud/remote.php/dav/files/alice/Photos/Trip/Nested/a.jpg',
-                        ),
-                      ),
-                      207,
-                    );
-                  }
-                  expect(request.body, contains('/files/alice/Photos/Empty'));
-                  paths.add('Empty');
-                  return http.Response(multistatus(''), 207);
+                      'Photos/Trip' => directory('Photos/Trip/Japan'),
+                      'Photos/Trip/Japan' =>
+                        photo('Photos/Trip/Japan/a.jpg') +
+                            directory('Photos/Trip/Japan/Nested'),
+                      _ => '',
+                    }),
+                    207,
+                  );
                 }),
               ),
             )
@@ -186,13 +189,26 @@ void main() {
       addTearDown(c.dispose);
       await c.selectTab(4);
       expect(c.error, isNull);
-      expect(c.smartAlbums.map((a) => a.name), ['Photos', 'Trip']);
-      expect(paths, hasLength(3));
-      expect(paths.any((path) => path.contains('Nested')), isFalse);
-      openingRoot = true;
+      expect(c.smartAlbums.map((a) => a.path), [
+        ['Photos'],
+        ['Photos', 'Trip', 'Japan'],
+      ]);
+      expect(listed, [
+        'Photos',
+        'Photos/Trip',
+        'Photos/Empty',
+        'Photos/Trip/Japan',
+      ]);
+      expect(searches, 0);
+      c.tab = 1;
+      await c.goTo(['Photos', 'Trip', 'Japan']);
+      expect(c.error, isNull);
+      expect(c.items.map((f) => f.name), ['Nested', 'a.jpg']);
+      expect(listed, hasLength(4), reason: 'Drive reuses the shared cache');
       await c.openSmartAlbum(['Photos']);
       expect(c.error, isNull);
       expect(c.items.single.name, 'loose.jpg');
+      expect(searches, 1);
     },
   );
 
@@ -296,7 +312,7 @@ void main() {
         },
       );
       await cache.writeDocument(
-        'album-catalogue-v4|${account.server}|${account.userId}|Photos',
+        'album-catalogue-v5|${account.server}|${account.userId}|Photos',
         {
           'updated': DateTime.now().toIso8601String(),
           'albums': [
@@ -373,6 +389,9 @@ void main() {
             if (request.url.path.endsWith('/shares')) return emptyIncoming();
             if (request.method == 'PROPFIND') return http.Response('', 404);
             if (request.url.path.endsWith('/folders/sub')) {
+              if (request.url.queryParameters['folder'] != '/Photos') {
+                return jsonResponse([]);
+              }
               folderCalls++;
               if (refresh) return folders.future;
               return jsonResponse([
@@ -388,6 +407,12 @@ void main() {
                     {'fileid': 43},
                   ],
                 },
+              ]);
+            }
+            if (request.url.queryParameters['limit'] == '1' &&
+                request.url.queryParameters['folder'] != '/Photos') {
+              return jsonResponse([
+                {'dayid': 21000, 'count': 1},
               ]);
             }
             return jsonResponse([]);
@@ -723,7 +748,7 @@ void main() {
   );
 
   test(
-    'album catalogue keeps grouping parents and hides empty branches without walking descendants',
+    'album catalogue walks grouping folders to the first media and hides empty branches',
     () async {
       final calls = <http.Request>[];
       final c = AppController(
@@ -734,34 +759,56 @@ void main() {
             if (request.url.path.endsWith('/shares')) return emptyIncoming();
             if (request.method == 'PROPFIND') return http.Response('', 404);
             expect(request.method, 'GET');
+            final folder = request.url.queryParameters['folder'];
             if (request.url.path.endsWith('/folders/sub')) {
-              final folder = request.url.queryParameters['folder'];
               return jsonResponse(switch (folder) {
                 '/Photos' => [
                   {
                     'name': 'Travel',
-                    'fileid': 1,
                     'previews': [
                       {'fileid': 42},
                     ],
                   },
-                  {'name': 'Empty', 'fileid': 2, 'previews': []},
+                  {'name': 'Empty', 'previews': []},
                 ],
-                _ => [],
+                '/Photos/Travel' => [
+                  {
+                    'name': 'Japan',
+                    'previews': [
+                      {'fileid': 43},
+                    ],
+                  },
+                  {
+                    'name': 'Italy',
+                    'previews': [
+                      {'fileid': 44},
+                    ],
+                  },
+                ],
+                _ => fail('media folders are not walked: $folder'),
               });
             }
             expect(request.url.path, endsWith('/days'));
             final query = request.url.queryParameters;
             if (query['limit'] == null) return jsonResponse(index());
             expect(query.containsKey('recursive'), isFalse);
-            return jsonResponse([]);
+            return jsonResponse(
+              folder == '/Photos/Travel/Japan' ||
+                      folder == '/Photos/Travel/Italy'
+                  ? [
+                      {'dayid': 21000, 'count': 3},
+                    ]
+                  : [],
+            );
           }),
         ),
       )..account = account.withPhotoRoot(['Photos']);
       addTearDown(c.dispose);
       await c.selectTab(4);
-      expect(c.smartAlbums.map((a) => a.name), ['Travel']);
-      expect(c.discoveredFolders, 2);
+      expect(c.error, isNull);
+      expect(c.smartAlbums.map((a) => a.name), ['Japan', 'Italy']);
+      expect(c.smartAlbums.first.files.single.id, '43');
+      expect(c.discoveredFolders, 4);
       expect(
         calls.any((r) => RegExp(r'/days/\d').hasMatch(r.url.path)),
         isFalse,
@@ -771,7 +818,7 @@ void main() {
         calls
             .where((r) => r.url.path.endsWith('/folders/sub'))
             .map((r) => r.url.queryParameters['folder']),
-        ['/Photos'],
+        ['/Photos', '/Photos/Travel'],
       );
       final count = calls.length;
       await c.selectTab(4);
@@ -1043,4 +1090,65 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  test(
+    'timeline loads requested indexed days on demand in one batch',
+    () async {
+      final calls = <http.Request>[];
+      final c = AppController(
+        store: MemoryStore(),
+        client: NextcloudClient(transport: indexedTransport(calls)),
+      )..account = account;
+      addTearDown(c.dispose);
+      await c.load();
+      expect(c.indexedDays, hasLength(30));
+      final last = c.indexedDays.last.id;
+      expect(c.dayLoaded(c.indexedDays.first.id), isTrue);
+      expect(c.dayLoaded(last), isFalse);
+      c.ensureDays([last - 0, last + 1]);
+      c.ensureDays([last]);
+      while (c.fetchingDays) {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+      expect(c.dayLoaded(last), isTrue);
+      expect(c.dayLoaded(last + 1), isTrue);
+      expect(c.items, hasLength(300));
+      final dayRequests = calls
+          .where((r) => RegExp(r'/days/\d').hasMatch(r.url.path))
+          .map((r) => r.url.pathSegments.last)
+          .toList();
+      expect(dayRequests.last.split(',').toSet(), {'$last', '${last + 1}'});
+      final before = calls.length;
+      c.ensureDays([last]);
+      expect(c.fetchingDays, isFalse);
+      expect(calls.length, before);
+    },
+  );
+
+  testWidgets('timeline scrubber drags through the full indexed library', (
+    tester,
+  ) async {
+    final calls = <http.Request>[];
+    final c = AppController(
+      store: MemoryStore(),
+      client: NextcloudClient(transport: indexedTransport(calls)),
+    )..account = account;
+    await tester.pumpWidget(NcloudApp(controller: c));
+    await tester.pumpAndSettle();
+    expect(c.indexedDays, hasLength(30));
+    final scroll = tester.state<ScrollableState>(find.byType(Scrollable).first);
+    final max = scroll.position.maxScrollExtent;
+    expect(max, greaterThan(scroll.position.viewportDimension * 10));
+    scroll.position.jumpTo(40);
+    await tester.pump();
+    final thumb = find.byKey(const ValueKey('timeline-scrubber'));
+    expect(thumb, findsOneWidget);
+    expect(find.bySemanticsLabel('Scrub timeline by date'), findsOneWidget);
+    await tester.drag(thumb, const Offset(0, 1200));
+    await tester.pumpAndSettle();
+    expect(scroll.position.pixels, greaterThan(max * .9));
+    expect(c.dayLoaded(c.indexedDays.last.id), isTrue);
+    expect(c.error, isNull);
+    await tester.pump(const Duration(seconds: 2));
+  });
 }

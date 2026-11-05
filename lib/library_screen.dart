@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:ui' show ImageFilter;
 
 import 'package:file_picker/file_picker.dart';
@@ -33,10 +34,11 @@ class LibraryScreen extends StatefulWidget {
 class _LibraryScreenState extends State<LibraryScreen> {
   final _search = TextEditingController();
   final _scroll = ScrollController();
-  final _floatingDate = ValueNotifier<String?>(null);
   final Map<String, CloudFile> _selected = {};
   final Map<int, Offset> _pointers = {};
-  final List<({double offset, String label})> _dateStops = [];
+  final List<({double offset, String label, DateTime? date})> _dateStops = [];
+  final Set<int> _wantedDays = {};
+  bool _requestScheduled = false;
   final List<({double offset, List<CloudFile> files})> _rowPositions = [];
   MediaFilter _filter = MediaFilter.all;
   LibrarySort _sort = LibrarySort.newest;
@@ -71,7 +73,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
   @override
   void initState() {
     super.initState();
-    _scroll.addListener(_updateDate);
     _scroll.addListener(_prefetch);
   }
 
@@ -79,22 +80,48 @@ class _LibraryScreenState extends State<LibraryScreen> {
   void dispose() {
     _search.dispose();
     _scroll.dispose();
-    _floatingDate.dispose();
     super.dispose();
   }
 
-  void _updateDate() {
-    String? label;
-    if (_scroll.hasClients &&
-        _scroll.offset > _timelineStart + 80 &&
-        !_albumHome &&
-        !_drive) {
-      for (final stop in _dateStops) {
-        if (stop.offset > _scroll.offset - _timelineStart + 56) break;
-        label = stop.label;
-      }
+  /// Month shown in the scrubber bubble for a scroll offset.
+  String? _labelAt(double offset) {
+    DateTime? date;
+    for (final stop in _dateStops) {
+      if (stop.offset > offset - _timelineStart + 56) break;
+      date = stop.date ?? date;
     }
-    _floatingDate.value = label;
+    date ??= _dateStops.firstOrNull?.date;
+    return date == null
+        ? null
+        : MaterialLocalizations.of(context).formatMonthYear(date);
+  }
+
+  /// Year markers shown beside the scrubber track while dragging.
+  List<({double offset, String label})> _yearMarkers() {
+    final markers = <({double offset, String label})>[];
+    int? year;
+    for (final stop in _dateStops) {
+      final date = stop.date;
+      if (date == null || date.year == year) continue;
+      year = date.year;
+      markers.add((offset: _timelineStart + stop.offset, label: '$year'));
+    }
+    return markers;
+  }
+
+  /// Queues indexed days whose placeholders became visible; the controller
+  /// loads the most recently requested first.
+  void _wantDays(Iterable<int> days) {
+    _wantedDays.addAll(days);
+    if (_requestScheduled) return;
+    _requestScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _requestScheduled = false;
+      if (!mounted || _wantedDays.isEmpty) return;
+      final days = _wantedDays.toList();
+      _wantedDays.clear();
+      c.ensureDays(days);
+    });
   }
 
   void _prefetch() {
@@ -132,7 +159,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     _prefetchBudget = 2;
     _filter = MediaFilter.all;
     _subfolder = null;
-    _floatingDate.value = null;
+    _wantedDays.clear();
     _dateStops.clear();
     _rowPositions.clear();
   }
@@ -605,7 +632,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                                 files.where((f) => !f.isMedia).toList(),
                               ),
                           ],
-                          if (files.isEmpty)
+                          if (files.isEmpty && !_indexedLayout)
                             SliverFillRemaining(
                               hasScrollBody: false,
                               child: _empty(),
@@ -632,79 +659,18 @@ class _LibraryScreenState extends State<LibraryScreen> {
                   ),
                 ),
               ),
-              if (!_albumHome && !_drive)
-                ValueListenableBuilder<String?>(
-                  valueListenable: _floatingDate,
-                  builder: (context, date, _) => date == null
-                      ? const SizedBox.shrink()
-                      : Positioned(
-                          right: 6,
-                          top: 100,
-                          child: Row(
-                            children: [
-                              Material(
-                                color: theme.colorScheme.inverseSurface,
-                                borderRadius: BorderRadius.circular(20),
-                                elevation: 3,
-                                child: InkWell(
-                                  onTap: _chooseMonth,
-                                  borderRadius: BorderRadius.circular(20),
-                                  child: Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 13,
-                                      vertical: 9,
-                                    ),
-                                    child: Text(
-                                      date,
-                                      style: TextStyle(
-                                        fontSize: 11,
-                                        color:
-                                            theme.colorScheme.onInverseSurface,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              Semantics(
-                                label: 'Scrub timeline by date',
-                                slider: true,
-                                child: GestureDetector(
-                                  behavior: HitTestBehavior.opaque,
-                                  onVerticalDragUpdate: (event) {
-                                    if (!_scroll.hasClients) return;
-                                    final next =
-                                        _scroll.offset +
-                                        event.delta.dy *
-                                            _scroll.position.maxScrollExtent /
-                                            220;
-                                    _scroll.jumpTo(
-                                      next.clamp(
-                                        0,
-                                        _scroll.position.maxScrollExtent,
-                                      ),
-                                    );
-                                  },
-                                  child: SizedBox(
-                                    width: 28,
-                                    height: 140,
-                                    child: Center(
-                                      child: Container(
-                                        width: 5,
-                                        height: 44,
-                                        decoration: BoxDecoration(
-                                          color: theme.colorScheme.primary,
-                                          borderRadius: BorderRadius.circular(
-                                            8,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
+              if (!_albumHome && !_sharedHome && !_drive)
+                Positioned(
+                  right: 0,
+                  top: 64,
+                  bottom: 112,
+                  width: 240,
+                  child: _TimelineScrubber(
+                    controller: _scroll,
+                    labelAt: _labelAt,
+                    markers: _yearMarkers,
+                    onTap: _chooseMonth,
+                  ),
                 ),
             ],
           ),
@@ -1606,22 +1572,94 @@ class _LibraryScreenState extends State<LibraryScreen> {
     ),
   );
 
+  /// Whether the full Memories day index can lay out the whole timeline up
+  /// front, so scrolling and scrubbing never wait at the end of a page.
+  bool get _indexedLayout =>
+      c.indexedDays.isNotEmpty &&
+      _filter == MediaFilter.all &&
+      _query.isEmpty &&
+      _sort == LibrarySort.newest &&
+      _subfolder == null;
+
   List<Widget> _timelineSlivers(List<CloudFile> files) {
     final media = files.where((f) => f.isMedia).toList();
-    if (media.isEmpty) {
+    if (media.isEmpty && !_indexedLayout) {
       _dateStops.clear();
       _rowPositions.clear();
       return [];
     }
-    final groups = <String, List<CloudFile>>{};
-    for (final file in media) {
-      final date = file.timelineDate?.toLocal();
-      final label = date == null
-          ? 'Date unavailable'
-          : _density >= 5
-          ? MaterialLocalizations.of(context).formatMonthYear(date)
-          : _dayLabel(date);
-      groups.putIfAbsent(label, () => []).add(file);
+    final localizations = MaterialLocalizations.of(context);
+    String labelFor(DateTime? date) => date == null
+        ? 'Date unavailable'
+        : _density >= 5
+        ? localizations.formatMonthYear(date)
+        : _dayLabel(date);
+    final sections =
+        <
+          ({
+            String label,
+            DateTime? date,
+            List<CloudFile> files,
+            List<int> pending,
+            List<int> expected,
+          })
+        >[];
+    void addToSection(
+      DateTime? date,
+      List<CloudFile> files,
+      int expected,
+      int? pendingDay,
+    ) {
+      final label = labelFor(date);
+      var section = sections.lastOrNull;
+      if (section == null || section.label != label) {
+        section = (
+          label: label,
+          date: date,
+          files: <CloudFile>[],
+          pending: <int>[],
+          expected: [0],
+        );
+        sections.add(section);
+      }
+      section.files.addAll(files);
+      section.expected[0] += expected;
+      if (pendingDay != null) section.pending.add(pendingDay);
+    }
+
+    if (_indexedLayout) {
+      final byDay = <int, List<CloudFile>>{};
+      final other = <CloudFile>[];
+      for (final file in media) {
+        if (file.captureDay case final day?) {
+          byDay.putIfAbsent(day, () => []).add(file);
+        } else {
+          other.add(file);
+        }
+      }
+      for (final day in c.indexedDays) {
+        final utc = DateTime.fromMillisecondsSinceEpoch(
+          day.id * 86400000,
+          isUtc: true,
+        );
+        final loaded = c.dayLoaded(day.id);
+        final found = byDay.remove(day.id) ?? [];
+        addToSection(
+          DateTime(utc.year, utc.month, utc.day),
+          found,
+          loaded
+              ? found.length
+              : (day.count > found.length ? day.count : found.length),
+          loaded ? null : day.id,
+        );
+      }
+      for (final file in [...byDay.values.expand((f) => f), ...other]) {
+        addToSection(file.timelineDate?.toLocal(), [file], 1, null);
+      }
+    } else {
+      for (final file in media) {
+        addToSection(file.timelineDate?.toLocal(), [file], 1, null);
+      }
     }
     return [
       SliverLayoutBuilder(
@@ -1636,19 +1674,51 @@ class _LibraryScreenState extends State<LibraryScreen> {
               (constraints.crossAxisExtent - (columns - 1) * 2) / columns;
           final headerExtent =
               44.0 + MediaQuery.textScalerOf(context).scale(13) - 13;
-          final rows = <({String? label, List<CloudFile> files})>[];
+          final rows =
+              <
+                ({
+                  String? label,
+                  List<CloudFile> files,
+                  int placeholders,
+                  int section,
+                })
+              >[];
           var offset = 0.0;
-          for (final group in groups.entries) {
-            _dateStops.add((offset: offset, label: group.key));
-            rows.add((label: group.key, files: group.value));
+          for (final (index, section) in sections.indexed) {
+            final expected = section.expected[0];
+            if (expected == 0) continue;
+            _dateStops.add((
+              offset: offset,
+              label: section.label,
+              date: section.date,
+            ));
+            rows.add((
+              label: section.label,
+              files: section.files,
+              placeholders: 0,
+              section: index,
+            ));
             offset += headerExtent;
-            for (var index = 0; index < group.value.length; index += columns) {
-              final row = group.value.skip(index).take(columns).toList();
-              _rowPositions.add((offset: offset, files: row));
-              rows.add((label: null, files: row));
+            for (var start = 0; start < expected; start += columns) {
+              final row = section.files.skip(start).take(columns).toList();
+              final slots = expected - start < columns
+                  ? expected - start
+                  : columns;
+              if (row.isNotEmpty) {
+                _rowPositions.add((offset: offset, files: row));
+              }
+              rows.add((
+                label: null,
+                files: row,
+                placeholders: slots - row.length,
+                section: index,
+              ));
               offset += tileExtent + 2;
             }
           }
+          final placeholder = Theme.of(
+            context,
+          ).colorScheme.surfaceContainerHighest;
           return SliverVariedExtentList.builder(
             itemCount: rows.length,
             itemExtentBuilder: (index, _) => index >= rows.length
@@ -1658,6 +1728,14 @@ class _LibraryScreenState extends State<LibraryScreen> {
                 : headerExtent,
             itemBuilder: (context, index) {
               final row = rows[index];
+              // Request a few sections ahead first so the visible section,
+              // requested last, is fetched first.
+              for (var next = row.section + 3; next >= row.section; next--) {
+                if (next < sections.length &&
+                    sections[next].pending.isNotEmpty) {
+                  _wantDays(sections[next].pending);
+                }
+              }
               if (row.label != null) {
                 final all = row.files.every(
                   (f) => _selected.containsKey(f.key),
@@ -1712,6 +1790,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
                       Expanded(
                         child: i < row.files.length
                             ? _mediaTile(row.files[i], media)
+                            : i < row.files.length + row.placeholders
+                            ? AspectRatio(
+                                aspectRatio: 1,
+                                child: ColoredBox(color: placeholder),
+                              )
                             : const SizedBox.shrink(),
                       ),
                     ],
@@ -2009,15 +2092,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
   }
 
   Future<void> _chooseMonth() async {
-    final labels = _dateStops.map((s) => s.label).toList();
-    final monthDates =
-        _visible
-            .map((f) => f.timelineDate?.toLocal())
-            .nonNulls
-            .map((d) => DateTime(d.year, d.month))
-            .toSet()
-            .toList()
-          ..sort((a, b) => b.compareTo(a));
+    final months = <DateTime>{
+      for (final stop in _dateStops)
+        if (stop.date case final date?) DateTime(date.year, date.month),
+    }.toList()..sort((a, b) => b.compareTo(a));
+    if (months.isEmpty) return;
     final month = await showModalBottomSheet<DateTime>(
       context: context,
       showDragHandle: true,
@@ -2026,7 +2105,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
           shrinkWrap: true,
           children: [
             const ListTile(title: Text('Jump to month')),
-            for (final date in monthDates)
+            for (final date in months)
               ListTile(
                 title: Text(
                   MaterialLocalizations.of(context).formatMonthYear(date),
@@ -2038,20 +2117,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
       ),
     );
     if (!mounted || month == null || !_scroll.hasClients) return;
-    final candidates = c.items.where((f) {
-      final d = f.timelineDate?.toLocal();
-      return d?.year == month.year && d?.month == month.month;
-    }).toList();
-    if (candidates.isEmpty) return;
-    final label = _density >= 5
-        ? MaterialLocalizations.of(context).formatMonthYear(month)
-        : labels.firstWhere(
-            (label) => candidates.any(
-              (f) => _dayLabel(f.timelineDate!.toLocal()) == label,
-            ),
-            orElse: () => '',
-          );
-    final stop = _dateStops.where((s) => s.label == label).firstOrNull;
+    final stop = _dateStops
+        .where(
+          (s) => s.date?.year == month.year && s.date?.month == month.month,
+        )
+        .firstOrNull;
     if (stop != null) {
       _scroll.jumpTo(
         (_timelineStart + stop.offset).clamp(
@@ -2059,7 +2129,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
           _scroll.position.maxScrollExtent,
         ),
       );
-      _updateDate();
     }
   }
 
@@ -2184,3 +2253,220 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
 bool listPathEquals(List<String> a, List<String> b) =>
     a.length == b.length && pathStartsWith(a, b);
+
+/// Google Photos-style fast scroller: a thumb on the right edge that can be
+/// dragged across the whole library, with the month under the thumb and year
+/// markers along the track. Indexed timelines lay out every day up front, so
+/// dragging lands anywhere and the photos there load on demand.
+class _TimelineScrubber extends StatefulWidget {
+  const _TimelineScrubber({
+    required this.controller,
+    required this.labelAt,
+    required this.markers,
+    required this.onTap,
+  });
+
+  final ScrollController controller;
+  final String? Function(double offset) labelAt;
+  final List<({double offset, String label})> Function() markers;
+  final VoidCallback onTap;
+
+  @override
+  State<_TimelineScrubber> createState() => _TimelineScrubberState();
+}
+
+class _TimelineScrubberState extends State<_TimelineScrubber> {
+  static const _thumbHeight = 48.0;
+  bool _active = false;
+  bool _dragging = false;
+  Timer? _hide;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.addListener(_scrolled);
+  }
+
+  @override
+  void didUpdateWidget(_TimelineScrubber oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller) {
+      oldWidget.controller.removeListener(_scrolled);
+      widget.controller.addListener(_scrolled);
+    }
+  }
+
+  @override
+  void dispose() {
+    _hide?.cancel();
+    widget.controller.removeListener(_scrolled);
+    super.dispose();
+  }
+
+  void _scrolled() {
+    if (!mounted) return;
+    setState(() => _active = true);
+    _scheduleHide();
+  }
+
+  void _scheduleHide() {
+    _hide?.cancel();
+    _hide = Timer(const Duration(milliseconds: 1600), () {
+      if (mounted && !_dragging) setState(() => _active = false);
+    });
+  }
+
+  void _seek(Offset global, double track) {
+    final controller = widget.controller;
+    final box = context.findRenderObject() as RenderBox?;
+    if (!controller.hasClients || box == null || track <= 0) return;
+    final local = box.globalToLocal(global);
+    final fraction = ((local.dy - _thumbHeight / 2) / track).clamp(0.0, 1.0);
+    controller.jumpTo(fraction * controller.position.maxScrollExtent);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = widget.controller;
+    if (!controller.hasClients || !controller.position.hasContentDimensions) {
+      return const SizedBox.shrink();
+    }
+    final position = controller.position;
+    final max = position.maxScrollExtent;
+    if (max < position.viewportDimension * 2) return const SizedBox.shrink();
+    final theme = Theme.of(context);
+    final reduceMotion = MediaQuery.of(context).disableAnimations;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final track = constraints.maxHeight - _thumbHeight;
+        final fraction = (position.pixels / max).clamp(0.0, 1.0);
+        final label = _dragging ? widget.labelAt(position.pixels) : null;
+        final visible = _active || _dragging;
+        final markers = <Widget>[];
+        if (_dragging) {
+          var last = -100.0;
+          for (final marker in widget.markers()) {
+            final top =
+                (marker.offset / max).clamp(0.0, 1.0) * track +
+                _thumbHeight / 2 -
+                8;
+            if (top - last < 22) continue;
+            last = top;
+            markers.add(
+              Positioned(
+                right: 52,
+                top: top,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 7,
+                    vertical: 2,
+                  ),
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.surface.withValues(alpha: .9),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(marker.label, style: theme.textTheme.labelSmall),
+                ),
+              ),
+            );
+          }
+        }
+        return IgnorePointer(
+          ignoring: !visible,
+          child: AnimatedOpacity(
+            opacity: visible ? 1 : 0,
+            duration: reduceMotion
+                ? Duration.zero
+                : const Duration(milliseconds: 180),
+            child: Stack(
+              children: [
+                ...markers,
+                Positioned(
+                  right: 0,
+                  top: fraction * track,
+                  height: _thumbHeight,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (label != null)
+                        Material(
+                          color: theme.colorScheme.inverseSurface,
+                          borderRadius: BorderRadius.circular(20),
+                          elevation: 3,
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 14,
+                              vertical: 9,
+                            ),
+                            child: Text(
+                              label,
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                color: theme.colorScheme.onInverseSurface,
+                              ),
+                            ),
+                          ),
+                        ),
+                      Semantics(
+                        label: 'Scrub timeline by date',
+                        slider: true,
+                        child: GestureDetector(
+                          key: const ValueKey('timeline-scrubber'),
+                          behavior: HitTestBehavior.opaque,
+                          onTap: widget.onTap,
+                          onVerticalDragStart: (details) {
+                            _hide?.cancel();
+                            setState(() => _dragging = true);
+                            HapticFeedback.selectionClick();
+                          },
+                          onVerticalDragUpdate: (details) =>
+                              _seek(details.globalPosition, track),
+                          onVerticalDragEnd: (_) {
+                            setState(() => _dragging = false);
+                            _scheduleHide();
+                          },
+                          onVerticalDragCancel: () {
+                            setState(() => _dragging = false);
+                            _scheduleHide();
+                          },
+                          child: SizedBox(
+                            width: 48,
+                            height: _thumbHeight,
+                            child: Center(
+                              child: Container(
+                                width: 34,
+                                height: 44,
+                                decoration: BoxDecoration(
+                                  color: theme.colorScheme.secondaryContainer,
+                                  borderRadius: const BorderRadius.horizontal(
+                                    left: Radius.circular(22),
+                                  ),
+                                  boxShadow: const [
+                                    BoxShadow(
+                                      blurRadius: 6,
+                                      color: Color(0x33000000),
+                                    ),
+                                  ],
+                                ),
+                                child: Icon(
+                                  Icons.unfold_more,
+                                  size: 20,
+                                  color: theme.colorScheme.onSecondaryContainer,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}

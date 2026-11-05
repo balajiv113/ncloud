@@ -304,7 +304,7 @@ void main() {
   );
 
   testWidgets(
-    'parent Smart albums include nested photos and native albums remain separate',
+    'first folders with media become Smart albums and native albums remain separate',
     (tester) async {
       final c = AppController(store: MemoryStore());
       await tester.pumpWidget(NcloudApp(controller: c));
@@ -316,12 +316,13 @@ void main() {
       expect(find.byTooltip('Library'), findsNothing);
       expect(find.text('Shared'), findsNothing);
       expect(find.text('Shared with you'), findsOneWidget);
-      expect(find.text('Travel'), findsOneWidget);
-      expect(find.text('Kyoto'), findsNothing);
+      expect(find.text('Kyoto'), findsOneWidget);
+      expect(find.text('Travel'), findsNothing);
+      expect(find.text('Japan'), findsNothing);
       expect(find.text('Favorites'), findsOneWidget);
       expect(find.textContaining('Photo source:'), findsNothing);
       expect(find.text('Your albums'), findsNothing);
-      expect(find.widgetWithText(ChoiceChip, 'Travel'), findsNothing);
+      expect(find.widgetWithText(ChoiceChip, 'Kyoto'), findsNothing);
       expect(find.text('Empty folder'), findsNothing);
       expect(c.nativeAlbums.single.name, 'Best days');
       await tester.scrollUntilVisible(
@@ -333,24 +334,25 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('View all Nextcloud albums')));
       await tester.pumpAndSettle();
       expect(find.text('Best days'), findsOneWidget);
-      expect(find.text('Travel'), findsNothing);
+      expect(find.text('Kyoto'), findsNothing);
       await tester.tap(find.text('Best days'));
       await tester.pumpAndSettle();
       expect(c.items, hasLength(3));
       await tester.tap(find.byTooltip('Back'));
       await tester.pumpAndSettle();
       expect(find.text('Best days'), findsOneWidget);
-      expect(find.text('Travel'), findsNothing);
+      expect(find.text('Kyoto'), findsNothing);
       await tester.tap(find.byTooltip('Back'));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('View all Smart albums')));
       await tester.pumpAndSettle();
-      expect(find.text('Family'), findsOneWidget);
-      expect(find.text('Kyoto'), findsNothing);
-      await tester.tap(find.text('Travel'));
+      expect(find.text('Dolomites'), findsOneWidget);
+      expect(find.text('Family'), findsNothing);
+      expect(find.text('Travel'), findsNothing);
+      await tester.tap(find.text('Kyoto'));
       await tester.pumpAndSettle();
-      expect(c.directory, ['Photos', 'Travel']);
-      expect(c.items, hasLength(8));
+      expect(c.directory, ['Photos', 'Travel', 'Japan', 'Kyoto']);
+      expect(c.items, hasLength(4));
       expect(find.bySemanticsLabel('Alpine morning.jpg'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
@@ -370,7 +372,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byTooltip('Albums'));
       await tester.pumpAndSettle();
-      expect(tester.getTopLeft(find.text('Travel')).dy, lessThan(550));
+      expect(tester.getTopLeft(find.text('Kyoto')).dy, lessThan(550));
       expect(find.text('Pinned'), findsOneWidget);
       expect(find.byType(SliverGrid), findsNothing);
       await tester.tap(find.byKey(const ValueKey('View all Smart albums')));
