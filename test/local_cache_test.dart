@@ -180,11 +180,24 @@ void main() {
         ),
       ),
     );
+    Future<void> waitForPreview(int expectedCalls) async {
+      for (var attempt = 0; attempt < 30; attempt++) {
+        await tester.runAsync(() async {
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+        });
+        await tester.pump();
+        if (calls == expectedCalls &&
+            find.byType(Image).evaluate().isNotEmpty) {
+          break;
+        }
+      }
+    }
+
     await tester.pumpWidget(tile('first'));
-    await tester.pumpAndSettle();
+    await waitForPreview(1);
     expect(calls, 1);
     await tester.pumpWidget(tile('edited'));
-    await tester.pumpAndSettle();
+    await waitForPreview(2);
     expect(calls, 2);
     expect(find.byType(Image), findsOneWidget);
     expect(tester.takeException(), isNull);
