@@ -173,7 +173,7 @@ jobs:
           gh release create "v0.5.5-preview.${{ github.run_number }}" ncloud-android.apk \
             --target "${{ github.sha }}" --prerelease \
             --title "ncloud Android preview #${{ github.run_number }}" \
-            --notes "ncloud 0.5.5: Fixes Android Sync now failing its native Wi-Fi/charging check. Saved folder grants are reused without reopening the picker. Sync errors now distinguish missing native services, denied access, unavailable files, transfer I/O and journal failures. Adds native Android routing regression tests. Retains non-destructive backup, download and keep-both merge: no deletions or overwrites. Android repeat is foreground-only; iPhone Files syncing remains manual, not Apple Photos backup. Updates reuse the cached development signer."
+            --notes "ncloud 0.5.5: Fixes native Android backup callback compilation and Sync now routing. Adds whole-library Photo backup with a user-selected Nextcloud destination: Android DCIM/Pictures keep their subfolders; iPhone Photos originals upload flat, once per asset rather than per album, including Live Photo motion. Full/limited access is explicit and permission prompts are never repeated during normal runs. Create-only uploads, persistent receipts and conflict copies preserve originals; no deletion propagation or overwriting. Photo backup is manually started and foreground-only. Custom folder pairs remain separate. Updates reuse the cached development signer."
 
   ios:
     if: github.event_name == 'workflow_dispatch' && inputs.build_ios

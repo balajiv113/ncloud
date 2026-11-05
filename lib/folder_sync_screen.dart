@@ -111,8 +111,9 @@ class _FolderSyncScreenState extends State<FolderSyncScreen> {
                 '${sync.transferred} transferred · ${sync.conflicts} name conflicts',
               ),
             ),
-          for (final pair in sync.pairs) _pair(pair),
-          if (!_loading && sync.pairs.isEmpty)
+          for (final pair in sync.pairs.where((p) => !p.photoBackup))
+            _pair(pair),
+          if (!_loading && !sync.pairs.any((p) => !p.photoBackup))
             const Padding(
               padding: EdgeInsets.all(20),
               child: Text(

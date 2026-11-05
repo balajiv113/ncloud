@@ -12,6 +12,8 @@ import 'package:ncloud/folder_sync_screen.dart';
 import 'package:ncloud/app_controller.dart';
 import 'package:ncloud/models.dart';
 import 'package:ncloud/nextcloud_client.dart';
+import 'package:ncloud/photo_backup.dart';
+import 'package:ncloud/photo_backup_screen.dart';
 
 import 'nextcloud_client_test.dart' show account;
 import 'app_test.dart' show MemoryStore;
@@ -109,6 +111,42 @@ class DeviceFolders implements FolderAccess {
     conditionChecks++;
     if (conditionsError case final error?) throw error;
     return SyncConditions(wifi: wifi, charging: charging);
+  }
+}
+
+class PhotoAssets extends DeviceFolders {
+  PhotoAssets(super.root, super.staging);
+  final originalFolders = <String, List<String>>{};
+  bool unknownSize = true;
+
+  @override
+  DeviceEntry entry(FileSystemEntity entity) {
+    final value = super.entry(entity);
+    if (value.directory) return value;
+    final asset = entity.parent.uri.pathSegments
+        .where((p) => p.isNotEmpty)
+        .last;
+    return DeviceEntry(
+      value.name,
+      false,
+      unknownSize ? -1 : value.size,
+      value.modified,
+      backupPath: [...?originalFolders[asset], value.name],
+    );
+  }
+
+  @override
+  Future<File> export(
+    String token,
+    List<String> path,
+    DeviceEntry expected,
+  ) async {
+    exports++;
+    final source = file(path);
+    if (super.entry(source).modified != expected.modified) {
+      throw const FileSystemException('Source changed');
+    }
+    return source.copy((await stage()).path);
   }
 }
 
@@ -266,6 +304,246 @@ void main() {
     cloud.close();
     await root.delete(recursive: true);
   });
+
+  for (final android in [false, true]) {
+    test(
+      '${android ? 'Android folders' : 'iPhone flat'} photo backup preserves originals and remembers assets',
+      () async {
+        await sync.disconnect();
+        await sync.journal.close();
+        sync.dispose();
+        sync = controller(android: android);
+        final photos = PhotoAssets(device.root, device.staging)
+          ..originalFolders['asset-a'] = ['DCIM', 'Camera']
+          ..originalFolders['asset-b'] = ['Pictures', 'Trips']
+          ..unknownSize = !android;
+        await photos.put('asset-a/IMG_0001.HEIC', 'original-a');
+        await photos.put('asset-a/IMG_0001.MOV', 'live-motion');
+        await photos.put('asset-b/IMG_0001.HEIC', 'original-b');
+        cloud.folders.add('Chosen');
+        final protectedPath = android
+            ? 'Chosen/DCIM/Camera/IMG_0001.HEIC'
+            : 'Chosen/IMG_0001.HEIC';
+        cloud.put(protectedPath, 'existing-cloud-original');
+        await sync.enablePhotos(
+          photos,
+          wifiOnly: true,
+          destination: ['Chosen'],
+        );
+        final configured = sync.pairs.single;
+        expect(FolderPair.fromJson(configured.toJson()).photoBackup, isTrue);
+        await sync.run(configured);
+        expect(sync.error, isNull);
+        expect(sync.transferred, 3);
+        expect(
+          utf8.decode(cloud.files[protectedPath]!.$1),
+          'existing-cloud-original',
+        );
+        expect(
+          cloud.files.values.map((f) => utf8.decode(f.$1)),
+          containsAll(['original-a', 'original-b', 'live-motion']),
+        );
+        expect(
+          cloud.files.keys,
+          everyElement(
+            android
+                ? startsWith('Chosen/')
+                : matches(RegExp(r'^Chosen/[^/]+$')),
+          ),
+        );
+        if (android) {
+          expect(
+            cloud.files.keys,
+            contains('Chosen/Pictures/Trips/IMG_0001.HEIC'),
+          );
+        }
+        expect(photos.imports, 0);
+        expect(device.picks, 0);
+        expect(
+          await photos.file(['asset-a', 'IMG_0001.HEIC']).readAsString(),
+          'original-a',
+        );
+        expect(photos.staging.listSync(), isEmpty);
+        await sync.disconnect();
+        await sync.journal.close();
+        sync.dispose();
+        sync = controller(android: android)..photoAccess = photos;
+        await sync.load();
+        expect(sync.pairs, hasLength(1));
+        await sync.run(sync.pairs.single);
+        expect(sync.error, isNull);
+        expect(sync.transferred, 0);
+        expect(cloud.uploads, 3);
+        await photos.file(['asset-a', 'IMG_0001.HEIC']).delete();
+        await sync.run(sync.pairs.single);
+        expect(cloud.files, hasLength(4));
+        expect(cloud.uploads, 3);
+      },
+    );
+  }
+
+  test(
+    'changing photo destination replaces settings atomically, not cloud files',
+    () async {
+      sync = sync..photoAccess = device;
+      cloud.folders.addAll(['One', 'Two']);
+      await sync.enablePhotos(device, wifiOnly: true, destination: ['One']);
+      final original = sync.pairs.single;
+      original.lastRun = DateTime.now();
+      cloud.put('One/kept.jpg', 'keep');
+      await sync.enablePhotos(device, wifiOnly: false, destination: ['One']);
+      expect(sync.pairs.single.id, original.id);
+      expect(sync.pairs.single.lastRun, isNotNull);
+      await sync.enablePhotos(device, wifiOnly: true, destination: ['Two']);
+      expect(sync.pairs.single.id, isNot(original.id));
+      expect(sync.pairs.single.lastRun, isNull);
+      expect((await sync.journal.pairs(syncAccount(account))).single.remote, [
+        'Two',
+      ]);
+      expect(cloud.files.keys, ['One/kept.jpg']);
+    },
+  );
+
+  test(
+    'photo destinations cannot overlap custom pairs in either direction',
+    () async {
+      await pair(SyncMode.backup);
+      for (final path in [
+        <String>[],
+        ['Backup'],
+        ['Backup', 'Nested'],
+      ]) {
+        await expectLater(
+          sync.enablePhotos(device, wifiOnly: true, destination: path),
+          throwsFormatException,
+        );
+      }
+      await sync.enablePhotos(
+        device,
+        wifiOnly: true,
+        destination: ['Separate'],
+      );
+      await expectLater(
+        sync.add(
+          'No overlap',
+          const DeviceFolder('other', 'Other', 'other'),
+          ['Separate', 'Nested'],
+          SyncMode.backup,
+          false,
+        ),
+        throwsFormatException,
+      );
+      expect(cloud.uploads, 0);
+    },
+  );
+
+  test(
+    'photo permission status never prompts except on explicit request',
+    () async {
+      final calls = <MethodCall>[];
+      final photos = PhotoLibraryAccess();
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(PhotoLibraryAccess.channel, (call) async {
+            calls.add(call);
+            if (call.method == 'photos.permission') return 'limited';
+            if (call.method == 'photos.scan') {
+              return [
+                {'id': 'asset-id', 'modified': 12},
+              ];
+            }
+            if (call.method == 'photos.resources') {
+              return [
+                {'name': 'original.HEIC', 'size': -1, 'modified': 12},
+              ];
+            }
+            throw StateError('Unexpected ${call.method}');
+          });
+      addTearDown(
+        () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(PhotoLibraryAccess.channel, null),
+      );
+      expect(await photos.permission(), 'limited');
+      expect(await photos.permission(request: true), 'limited');
+      expect((await photos.list('photos', [])).single.name, 'asset-id');
+      expect((await photos.list('photos', ['asset-id'])).single.size, -1);
+      expect(calls.map((c) => c.method), [
+        'photos.permission',
+        'photos.permission',
+        'photos.scan',
+        'photos.resources',
+      ]);
+      expect((calls.first.arguments as Map)['request'], false);
+      expect((calls[1].arguments as Map)['request'], true);
+      expect(
+        () => photos.import('photos', ['file'], File('not-used')),
+        throwsUnsupportedError,
+      );
+    },
+  );
+
+  test(
+    'photo scan rejects duplicate asset identifiers and invalid native status',
+    () async {
+      final photos = PhotoLibraryAccess();
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(PhotoLibraryAccess.channel, (call) async {
+            if (call.method == 'photos.permission') return null;
+            return [
+              {'id': 'same', 'modified': 12},
+              {'id': 'same', 'modified': 12},
+            ];
+          });
+      addTearDown(
+        () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(PhotoLibraryAccess.channel, null),
+      );
+      await expectLater(photos.permission(), throwsStateError);
+      await expectLater(photos.list('photos', []), throwsFormatException);
+    },
+  );
+
+  testWidgets(
+    'photo setup shows saved destination and limited access without prompting',
+    (tester) async {
+      final calls = <MethodCall>[];
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(PhotoLibraryAccess.channel, (call) async {
+            calls.add(call);
+            if (call.method == 'photos.permission') return 'limited';
+            throw StateError('Unexpected ${call.method}');
+          });
+      addTearDown(
+        () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(PhotoLibraryAccess.channel, null),
+      );
+      final controller = AppController(
+        store: MemoryStore(),
+        folderSyncController: sync,
+      )..account = account;
+      await tester.runAsync(
+        () =>
+            sync.enablePhotos(device, wifiOnly: true, destination: ['Backup']),
+      );
+      await tester.binding.setSurfaceSize(const Size(450, 1800));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(
+        MaterialApp(home: PhotoBackupScreen(controller: controller)),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Photos access: Limited'), findsOneWidget);
+      expect(find.text('/Backup'), findsOneWidget);
+      expect(find.textContaining('Only approved items'), findsOneWidget);
+      expect(find.text('Open device permission settings'), findsOneWidget);
+      expect(calls.map((c) => c.method), ['photos.permission']);
+      expect((calls.single.arguments as Map)['request'], false);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+      await tester.runAsync(sync.disconnect);
+      await tester.runAsync(sync.journal.close);
+      controller.dispose();
+      disposed = true;
+    },
+  );
 
   test('backup preserves server names, local deletions and restarts', () async {
     await device.put('nested/photo.jpg', 'local photo');

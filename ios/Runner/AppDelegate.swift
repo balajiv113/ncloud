@@ -2,6 +2,7 @@ import Flutter
 import UIKit
 import UniformTypeIdentifiers
 import Network
+import Photos
 
 @main
 @objc class AppDelegate: FlutterAppDelegate {
@@ -22,6 +23,7 @@ import Network
     private let channel: FlutterMethodChannel
     private let queue = DispatchQueue(label: "app.ncloud.folder-sync")
     private var pickerResult: FlutterResult?
+    private lazy var photoBackup = PhotoBackupBridge(stage: { try self.newStage() })
     private let manager = FileManager.default
     private var staging: URL {
       manager.temporaryDirectory.appendingPathComponent("ncloud-sync-staging", isDirectory: true)
@@ -38,6 +40,10 @@ import Network
     }
 
     private func handle(_ call: FlutterMethodCall, _ result: @escaping FlutterResult) {
+      if call.method.hasPrefix("photos.") {
+        photoBackup.handle(call, result)
+        return
+      }
       if call.method == "pick" {
         guard pickerResult == nil, let controller = controller else {
           result(FlutterError(code: "busy", message: "Folder picker unavailable.", details: nil))
@@ -172,9 +178,155 @@ import Network
                                 message: "Folder access or transfer failed. Check permission and free space; reselect the folder if needed.",
                                 details: nil))
           }
+
         }
       }
     }
+
+    private final class PhotoBackupBridge {
+            private let stage: () throws -> URL
+            private let queue = DispatchQueue(label: "app.ncloud.photo-backup")
+            init(stage: @escaping () throws -> URL) { self.stage = stage }
+
+            private func authorization() -> PHAuthorizationStatus {
+              if #available(iOS 14, *) { return PHPhotoLibrary.authorizationStatus(for: .readWrite) }
+              return PHPhotoLibrary.authorizationStatus()
+            }
+
+            private func permission(_ status: PHAuthorizationStatus) -> String {
+              if status == .authorized { return "full" }
+              if #available(iOS 14, *), status == .limited { return "limited" }
+              return "denied"
+            }
+
+            func handle(_ call: FlutterMethodCall, _ result: @escaping FlutterResult) {
+              let args = call.arguments as? [String: Any] ?? [:]
+              if call.method == "photos.settings" {
+                UIApplication.shared.open(URL(string: UIApplication.openSettingsURLString)!,
+                                          options: [:]) { result($0) }
+                return
+              }
+              if call.method == "photos.permission" {
+                if args["request"] as? Bool == true && authorization() == .notDetermined {
+                  let complete: (PHAuthorizationStatus) -> Void = { status in
+                    DispatchQueue.main.async { result(self.permission(status)) }
+                  }
+                  if #available(iOS 14, *) {
+                    PHPhotoLibrary.requestAuthorization(for: .readWrite, handler: complete)
+                  } else {
+                    PHPhotoLibrary.requestAuthorization(complete)
+                  }
+                } else {
+                  result(permission(authorization()))
+                }
+                return
+              }
+              guard ["photos.scan", "photos.resources", "photos.export"].contains(call.method) else {
+                result(FlutterMethodNotImplemented)
+                return
+              }
+              queue.async {
+                do {
+                  guard self.permission(self.authorization()) != "denied" else { throw self.failure() }
+                  if call.method == "photos.scan" {
+                    let offset = args["offset"] as? Int ?? 0
+                    let limit = args["limit"] as? Int ?? 500
+                    guard offset >= 0, (1...500).contains(limit) else { throw self.failure() }
+                    let options = PHFetchOptions()
+                    options.predicate = NSPredicate(format: "mediaType == %d OR mediaType == %d",
+                                                   PHAssetMediaType.image.rawValue, PHAssetMediaType.video.rawValue)
+                    options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: true)]
+                    let assets = PHAsset.fetchAssets(with: options)
+                    var page = [[String: Any]]()
+                    if offset < assets.count {
+                      for index in offset..<min(offset + limit, assets.count) {
+                        let asset = assets.object(at: index)
+                        page.append(["id": self.encode(asset.localIdentifier),
+                                     "modified": self.modified(asset)])
+                      }
+                    }
+                    DispatchQueue.main.async { result(page) }
+                  } else {
+                    guard let id = args["id"] as? String,
+                          let decoded = self.decode(id),
+                          let asset = PHAsset.fetchAssets(withLocalIdentifiers: [decoded], options: nil).firstObject
+                    else { throw self.failure() }
+                    let resources = self.resources(asset)
+                    guard !resources.isEmpty else { throw self.failure() }
+                    if call.method == "photos.resources" {
+                      let names = resources.map { $0.originalFilename }
+                      guard Set(names).count == names.count else { throw self.failure() }
+                      let values: [[String: Any]] = resources.map {
+                        ["name": $0.originalFilename, "size": -1, "modified": self.modified(asset)]
+                      }
+                      DispatchQueue.main.async { result(values) }
+                    } else {
+                      guard let name = args["name"] as? String,
+                            let expected = args["modified"] as? NSNumber,
+                            expected.int64Value == self.modified(asset),
+                            let resource = resources.first(where: { $0.originalFilename == name })
+                      else { throw self.failure() }
+                      let file = try self.stage()
+                      try FileManager.default.removeItem(at: file)
+                      let options = PHAssetResourceRequestOptions()
+                      options.isNetworkAccessAllowed = true
+                      // PhotoKit streams original bytes, including iCloud materialization.
+                      // No deletion or change request is ever issued against Apple Photos.
+                      PHAssetResourceManager.default().writeData(
+                        for: resource, toFile: file, options: options
+                      ) { error in
+                        if error != nil ||
+                            PHAsset.fetchAssets(withLocalIdentifiers: [decoded], options: nil)
+                              .firstObject.map({ self.modified($0) }) != expected.int64Value {
+                          try? FileManager.default.removeItem(at: file)
+                          DispatchQueue.main.async {
+                            result(FlutterError(code: "photo_export",
+                              message: "The original is unavailable, changed, or waiting for iCloud. Retry when connected.",
+                              details: nil))
+                          }
+                        } else {
+                          DispatchQueue.main.async { result(file.path) }
+                        }
+                      }
+                    }
+                  }
+                } catch {
+                  DispatchQueue.main.async {
+                    result(FlutterError(code: self.permission(self.authorization()) == "denied"
+                      ? "photo_permission" : "photo_export",
+                      message: "Could not read the Photos library. Check Photos access and free space.", details: nil))
+                  }
+                }
+              }
+            }
+
+            private func resources(_ asset: PHAsset) -> [PHAssetResource] {
+              let all = PHAssetResource.assetResources(for: asset)
+              // Preserve the original still/video and the paired Live Photo motion.
+              // Adjustment sidecars and rendered edits are not separate backup assets.
+              return all.filter { $0.type == .photo || $0.type == .video || $0.type == .pairedVideo }
+            }
+
+            private func modified(_ asset: PHAsset) -> Int64 {
+              Int64((asset.modificationDate ?? asset.creationDate ?? Date(timeIntervalSince1970: 1))
+                .timeIntervalSince1970 * 1000)
+            }
+
+            private func encode(_ id: String) -> String {
+              Data(id.utf8).base64EncodedString()
+                .replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "+", with: "-")
+            }
+
+            private func decode(_ id: String) -> String? {
+              guard let data = Data(base64Encoded: id.replacingOccurrences(of: "_", with: "/")
+                .replacingOccurrences(of: "-", with: "+")) else { return nil }
+              return String(data: data, encoding: .utf8)
+            }
+
+            private func failure() -> NSError {
+              NSError(domain: "ncloud.photo-backup", code: 1)
+            }
+          }
 
     private func failure() -> NSError {
       NSError(domain: "ncloud.folder-sync", code: 1,

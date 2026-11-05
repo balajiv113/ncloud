@@ -21,12 +21,17 @@ class MainActivity : FlutterActivity() {
     private val worker = Executors.newSingleThreadExecutor()
     private var picker: MethodChannel.Result? = null
     private val pickCode = 9142
+    private val photos by lazy { PhotoBackupBridge(this, ::newStage) }
     private val stageRoot get() = File(cacheDir, "ncloud-sync-staging").apply { mkdirs() }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "app.ncloud/folder_sync")
             .setMethodCallHandler { call, result ->
+                if (call.method.startsWith("photos.")) {
+                    photos.handle(call, result)
+                    return@setMethodCallHandler
+                }
                 dispatchFolderMethod(call.method, pick = {
                     if (picker != null) {
                         result.error("busy", "A folder picker is already open.", null)
@@ -237,6 +242,11 @@ class MainActivity : FlutterActivity() {
             uri = children(uri).single { it.second["name"] == name }.first
         }
         return uri
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        photos.onPermissionsResult(requestCode)
     }
 
     @Deprecated("Android activity result API required by FlutterActivity integration")

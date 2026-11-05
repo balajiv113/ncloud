@@ -11,6 +11,7 @@ import 'demo.dart';
 import 'discovery_models.dart';
 import 'file_store.dart';
 import 'folder_sync.dart';
+import 'photo_backup.dart';
 import 'local_cache.dart';
 import 'models.dart';
 import 'nextcloud_client.dart';
@@ -84,7 +85,7 @@ class AppController extends ChangeNotifier {
   FolderSyncController get folderSync => _folderSync ??= FolderSyncController(
     client: client,
     account: () => demo ? null : account,
-  );
+  )..photoAccess = PhotoLibraryAccess();
 
   void setSyncForeground(bool active) {
     _folderSync?.setForeground(active);

@@ -47,11 +47,18 @@ class DeviceFolder {
 }
 
 class DeviceEntry {
-  const DeviceEntry(this.name, this.directory, this.size, this.modified);
+  const DeviceEntry(
+    this.name,
+    this.directory,
+    this.size,
+    this.modified, {
+    this.backupPath,
+  });
   final String name;
   final bool directory;
   final int size;
   final int modified;
+  final List<String>? backupPath;
   String get version => '$size|$modified';
 }
 
@@ -172,6 +179,7 @@ class FolderPair {
     this.wifiOnly = true,
     this.chargingOnly = false,
     this.lastRun,
+    this.photoBackup = false,
   });
   final String id;
   final String account;
@@ -183,6 +191,7 @@ class FolderPair {
   final bool wifiOnly;
   final bool chargingOnly;
   DateTime? lastRun;
+  final bool photoBackup;
 
   Map<String, Object?> toJson() => {
     'id': id,
@@ -197,6 +206,7 @@ class FolderPair {
     'wifiOnly': wifiOnly,
     'chargingOnly': chargingOnly,
     'lastRun': lastRun?.toIso8601String(),
+    'photoBackup': photoBackup,
   };
 
   factory FolderPair.fromJson(Map<String, dynamic> value) => FolderPair(
@@ -214,6 +224,7 @@ class FolderPair {
     wifiOnly: value['wifiOnly'] as bool? ?? true,
     chargingOnly: value['chargingOnly'] as bool? ?? false,
     lastRun: DateTime.tryParse(value['lastRun'] as String? ?? ''),
+    photoBackup: value['photoBackup'] as bool? ?? false,
   );
 }
 
@@ -263,11 +274,22 @@ class SyncJournal {
       ),
   ];
 
-  Future<void> save(FolderPair pair) async => (await db).insert('pairs', {
-    'id': pair.id,
-    'account': pair.account,
-    'payload': jsonEncode(pair.toJson()),
-  }, conflictAlgorithm: ConflictAlgorithm.replace);
+  Future<void> save(FolderPair pair, {FolderPair? replacing}) async =>
+      (await db).transaction((txn) async {
+        await txn.insert('pairs', {
+          'id': pair.id,
+          'account': pair.account,
+          'payload': jsonEncode(pair.toJson()),
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
+        if (replacing != null && replacing.id != pair.id) {
+          await txn.delete(
+            'receipts',
+            where: 'pair=?',
+            whereArgs: [replacing.id],
+          );
+          await txn.delete('pairs', where: 'id=?', whereArgs: [replacing.id]);
+        }
+      });
 
   Future<Map<String, Object?>?> receipt(
     String pair,
@@ -336,6 +358,7 @@ class FolderSyncController extends ChangeNotifier {
   final FolderAccess access;
   final SyncJournal journal;
   final bool android;
+  FolderAccess? photoAccess;
   List<FolderPair> pairs = [];
   String? error;
   String? activeId;
@@ -423,6 +446,56 @@ class FolderSyncController extends ChangeNotifier {
     await journal.save(pair);
     pairs.add(pair);
     _schedule();
+    _notify();
+  }
+
+  Future<void> enablePhotos(
+    FolderAccess source, {
+    required bool wifiOnly,
+    required List<String> destination,
+  }) async {
+    await load();
+    if (_running != null) {
+      throw StateError(
+        'Pause the current transfer before changing photo backup.',
+      );
+    }
+    final owner = _accountKey;
+    if (owner == null || owner != _owner) throw StateError('Reconnect first.');
+    photoAccess = source;
+    final existing = pairs.where((pair) => pair.photoBackup).singleOrNull;
+    checkSyncPath(destination);
+    bool overlaps(List<String> a, List<String> b) =>
+        a.length <= b.length &&
+        List.generate(a.length, (i) => a[i] == b[i]).every((v) => v);
+    if (pairs.any(
+      (pair) =>
+          !pair.photoBackup &&
+          (overlaps(pair.remote, destination) ||
+              overlaps(destination, pair.remote)),
+    )) {
+      throw const FormatException(
+        'A custom pair overlaps this destination. Choose another cloud folder; files stay untouched.',
+      );
+    }
+    final pair = FolderPair(
+      id: existing != null && _key(existing.remote) == _key(destination)
+          ? existing.id
+          : _id(),
+      account: owner,
+      name: 'Photo backup',
+      folder: const DeviceFolder('photos', 'Photo library', 'photos'),
+      remote: List.of(destination),
+      mode: SyncMode.backup,
+      wifiOnly: wifiOnly,
+      photoBackup: true,
+      lastRun: existing != null && _key(existing.remote) == _key(destination)
+          ? existing.lastRun
+          : null,
+    );
+    await journal.save(pair, replacing: existing);
+    if (existing != null) pairs.remove(existing);
+    pairs.add(pair);
     _notify();
   }
 
@@ -556,6 +629,12 @@ class FolderSyncController extends ChangeNotifier {
           'conditions_permission' =>
             'Android could not check Wi-Fi/charging conditions. '
                 'Update ncloud and retry; folder permission is unchanged.',
+          'photo_permission' =>
+            'Photos access is unavailable. Open device Settings and allow ncloud '
+                'to read your library, then retry. Existing backups stay untouched.',
+          'photo_export' =>
+            'Could not prepare an original. Check Photos access, free device space '
+                'and connectivity for cloud-only originals, then retry.',
           _ =>
             'The device folder operation failed (${e.code}). '
                 'Existing files were not overwritten. Check the selected folder provider.',
@@ -622,6 +701,12 @@ class FolderSyncController extends ChangeNotifier {
   }
 
   Future<void> _sync(Account session, FolderPair pair) async {
+    final source = pair.photoBackup ? photoAccess : access;
+    if (source == null) {
+      throw const FormatException(
+        'Open Photo backup before running this backup.',
+      );
+    }
     _check(pair);
     phase = 'Checking Wi-Fi and charging conditions';
     _notify();
@@ -630,19 +715,21 @@ class FolderSyncController extends ChangeNotifier {
     final remote = <String, (List<String>, CloudFile)>{};
     final directories = <List<String>>[[]];
     var scanned = 0;
-    phase = 'Reading selected device folder';
+    phase = pair.photoBackup
+        ? 'Reading photo library'
+        : 'Reading selected device folder';
     _notify();
     // A complete, successful inventory precedes transfers; a permission error
     // must not be interpreted as an empty source or a deletion.
     while (directories.isNotEmpty) {
       _check(pair);
-      if (++scanned > 100000) {
+      if (++scanned > (pair.photoBackup ? 100001 : 100000)) {
         throw const FormatException(
           'This pair exceeds the supported scan size.',
         );
       }
       final path = directories.removeLast();
-      for (final item in await access.list(pair.folder.token, path)) {
+      for (final item in await source.list(pair.folder.token, path)) {
         final child = [...path, item.name];
         checkSyncPath(child);
         if (child.length > 64 || local.length > 100000) {
@@ -653,7 +740,7 @@ class FolderSyncController extends ChangeNotifier {
         if (item.directory) {
           directories.add(child);
         } else {
-          if (item.modified <= 0) {
+          if (item.modified <= 0 || (!pair.photoBackup && item.size < 0)) {
             throw const FormatException(
               'The folder provider supplies no file modification date.',
             );
@@ -710,18 +797,40 @@ class FolderSyncController extends ChangeNotifier {
             continue;
           }
         }
-        var target = path;
+        var target = pair.photoBackup
+            ? android
+                  ? file.backupPath ??
+                        (throw const FormatException(
+                          'The photo provider did not supply the original folder path.',
+                        ))
+                  : [path.last]
+            : path;
+        checkSyncPath(target);
+        if (pair.photoBackup &&
+            android &&
+            (target.length < 2 ||
+                !['dcim', 'pictures'].contains(target.first.toLowerCase()))) {
+          throw const FormatException(
+            'Photo path is outside DCIM or Pictures.',
+          );
+        }
         if (remote.containsKey(_key(target))) {
-          target = _conflict(path, 'device');
+          target = _conflict(target, 'device');
         }
         await _conditions(pair);
         phase = 'Uploading ${file.name}';
         _notify();
         File? staged;
         try {
-          staged = await access.export(pair.folder.token, path, file);
+          staged = await source.export(pair.folder.token, path, file);
           _check(pair);
-          if (await staged.length() != file.size) {
+          final stagedSize = await staged.length();
+          if (pair.photoBackup && stagedSize == 0) {
+            throw const FormatException(
+              'The photo provider returned an empty original. Nothing was uploaded.',
+            );
+          }
+          if (file.size >= 0 && stagedSize != file.size) {
             throw const FormatException(
               'The source changed while preparing it. Run again.',
             );
@@ -732,7 +841,7 @@ class FolderSyncController extends ChangeNotifier {
             session,
             [...pair.remote, ...target],
             staged.openRead(),
-            file.size,
+            stagedSize,
           );
           final confirmed =
               (await client.listFiles(session, [
@@ -743,7 +852,7 @@ class FolderSyncController extends ChangeNotifier {
                     (item) => item.name == target.last && !item.isDirectory,
                   )
                   .single;
-          if (confirmed.size != file.size) {
+          if (confirmed.size != stagedSize) {
             throw const FormatException(
               'Upload size was not confirmed. Run again to reconcile.',
             );
@@ -753,7 +862,7 @@ class FolderSyncController extends ChangeNotifier {
           remote[_key(target)] = (target, confirmed);
           transferred++;
         } finally {
-          if (staged != null) await access.discard(staged);
+          if (staged != null) await source.discard(staged);
         }
       }
     }
