@@ -204,7 +204,7 @@ class _AssetViewerState extends State<AssetViewer> with WidgetsBindingObserver {
                             widget.controller.demo
                                 ? 'Demo illustration'
                                 : _file.isVideo
-                                ? 'Original video · downloaded securely to play'
+                                ? 'Video streams unless saved offline'
                                 : 'Server preview · original available below',
                             style: const TextStyle(
                               color: Colors.white60,

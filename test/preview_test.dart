@@ -62,26 +62,22 @@ void main() {
     expect(calls, 2);
   });
 
-  test(
-    'missing previews fall back to bounded small raster originals',
-    () async {
-      var calls = 0;
-      final client = NextcloudClient(
-        transport: MockClient((request) async {
-          calls++;
-          if (calls == 1) return http.Response('', 404);
-          expect(request.url.pathSegments.last, 'Sun & sky.png');
-          expect(request.url.path, contains('/remote.php/dav/files/alice/'));
-          expect(request.headers['Authorization'], account.authorization);
-          expect(request.followRedirects, isFalse);
-          return http.Response.bytes(png, 200);
-        }),
-      );
-      addTearDown(client.close);
-      expect(await client.preview(account, photo()), png);
-      expect(calls, 2);
-    },
-  );
+  test('missing previews never download small raster originals', () async {
+    var calls = 0;
+    final client = NextcloudClient(
+      transport: MockClient((request) async {
+        calls++;
+        expect(request.url.path, endsWith('/core/preview'));
+        return http.Response('', 404);
+      }),
+    );
+    addTearDown(client.close);
+    await expectLater(
+      client.preview(account, photo()),
+      throwsA(isA<CloudException>()),
+    );
+    expect(calls, 1);
+  });
 
   test('large originals are not downloaded on missing preview', () async {
     var calls = 0;
@@ -99,15 +95,20 @@ void main() {
     expect(calls, 1);
   });
 
-  test('missing file IDs can use a small original', () async {
+  test('missing file IDs never fetch an original automatically', () async {
+    var calls = 0;
     final client = NextcloudClient(
       transport: MockClient((request) async {
-        expect(request.url.path, contains('/remote.php/dav/files/alice/'));
+        calls++;
         return http.Response.bytes(png, 200);
       }),
     );
     addTearDown(client.close);
-    expect(await client.preview(account, photo(id: null)), png);
+    await expectLater(
+      client.preview(account, photo(id: null)),
+      throwsA(isA<CloudException>()),
+    );
+    expect(calls, 0);
   });
 
   test('preview transfers never exceed four simultaneous requests', () async {

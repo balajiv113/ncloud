@@ -60,7 +60,13 @@ class AppController extends ChangeNotifier {
     NextcloudClient? client,
     this.cache,
     this.pathlessTimeline = false,
-  }) : client = client ?? NextcloudClient();
+  }) : client = client ?? NextcloudClient() {
+    cache?.onWriteError = (message) {
+      if (_disposed || notice == message) return;
+      notice = message;
+      notifyListeners();
+    };
+  }
 
   /// Paints the Timeline straight from Memories rows and resolves real paths
   /// only when an action needs them.
@@ -196,6 +202,13 @@ class AppController extends ChangeNotifier {
       notifyListeners();
     }
     if (connected) {
+      try {
+        await cache?.readOfflineListing(_offlineListingKey);
+        await cache?.trim();
+      } catch (e) {
+        notice =
+            'Could not enforce the browsing cache limit. ${errorMessage(e)}';
+      }
       final preparation = _prepareLibrary(refresh: false);
       unawaited(_prepareAlbums());
       unawaited(loadPeople());
@@ -475,7 +488,7 @@ class AppController extends ChangeNotifier {
         if (await cache.exists()) await cache.delete(recursive: true);
         _storeOwner = null;
         await _storeWrite;
-        await this.cache?.clear();
+        await this.cache?.clearAll();
       }
       _loadVersion++;
       _loginVersion++;
@@ -763,7 +776,7 @@ class AppController extends ChangeNotifier {
       }
       final listing = _MediaListing();
       if (currentTab == 6) {
-        final saved = await cache?.readListing(_offlineListingKey) ?? [];
+        final saved = await cache?.readOfflineListing(_offlineListingKey) ?? [];
         final available = <CloudFile>[];
         for (final file in saved) {
           if (await offlineCopy(file) != null) available.add(file);
@@ -2333,7 +2346,7 @@ class AppController extends ChangeNotifier {
     );
   }
 
-  /// Keeps a full copy of [file] in the cache so it replays without network.
+  /// Explicitly saved original, outside the bounded browsing cache.
   Future<File> saveOffline(CloudFile file) async {
     final session = account;
     if (cache == null || session == null) {
@@ -2347,17 +2360,22 @@ class AppController extends ChangeNotifier {
     if (!await target.exists()) {
       final downloaded = await download(file);
       try {
-        await downloaded.copy(target.path);
+        final partial = File('${target.path}.part');
+        try {
+          await downloaded.copy(partial.path);
+          await partial.rename(target.path);
+        } finally {
+          if (await partial.exists()) await partial.delete();
+        }
       } finally {
         await downloaded.parent.delete(recursive: true);
       }
     }
-    final saved = await cache!.readListing(_offlineListingKey) ?? [];
-    await cache!.writeListing(_offlineListingKey, [
+    final saved = await cache!.readOfflineListing(_offlineListingKey);
+    await cache!.writeOfflineListing(_offlineListingKey, [
       ...saved.where((f) => f.key != file.key),
       file,
     ]);
-    unawaited(cache!.trim());
     return target;
   }
 
@@ -2365,8 +2383,11 @@ class AppController extends ChangeNotifier {
       'offline|${account?.server}|${account?.userId}';
 
   Future<int> cacheSize() async => await cache?.size() ?? 0;
+  Future<int> downloadSize() async => await cache?.downloadSize() ?? 0;
 
   Future<void> clearCache() async {
+    // Migrate the legacy offline manifest before removing browsing metadata.
+    await cache?.readOfflineListing(_offlineListingKey);
     _clearPreviews();
     _covers.clear();
     await _invalidateBrowse();

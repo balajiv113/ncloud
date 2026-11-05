@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -70,12 +71,191 @@ void main() {
     expect(await cache.size(), 0);
   });
 
-  test('cache failures are silent when no directory is available', () async {
-    final broken = LocalCache(() async => throw const FileSystemException());
-    await broken.writeThumbnail('k', Uint8List(1));
-    expect(await broken.readThumbnail('k'), isNull);
-    expect(await broken.readListing('k'), isNull);
-    await broken.clear();
+  test(
+    'cache write failures notify and explicit clear failures propagate',
+    () async {
+      final broken = LocalCache(() async => throw const FileSystemException());
+      String? warning;
+      broken.onWriteError = (message) => warning = message;
+      await broken.writeThumbnail('k', Uint8List(1));
+      expect(warning, contains('storage'));
+      expect(broken.writeError, warning);
+      expect(await broken.readThumbnail('k'), isNull);
+      expect(await broken.readListing('k'), isNull);
+      await expectLater(broken.clear(), throwsA(isA<FileSystemException>()));
+    },
+  );
+
+  test(
+    'one budget evicts oldest previews across metadata and thumbnails',
+    () async {
+      cache = LocalCache(
+        () async => Directory('${root.path}/cache'),
+        budget: 400,
+      );
+      await cache.writeThumbnail('old', Uint8List(180));
+      await cache.writeThumbnail('recent', Uint8List(180));
+      await cache.writeDocument('metadata', {'value': 'a' * 100});
+      expect(await cache.size(), lessThanOrEqualTo(320));
+      expect(await cache.readThumbnail('old'), isNull);
+      expect(await cache.readThumbnail('recent'), isNotNull);
+      expect(await cache.readDocument('metadata'), {'value': 'a' * 100});
+    },
+  );
+
+  test(
+    'concurrent overwrites retain exact accounting and enforce the cap',
+    () async {
+      cache = LocalCache(
+        () async => Directory('${root.path}/cache'),
+        budget: 400,
+      );
+      await Future.wait([
+        for (var i = 0; i < 10; i++)
+          cache.writeThumbnail('same', Uint8List(100)),
+      ]);
+      expect(await cache.size(), 105);
+      await cache.writeThumbnail('next', Uint8List(100));
+      expect(await cache.size(), 210);
+      await cache.writeThumbnail('oversized', Uint8List(500));
+      expect(await cache.size(), lessThanOrEqualTo(400));
+    },
+  );
+
+  test(
+    'restart trims all browsing categories and removes interrupted writes',
+    () async {
+      await cache.writeListing('list', [photo()]);
+      await cache.writeDocument('doc', {'value': 'a' * 100});
+      await cache.writeThumbnail('thumb', Uint8List(100));
+      final abandoned = File('${root.path}/cache/thumbs/abandoned.part');
+      await abandoned.writeAsBytes(Uint8List(1000));
+      final size = await cache.size();
+      cache = LocalCache(
+        () async => Directory('${root.path}/cache'),
+        budget: 200,
+      );
+      await cache.trim();
+      expect(size, greaterThan(200));
+      expect(await cache.size(), lessThanOrEqualTo(200));
+      expect(await abandoned.exists(), isFalse);
+    },
+  );
+
+  test(
+    'LRU reads protect old previews without touching disk on every hit',
+    () async {
+      await cache.writeThumbnail('read', Uint8List(100));
+      await cache.writeThumbnail('other', Uint8List(100));
+      final readFile = File('${root.path}/cache/thumbs/${cacheDigest('read')}');
+      final otherFile = File(
+        '${root.path}/cache/thumbs/${cacheDigest('other')}',
+      );
+      await readFile.setLastModified(DateTime.utc(2020));
+      await otherFile.setLastModified(DateTime.utc(2021));
+      cache = LocalCache(
+        () async => Directory('${root.path}/cache'),
+        budget: 300,
+      );
+      await cache.trim();
+      await cache.readThumbnail('read');
+      await cache.writeThumbnail('new', Uint8List(100));
+      expect(await cache.readThumbnail('other'), isNull);
+      expect(await cache.readThumbnail('read'), isNotNull);
+    },
+  );
+
+  test(
+    'only large worthwhile metadata is compressed, with legacy JSON support',
+    () async {
+      final large = {'rows': List.filled(500, 'repeated library metadata')};
+      await cache.writeDocument('large', large);
+      final file = File(
+        '${root.path}/cache/indexes/${cacheDigest('large')}.json',
+      );
+      final bytes = await file.readAsBytes();
+      expect(bytes.take(2), [0x1f, 0x8b]);
+      expect(
+        bytes.length,
+        lessThan(utf8.encode(jsonEncode(large)).length * 0.9),
+      );
+      expect(await cache.readDocument('large'), large);
+      await cache.writeListing('large-list', List.filled(50, photo()));
+      expect(await cache.readListing('large-list'), hasLength(50));
+      await cache.writeDocument('small', {'value': 1});
+      final small = File(
+        '${root.path}/cache/indexes/${cacheDigest('small')}.json',
+      );
+      expect(jsonDecode(await small.readAsString()), {'value': 1});
+      await file.writeAsString(jsonEncode(large));
+      expect(await cache.readDocument('large'), large);
+    },
+  );
+
+  test(
+    'saved originals and membership survive eviction, clear and restart',
+    () async {
+      cache = LocalCache(
+        () async => Directory('${root.path}/cache'),
+        budget: 100,
+      );
+      final original = await cache.original('saved', 'photo.jpg');
+      await original.writeAsBytes(Uint8List(1000));
+      await cache.writeOfflineListing('offline', [photo()]);
+      await cache.writeThumbnail('oversized', Uint8List(500));
+      expect(await cache.size(), lessThanOrEqualTo(100));
+      expect(await cache.downloadSize(), greaterThanOrEqualTo(1000));
+      await cache.clear();
+      cache = LocalCache(() async => Directory('${root.path}/cache'));
+      expect(await original.length(), 1000);
+      expect(await cache.readOfflineListing('offline'), hasLength(1));
+      expect(await cache.size(), 0);
+      await cache.clearAll();
+      expect(await original.exists(), isFalse);
+      expect(await cache.readOfflineListing('offline'), isEmpty);
+    },
+  );
+
+  test(
+    'legacy downloads and manifest migrate before browsing eviction',
+    () async {
+      final legacy = Directory('${root.path}/cache/originals');
+      await legacy.create(recursive: true);
+      final oldOriginal = File('${legacy.path}/${cacheDigest('saved')}.jpg');
+      await oldOriginal.writeAsBytes(png);
+      await cache.writeListing('offline', [photo()]);
+      cache = LocalCache(
+        () async => Directory('${root.path}/cache'),
+        budget: 1,
+      );
+      expect(await cache.readOfflineListing('offline'), hasLength(1));
+      await cache.trim();
+      await cache.clear();
+      expect(await oldOriginal.exists(), isFalse);
+      expect(
+        await (await cache.original('saved', 'photo.jpg')).readAsBytes(),
+        png,
+      );
+      expect(await cache.readOfflineListing('offline'), hasLength(1));
+    },
+  );
+
+  test('failed download directory initialization can be retried', () async {
+    var attempts = 0;
+    cache = LocalCache(
+      () async => Directory('${root.path}/cache'),
+      locateDownloads: () async {
+        if (attempts++ == 0) throw const FileSystemException('unavailable');
+        return Directory('${root.path}/saved');
+      },
+    );
+    await expectLater(
+      cache.original('k', 'photo.jpg'),
+      throwsA(isA<FileSystemException>()),
+    );
+    final file = await cache.original('k', 'photo.jpg');
+    await file.writeAsBytes(png);
+    expect(await file.exists(), isTrue);
   });
 
   test('original cache names keep a safe extension', () async {
@@ -320,6 +500,7 @@ void main() {
       );
       await tester.runAsync(() async {
         await controller.saveOffline(photo());
+        await controller.clearCache();
         await controller.selectTab(6);
       });
       expect(controller.items.single.key, photo().key);

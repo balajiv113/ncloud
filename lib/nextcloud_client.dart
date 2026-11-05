@@ -1361,41 +1361,23 @@ class NextcloudClient {
       _activePreviews++;
     }
     try {
-      final canUseOriginal =
-          file.size > 0 &&
-          file.size <= 2 * 1024 * 1024 &&
-          const {
-            'image/jpeg',
-            'image/png',
-            'image/webp',
-            'image/gif',
-          }.contains(file.contentType);
-      var original = file.id == null;
-      if (original && !canUseOriginal) {
+      if (file.id == null) {
         throw const CloudException(
           'No preview is available. Download the original to view this file.',
         );
       }
       for (var attempt = 0; ; attempt++) {
-        final uri = original
-            ? fileUri(account, file)
-            : serverEndpoint(
-                account.server,
-                ['index.php', 'core', 'preview'],
-                {'fileId': file.id!, 'x': '$size', 'y': '$size', 'a': 'true'},
-              );
+        final uri = serverEndpoint(
+          account.server,
+          ['index.php', 'core', 'preview'],
+          {'fileId': file.id!, 'x': '$size', 'y': '$size', 'a': 'true'},
+        );
         final request = http.Request('GET', uri)
           ..followRedirects = false
           ..headers['Authorization'] = account.authorization;
         final response = await _transport.send(request).timeout(_timeout);
         if (response.statusCode != 200) {
           await response.stream.drain<void>().timeout(_timeout);
-          if (!original &&
-              canUseOriginal &&
-              const {404, 415}.contains(response.statusCode)) {
-            original = true;
-            continue;
-          }
           if (attempt == 0 &&
               const {429, 502, 503, 504}.contains(response.statusCode)) {
             final seconds = int.tryParse(response.headers['retry-after'] ?? '');

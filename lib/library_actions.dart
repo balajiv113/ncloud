@@ -725,12 +725,17 @@ class _CacheTileState extends State<_CacheTile> {
       title: const Text('Offline cache'),
       subtitle: Text(
         '${snapshot.hasData ? _format(snapshot.data!) : 'Measuring…'} · '
-        'thumbnails, library pages and saved videos load instantly on reopen.',
+        '500 MB shared limit for previews and library metadata. '
+        'Saved offline files are separate, uncapped, and kept when clearing cache.',
       ),
       trailing: TextButton(
         onPressed: () async {
-          await widget.controller.clearCache();
-          if (mounted) setState(() => _size = widget.controller.cacheSize());
+          try {
+            await widget.controller.clearCache();
+            if (mounted) setState(() => _size = widget.controller.cacheSize());
+          } catch (e) {
+            if (context.mounted) showError(context, e);
+          }
         },
         child: const Text('Clear'),
       ),
