@@ -142,7 +142,7 @@ Photos use the installed Memories index and standard Nextcloud WebDAV, not an Im
 
 Single-thumbnail requests are limited to four concurrent transfers; Memories multipreview requests batch up to 48 previews. Grids request 384px previews and the viewer requests 1280px, with bounded decoding, a 64 MiB/4,000-entry encoded in-memory LRU cache and the persistent disk cache described above. Transient server overload is retried once; failed requests are not permanently cached. Images and video posters require working Nextcloud preview providers; missing previews never trigger automatic original downloads. The cache speeds up browsing; it is not two-way offline sync.
 
-Transfers require the app to stay open. Uploads never overwrite existing filenames. Folder sync checkpoints completed files; there is no background/chunk-resumable transfer queue or camera-library access yet. Regular Download & share transfers stream to temporary app storage and open the system share sheet; folder-sync downloads instead go to the explicitly selected folder. Disconnect removes credentials and ncloud's downloaded cache, but not files saved in paired folders or shared elsewhere. Revoke the app password in Nextcloud Security settings to revoke server access.
+Transfers require the app to stay open. Uploads never overwrite existing filenames. Folder sync and photo backup checkpoint completed files; there is no background/chunk-resumable transfer queue yet. Regular Download & share transfers stream to temporary app storage and open the system share sheet; folder-sync downloads instead go to the explicitly selected folder. Disconnect removes credentials and ncloud's downloaded cache, but not files saved in paired folders or shared elsewhere. Revoke the app password in Nextcloud Security settings to revoke server access.
 
 ## Develop
 
@@ -172,7 +172,7 @@ Credentials use iOS Keychain / Android encrypted storage. HTTPS is required, aut
 
 This is the foundation, not a claim that core Nextcloud supplies all Immich and Google Drive capabilities.
 
-1. Reliable camera backup: OS photo permissions, deduplication, resumable/chunked uploads, background queues, cellular/battery policies and transfer progress.
+1. Backup hardening: stronger content deduplication, resumable/chunked uploads, OS background queues and recovery reporting beyond the current foreground, create-only backup.
 2. Further Drive essentials: richer sharing permissions, offline files, server search, file previews/editing and multiple accounts.
 3. Further photo library: Live Photos/RAW/HEIC handling, maps, collaborative libraries and duplicate management.
 4. Intelligence: evaluate Nextcloud Photos/Memories/Recognize/Face Recognition APIs and compatibility. Face grouping, semantic search, memories and transcoding require suitable server apps or a separately designed indexing service; they cannot be promised from core WebDAV alone.
