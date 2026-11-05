@@ -125,15 +125,6 @@ jobs:
       - name: Verify native Android folder sync routing
         working-directory: android
         run: ./gradlew :app:testDebugUnitTest --no-daemon --console=plain
-      - name: Build background service device checks
-        working-directory: android
-        run: ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest --no-daemon --console=plain
-      - uses: actions/upload-artifact@v4
-        with:
-          name: android-background-check
-          path: |
-            build/app/outputs/apk/debug/app-debug.apk
-            build/app/outputs/apk/androidTest/debug/app-debug-androidTest.apk
       - name: Verify APK uses the cached preview signer
         run: |
           set -euo pipefail
@@ -164,13 +155,23 @@ jobs:
           path: pubspec.lock
 
   android-background:
-    needs: android
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
         with:
-          name: android-background-check
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - name: Build background service device checks
+        working-directory: android
+        run: ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest -Ptarget-platform=android-x64 --no-daemon --console=plain
       - name: Allow Android emulator acceleration
         run: if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; fi
       - uses: reactivecircus/android-emulator-runner@v2
@@ -180,8 +181,8 @@ jobs:
           target: google_apis
           disable-animations: true
           script: |
-            adb install -r debug/app-debug.apk
-            adb install -r androidTest/debug/app-debug-androidTest.apk
+            adb install -r build/app/outputs/apk/debug/app-debug.apk
+            adb install -r build/app/outputs/apk/androidTest/debug/app-debug-androidTest.apk
             adb shell am instrument -w app.ncloud.ncloud.test/androidx.test.runner.AndroidJUnitRunner | tee native-background-result.txt
             grep -q '^OK (' native-background-result.txt
       - uses: actions/upload-artifact@v4
