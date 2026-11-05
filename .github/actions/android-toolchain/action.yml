@@ -32,7 +32,7 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        sdkmanager --install \
+        "${{ steps.versions.outputs.sdk-root }}/cmdline-tools/latest/bin/sdkmanager" --install \
           "ndk;${{ steps.versions.outputs.ndk }}" \
           "platforms;android-${{ steps.versions.outputs.platform }}" \
           "cmake;3.22.1" \
