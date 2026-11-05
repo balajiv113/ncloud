@@ -364,7 +364,7 @@ class NextcloudClient {
       _trashUri(account, ['trash', entry.key]),
       account: account,
       headers: {
-        'Destination': _trashUri(account, ['restore']).toString(),
+        'Destination': _trashUri(account, ['restore', entry.key]).toString(),
         'Overwrite': 'F',
       },
     );

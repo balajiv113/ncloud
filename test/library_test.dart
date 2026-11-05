@@ -13,6 +13,18 @@ import 'app_test.dart' show MemoryStore;
 import 'nextcloud_client_test.dart' show account, multistatus, responseEntry;
 
 void main() {
+  test('trash restore targets a child of the restore collection', () async {
+    final client = NextcloudClient(transport: MockClient((request) async {
+      expect(request.method, 'MOVE');
+      expect(Uri.parse(request.headers['Destination']!).pathSegments,
+        ['nextcloud', 'remote.php', 'dav', 'trashbin', 'alice', 'restore', 'photo.jpg.d123']);
+      expect(request.headers['Overwrite'], 'F');
+      return http.Response('', 201);
+    }));
+    addTearDown(client.close);
+    await client.restore(account,
+      const TrashEntry(key: 'photo.jpg.d123', name: 'photo.jpg', originalPath: 'Photos/photo.jpg'));
+  });
   test(
     'demo albums are actual folders and copy/move/rename/restore update paths',
     () async {

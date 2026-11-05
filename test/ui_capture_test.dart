@@ -16,8 +16,9 @@ void main() {
     (tester) async {
       final root = Platform.environment['FLUTTER_ROOT'];
       await tester.runAsync(() async {
-        await (FontLoader('MaterialIcons')
-          ..addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf'))).load();
+        await (FontLoader(
+          'MaterialIcons',
+        )..addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf'))).load();
         if (root != null) {
           final font = File(
             '$root/bin/cache/artifacts/material_fonts/Roboto-Regular.ttf',
@@ -68,6 +69,7 @@ void main() {
         });
         expect(tester.takeException(), isNull);
       }
+      debugDisableShadows = oldShadows;
     },
     skip: !const bool.fromEnvironment('CAPTURE_UI'),
   );

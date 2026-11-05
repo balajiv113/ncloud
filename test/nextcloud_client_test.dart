@@ -141,16 +141,30 @@ void main() {
     expect(await client.search(account), hasLength(1));
   });
 
-  test('scoped SEARCH uses literal XML-escaped paths and SearchDAV offsets', () async {
-    final client = NextcloudClient(transport: MockClient((request) async {
-      expect(request.body, contains('<d:href>/files/alice/Album &amp; family #1</d:href>'));
-      expect(request.body, contains('<sd:firstresult>200</sd:firstresult>'));
-      expect(request.body, contains('xmlns:sd="https://github.com/icewind1991/SearchDAV/ns"'));
-      return http.Response(multistatus(''), 207);
-    }));
-    addTearDown(client.close);
-    await client.search(account, path: ['Album & family #1'], offset: 200);
-  });
+  test(
+    'scoped SEARCH uses literal XML-escaped paths and SearchDAV offsets',
+    () async {
+      final client = NextcloudClient(
+        transport: MockClient((request) async {
+          expect(
+            request.body,
+            contains('<d:href>/files/alice/Album &amp; family #1</d:href>'),
+          );
+          expect(
+            request.body,
+            contains('<sd:firstresult>200</sd:firstresult>'),
+          );
+          expect(
+            request.body,
+            contains('xmlns:sd="https://github.com/icewind1991/SearchDAV/ns"'),
+          );
+          return http.Response(multistatus(''), 207);
+        }),
+      );
+      addTearDown(client.close);
+      await client.search(account, path: ['Album & family #1'], offset: 200);
+    },
+  );
 
   test('login flow preserves a poll token and treats 404 as pending', () async {
     var calls = 0;
