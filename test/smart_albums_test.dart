@@ -126,6 +126,40 @@ void main() {
       final root = await Directory.systemTemp.createTemp(
         'ncloud-full-listing-',
       );
+
+      test('first results remain cached when later pages fail', () async {
+        final root = await Directory.systemTemp.createTemp(
+          'ncloud-partial-listing-',
+        );
+        addTearDown(() => root.delete(recursive: true));
+        final cache = LocalCache(() async => root);
+        final first = AppController(
+          store: MemoryStore(),
+          cache: cache,
+          client: NextcloudClient(
+            transport: MockClient(
+              (request) async =>
+                  request.body.contains('<sd:firstresult>0</sd:firstresult>')
+                  ? http.Response(page(0, 200), 207)
+                  : http.Response('', 503),
+            ),
+          ),
+        )..account = account;
+        await first.load();
+        expect(first.error, isNotNull);
+        first.dispose();
+        final restored = AppController(
+          store: MemoryStore(),
+          cache: cache,
+          client: NextcloudClient(
+            transport: MockClient((_) async => http.Response('', 503)),
+          ),
+        )..account = account;
+        addTearDown(restored.dispose);
+        await restored.load();
+        expect(restored.items, hasLength(200));
+        expect(restored.error, isNotNull);
+      });
       addTearDown(() => root.delete(recursive: true));
       final cache = LocalCache(() async => root);
       var refresh = false;

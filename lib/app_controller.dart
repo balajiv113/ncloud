@@ -440,6 +440,10 @@ class AppController extends ChangeNotifier {
             loading = false;
             loadingMore = hasMore;
             notifyListeners();
+            if (before == 0 && cached.isEmpty && listingKey != null) {
+              await cache?.writeListing(listingKey, items);
+              if (version != _loadVersion || _disposed) return;
+            }
             if (!hasMore) break;
           }
           if (currentTab == 5) {
