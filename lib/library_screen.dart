@@ -158,10 +158,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
       var newest = (b.timelineDate ?? DateTime(1970)).compareTo(
         a.timelineDate ?? DateTime(1970),
       );
-      if (newest == 0)
+      if (newest == 0) {
         newest = (b.taken ?? DateTime(1970)).compareTo(
           a.taken ?? DateTime(1970),
         );
+      }
       final order = switch (_sort) {
         LibrarySort.newest => newest,
         LibrarySort.oldest => -newest,
@@ -312,9 +313,12 @@ class _LibraryScreenState extends State<LibraryScreen> {
                   },
                   onPointerUp: (event) => _pointers.remove(event.pointer),
                   onPointerCancel: (event) => _pointers.remove(event.pointer),
-                  child: NotificationListener<ScrollUpdateNotification>(
+                  child: NotificationListener<ScrollNotification>(
                     onNotification: (notification) {
-                      if (notification.dragDetails != null) {
+                      if ((notification is ScrollUpdateNotification &&
+                              notification.dragDetails != null) ||
+                          (notification is OverscrollNotification &&
+                              notification.dragDetails != null)) {
                         _prefetchBudget = 2;
                         _prefetch();
                       }
@@ -1585,13 +1589,19 @@ class _LibraryScreenState extends State<LibraryScreen> {
           ),
           const SizedBox(height: 16),
           Text(
-            c.error != null ? 'Connection interrupted' : 'Nothing here yet',
+            c.error != null
+                ? 'Connection interrupted'
+                : c.hasMore
+                ? 'Keep scrolling'
+                : 'Nothing here yet',
             style: Theme.of(context).textTheme.titleLarge,
           ),
           const SizedBox(height: 10),
           Text(
             c.error != null
                 ? 'Your loaded items are kept. Pull to refresh and retry.'
+                : c.hasMore
+                ? 'More dates are available. Scroll to continue browsing.'
                 : c.tab == 6
                 ? 'Save originals from a file menu or video player to access them offline.'
                 : c.tab == 5
@@ -1699,11 +1709,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
                       _chooseSource();
                     },
                   ),
-                const Text(
+                Text(
                   c.memoriesAvailable == true
                       ? 'Memories capture dates. Photos load as you scroll.'
                       : 'WebDAV modification dates. Photos load as you scroll.',
-                  style: TextStyle(fontSize: 11),
+                  style: const TextStyle(fontSize: 11),
                 ),
               ],
             ),

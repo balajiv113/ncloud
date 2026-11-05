@@ -25,8 +25,9 @@ void main() {
       final store = MemoryStore();
       NextcloudClient client() => NextcloudClient(
         transport: MockClient((request) async {
-          if (request.url.path.contains('/apps/memories/'))
+          if (request.url.path.contains('/apps/memories/')) {
             return http.Response('', 404);
+          }
           if (request.url.path.endsWith('/cloud/user')) {
             return http.Response(
               jsonEncode({

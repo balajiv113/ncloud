@@ -113,8 +113,9 @@ void main() {
       cache: cache,
       client: NextcloudClient(
         transport: MockClient((request) async {
-          if (request.url.path.contains('/apps/memories/'))
+          if (request.url.path.contains('/apps/memories/')) {
             return http.Response('', 404);
+          }
           if (fail) return http.Response('', 503);
           return http.Response(multistatus(responseEntry()), 207);
         }),

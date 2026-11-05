@@ -35,8 +35,9 @@ void main() {
                 store: MemoryStore(),
                 client: NextcloudClient(
                   transport: MockClient((request) async {
-                    if (request.method == 'PROPFIND')
+                    if (request.method == 'PROPFIND') {
                       return http.Response('', 404);
+                    }
                     final offset = int.parse(
                       RegExp(
                         r'<sd:firstresult>(\d+)</sd:firstresult>',

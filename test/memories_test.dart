@@ -49,6 +49,93 @@ http.Response davForIds(http.Request request) {
 
 void main() {
   test(
+    'an empty index stops without fetching details or falling back to an entire drive scan',
+    () async {
+      var calls = 0;
+      final c = AppController(
+        store: MemoryStore(),
+        client: NextcloudClient(
+          transport: MockClient((request) async {
+            calls++;
+            expect(request.url.path, endsWith('/days'));
+            return jsonResponse([]);
+          }),
+        ),
+      )..account = account;
+      addTearDown(c.dispose);
+      await c.load();
+      expect(calls, 1);
+      expect(c.memoriesAvailable, isTrue);
+      expect(c.items, isEmpty);
+      expect(c.hasMore, isFalse);
+      expect(c.error, isNull);
+    },
+  );
+
+  test(
+    'scoped favorites use identical index/detail filters and preserve the camera calendar day',
+    () async {
+      final client = NextcloudClient(
+        transport: MockClient((request) async {
+          if (request.method == 'SEARCH') return davForIds(request);
+          expect(
+            request.url.queryParameters['folder'],
+            '/Photos/Trip & family',
+          );
+          expect(request.url.queryParameters['recursive'], '1');
+          expect(request.url.queryParameters['fav'], '1');
+          expect(request.url.queryParameters['nopreload'], '1');
+          return jsonResponse(
+            request.url.path.endsWith('/days')
+                ? [
+                    {'dayid': 21000, 'count': 1},
+                  ]
+                : [
+                    {
+                      'fileid': 42,
+                      'dayid': 21000,
+                      'epoch': 21000 * 86400 - 3600,
+                      'etag': 'new',
+                    },
+                  ],
+          );
+        }),
+      );
+      addTearDown(client.close);
+      final days = await client.memoryDays(
+        account,
+        path: ['Photos', 'Trip & family'],
+        favorites: true,
+      );
+      final photos = await client.memoryDayFiles(
+        account,
+        [days!.single.id],
+        path: ['Photos', 'Trip & family'],
+        favorites: true,
+      );
+      final file = CloudFile.fromJson(
+        photos.single.toJson(),
+      ).atPath(['Photos', 'moved.jpg']);
+      final calendar = DateTime.fromMillisecondsSinceEpoch(
+        21000 * 86400000,
+        isUtc: true,
+      );
+      expect(
+        file.timelineDate,
+        DateTime(calendar.year, calendar.month, calendar.day),
+      );
+      expect(
+        file.taken,
+        DateTime.fromMillisecondsSinceEpoch(
+          (21000 * 86400 - 3600) * 1000,
+          isUtc: true,
+        ),
+      );
+      expect(file.etag, 'new');
+    },
+  );
+
+  test(
     'indexed days disable preloading; one scroll batch resolves real paths in one DAV request',
     () async {
       final calls = <http.Request>[];
@@ -59,13 +146,15 @@ void main() {
             calls.add(request);
             expect(request.headers['Authorization'], account.authorization);
             expect(request.url.path, startsWith('/nextcloud/'));
-            if (request.method == 'PROPFIND')
+            if (request.method == 'PROPFIND') {
               return http.Response(multistatus(''), 207);
+            }
             if (request.method == 'SEARCH') return davForIds(request);
             expect(request.url.queryParameters['nopreload'], '1');
             expect(request.url.queryParameters['folder'], '/');
-            if (request.url.path.endsWith('/days'))
+            if (request.url.path.endsWith('/days')) {
               return jsonResponse(index());
+            }
             final days = request.url.pathSegments.last
                 .split(',')
                 .map(int.parse);
@@ -127,11 +216,13 @@ void main() {
         store: MemoryStore(),
         client: NextcloudClient(
           transport: MockClient((request) async {
-            if (request.method == 'PROPFIND')
+            if (request.method == 'PROPFIND') {
               return http.Response(multistatus(''), 207);
+            }
             if (request.method == 'SEARCH') return davForIds(request);
-            if (request.url.path.endsWith('/days'))
+            if (request.url.path.endsWith('/days')) {
               return jsonResponse(index());
+            }
             details++;
             if (details == 2) return pending.future;
             final day = int.parse(
@@ -246,8 +337,9 @@ void main() {
           transport: MockClient((request) async {
             calls++;
             if (request.method == 'SEARCH') return davForIds(request);
-            if (request.url.path.endsWith('/days'))
+            if (request.url.path.endsWith('/days')) {
               return jsonResponse(index());
+            }
             final day = int.parse(
               request.url.pathSegments.last.split(',').first,
             );
@@ -310,11 +402,12 @@ void main() {
           transport: MockClient((request) async {
             requests.add(request);
             if (request.method == 'SEARCH') return davForIds(request);
-            if (request.url.path.endsWith('/days'))
+            if (request.url.path.endsWith('/days')) {
               return jsonResponse([
                 {'dayid': 21000, 'count': 450},
                 {'dayid': 20999, 'count': 50},
               ]);
+            }
             expect(request.url.queryParameters.containsKey('limit'), isFalse);
             return jsonResponse(
               List.generate(450, (i) => {'fileid': i + 1, 'dayid': 21000}),
@@ -378,6 +471,59 @@ void main() {
       expect(searches, 2);
       expect(c.items, hasLength(400));
       expect(find.textContaining('Load more'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'sparse shared results remain reachable by scrolling after bounded viewport prefetch',
+    (tester) async {
+      var searches = 0;
+      final c =
+          AppController(
+              store: MemoryStore(),
+              client: NextcloudClient(
+                transport: MockClient((request) async {
+                  if (request.url.path.endsWith('/shares')) {
+                    return jsonResponse({
+                      'ocs': {
+                        'meta': {'status': 'ok'},
+                        'data': [
+                          {'path': '/Photos/target.jpg'},
+                        ],
+                      },
+                    });
+                  }
+                  if (request.method != 'SEARCH') return http.Response('', 404);
+                  searches++;
+                  final count = searches < 4 ? 200 : 1;
+                  return http.Response(
+                    multistatus(
+                      List.generate(
+                        count,
+                        (i) => responseEntry(
+                          href:
+                              '/nextcloud/remote.php/dav/files/alice/Photos/${searches < 4 ? 'other-$searches-$i' : 'target'}.jpg',
+                        ),
+                      ).join(),
+                    ),
+                    207,
+                  );
+                }),
+              ),
+            )
+            ..account = account
+            ..tab = 5
+            ..memoriesAvailable = false;
+      await tester.pumpWidget(NcloudApp(controller: c));
+      await tester.pumpAndSettle();
+      expect(searches, 3);
+      expect(c.items, isEmpty);
+      expect(c.hasMore, isTrue);
+      await tester.drag(find.byType(CustomScrollView), const Offset(0, -400));
+      await tester.pumpAndSettle();
+      expect(searches, 4);
+      expect(c.items.single.path.last, 'target.jpg');
+      expect(c.hasMore, isFalse);
     },
   );
 }

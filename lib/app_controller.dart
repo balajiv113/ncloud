@@ -346,6 +346,7 @@ class AppController extends ChangeNotifier {
 
   Future<void> load({bool refresh = true}) async {
     final version = ++_loadVersion;
+    if (refresh) _initialDays = null;
     final session = account;
     final currentTab = tab;
     final path = [...directory];
@@ -405,6 +406,7 @@ class AppController extends ChangeNotifier {
         refreshing = true;
         notifyListeners();
         if (!refresh && previous.fresh && currentTab != 6) {
+          if (previous.days != null) memoriesAvailable ??= true;
           _activeListing = previous;
           _listings[listingKey!] = previous;
           hasMore = previous.more;
@@ -643,6 +645,7 @@ class AppController extends ChangeNotifier {
     discoveringAlbums = true;
     catalogueError = null;
     discoveredFolders = 0;
+    final nativeLoad = _loadNativeAlbums(session);
     notifyListeners();
     try {
       await _ensureMemories(session);
@@ -710,7 +713,7 @@ class AppController extends ChangeNotifier {
             },
         ],
       });
-      await _loadNativeAlbums(session);
+      await nativeLoad;
     } catch (e) {
       if (generation == _catalogueVersion && account == session && !_disposed) {
         catalogueError = errorMessage(e);
@@ -735,6 +738,8 @@ class AppController extends ChangeNotifier {
         nativeAlbumError =
             'Could not load Nextcloud albums. ${errorMessage(e)}';
       }
+    } finally {
+      if (account == session && !_disposed) notifyListeners();
     }
   }
 
