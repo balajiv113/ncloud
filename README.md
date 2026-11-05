@@ -12,6 +12,8 @@ Async file resolution and previews are scoped to their initiating session. Clear
 
 Initial and subsequent listing pages are checked against the initiating account and view generation before merging. Original downloads must match the listed byte count; offline saves additionally request the inventoried server revision. Failed transfers are not published as saved originals, and the transfer lock remains held through offline-file and membership publication.
 
+Clearing browsing metadata also invalidates in-flight folder, index and path-resolution work. Late Timeline failures from a previous destination do not replace the current view's error state or discard its queued date requests. Disposed controllers cannot restore a saved login.
+
 `media_listing.dart` owns cached listing membership/paging, and `timeline_scrubber.dart` owns scrolling gestures and accessibility. The scrubber remains available to screen readers while visually hidden, with date announcements and increase/decrease actions.
 
 ## Release readiness and support

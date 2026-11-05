@@ -236,6 +236,7 @@ void main() {
         isDirectory: false,
         id: 'opaque:1',
       );
+
       final pending = controller.resolve(file);
       final failed = expectLater(pending, throwsA(isA<CloudException>()));
       controller.account = null;
@@ -246,6 +247,27 @@ void main() {
       expect(controller.fileStore.length, 0);
     },
   );
+
+  test('file resolution cannot refill an explicitly cleared cache', () async {
+    final backend = _PortableBackend();
+    final controller = AppController(store: _SessionStore(), client: backend)
+      ..account = account;
+    addTearDown(controller.dispose);
+    const file = CloudFile(
+      path: [CloudFile.pendingRoot, 'opaque:1'],
+      name: 'photo.jpg',
+      isDirectory: false,
+      id: 'opaque:1',
+    );
+    final pending = controller.resolve(file);
+    final failed = expectLater(pending, throwsA(isA<CloudException>()));
+    await controller.clearCache();
+    backend.resolution.complete({
+      'opaque:1': file.atPath(['Pictures', 'photo.jpg']),
+    });
+    await failed;
+    expect(controller.fileStore.length, 0);
+  });
 
   test(
     'controller pages, previews and streams through a different backend',

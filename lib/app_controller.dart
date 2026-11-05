@@ -186,6 +186,7 @@ class AppController extends ChangeNotifier {
   String? error;
   String? notice;
   int _loadVersion = 0;
+  int _cacheGeneration = 0;
   int _loginVersion = 0;
   bool _disposed = false;
   List<CloudFile> _demo = [];
@@ -245,15 +246,22 @@ class AppController extends ChangeNotifier {
   bool get canCancelLogin => signingIn && !_savingAccount;
 
   Future<void> initialize() async {
+    final version = _loginVersion;
     try {
       final saved = await store.read();
+      if (_disposed || version != _loginVersion) return;
       if (saved != null) account = Account.decode(saved);
     } catch (e) {
-      error = 'Could not restore the saved account. ${errorMessage(e)}';
+      if (!_disposed && version == _loginVersion) {
+        error = 'Could not restore the saved account. ${errorMessage(e)}';
+      }
     } finally {
-      if (!connected) starting = false;
-      notifyListeners();
+      if (!_disposed && version == _loginVersion) {
+        if (!connected) starting = false;
+        notifyListeners();
+      }
     }
+    if (_disposed || version != _loginVersion) return;
     if (connected) {
       setSyncForeground(true);
       try {
@@ -418,6 +426,7 @@ class AppController extends ChangeNotifier {
     final session = account!;
     final key = 'warm-v2|${session.server}|${session.userId}';
     final prepared = await cache?.readDocument(key);
+    if (_disposed || account != session) return;
     final saved = await cache?.readDocument(_listingKey()!);
     if (_disposed || account != session) return;
     var cachedLibrary = false;
@@ -546,7 +555,7 @@ class AppController extends ChangeNotifier {
         notifyListeners();
       }
     } on Object catch (e) {
-      error ??= errorMessage(e);
+      if (active()) error ??= errorMessage(e);
     } finally {
       if (version == _warmVersion) {
         _warmTimer?.cancel();
@@ -563,7 +572,7 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> signOut() async {
-    if (busy) return;
+    if (busy || _savingAccount) return;
     busy = true;
     error = null;
     notifyListeners();
@@ -1029,13 +1038,17 @@ class AppController extends ChangeNotifier {
       'library-v1|${session.server}|${session.userId}';
 
   Future<void> _restoreStore(Account session) {
+    final generation = _cacheGeneration;
     final owner = _storeKey(session);
     if (_storeOwner == owner) return _restoringStore ?? Future.value();
     _storeOwner = owner;
     fileStore.clear();
     return _restoringStore = () async {
       final saved = await cache?.readDocument(owner);
-      if (saved != null && _storeOwner == owner) {
+      if (saved != null &&
+          _storeOwner == owner &&
+          generation == _cacheGeneration &&
+          !_disposed) {
         try {
           fileStore.restore(saved);
         } on Object {
@@ -1070,14 +1083,18 @@ class AppController extends ChangeNotifier {
     List<String> path, {
     bool force = false,
   }) async {
+    final generation = _cacheGeneration;
+    bool current() =>
+        account == session && !_disposed && generation == _cacheGeneration;
     await _restoreStore(session);
+    if (!current()) return [];
     if (!force) {
       final known = fileStore.folder(path);
       if (known != null) return known;
       final saved = await cache?.readFolderSnapshot(_storeKey(session), path);
-      if (saved != null && account == session && !_disposed) {
+      if (saved != null && current()) {
         final etag = await client.folderEtag(session, path);
-        if (account != session || _disposed) return saved.files;
+        if (!current()) return [];
         if (etag != null && etag == saved.etag) {
           fileStore.putFolder(path, saved.files, etag: etag);
           _persistStore();
@@ -1087,7 +1104,7 @@ class AppController extends ChangeNotifier {
     }
     final previous = fileStore.folder(path, fresh: false);
     final result = await client.listFolder(session, path);
-    if (account != session || _disposed) return result.children;
+    if (!current()) return [];
     final returned = result.children.map((file) => file.key).toSet();
     final gone = {
       for (final file in previous ?? <CloudFile>[])
@@ -1114,9 +1131,12 @@ class AppController extends ChangeNotifier {
     if (timelineIndexAvailable != null) return;
     final pending = _detectingTimelineIndex;
     if (pending != null) return pending;
+    final generation = _cacheGeneration;
     final detection = () async {
       final days = await client.timelineDays(session, optional: true);
-      if (account != session || _disposed) return;
+      if (account != session || _disposed || generation != _cacheGeneration) {
+        return;
+      }
       timelineIndexAvailable = days != null;
       _initialDays = days;
     }();
@@ -1139,6 +1159,8 @@ class AppController extends ChangeNotifier {
     List<String> path,
   ) async {
     final recursive = _recursiveMedia(currentTab, path);
+    final person = activePerson;
+    final mapBounds = activeMapBounds;
     if (listing.days case final days?) {
       final ids = <int>[];
       var count = 0;
@@ -1162,8 +1184,8 @@ class AppController extends ChangeNotifier {
       );
       final files =
           cached ??
-          (activeMapBounds != null
-              ? await client.mapDayFiles(session, ids, activeMapBounds!)
+          (mapBounds != null
+              ? await client.mapDayFiles(session, ids, mapBounds)
               : await client.timelineDayFiles(
                   session,
                   ids,
@@ -1171,7 +1193,7 @@ class AppController extends ChangeNotifier {
                   favorites: currentTab == 2,
                   recursive: recursive,
                   resolvePaths: !_pathless(currentTab),
-                  person: activePerson,
+                  person: person,
                 ));
       return (files: files, days: ids, scanned: files.length);
     }
@@ -1537,6 +1559,9 @@ class AppController extends ChangeNotifier {
     _fetchingDays = true;
     fetchingDays = true;
     notifyListeners();
+    MediaListing? requestListing;
+    Account? requestSession;
+    var requestVersion = _loadVersion;
     try {
       while (_pendingDays.isNotEmpty && !_disposed && _browsingActive) {
         final listing = _activeListing;
@@ -1562,9 +1587,14 @@ class AppController extends ChangeNotifier {
         _pendingDays.removeAll(batch);
         if (batch.isEmpty) continue;
         final version = _loadVersion;
+        requestVersion = version;
+        requestListing = listing;
+        requestSession = session;
         final currentTab = tab;
         final path = [...directory];
         final key = _listingKey();
+        final person = activePerson;
+        final mapBounds = activeMapBounds;
         final cached = await _cachedDayFiles(
           listing,
           session,
@@ -1574,8 +1604,8 @@ class AppController extends ChangeNotifier {
         );
         final files =
             cached ??
-            (activeMapBounds != null
-                ? await client.mapDayFiles(session, batch, activeMapBounds!)
+            (mapBounds != null
+                ? await client.mapDayFiles(session, batch, mapBounds)
                 : await client.timelineDayFiles(
                     session,
                     batch,
@@ -1583,9 +1613,10 @@ class AppController extends ChangeNotifier {
                     favorites: currentTab == 2,
                     recursive: _recursiveMedia(currentTab, path),
                     resolvePaths: !_pathless(currentTab),
-                    person: activePerson,
+                    person: person,
                   ));
         if (version != _loadVersion ||
+            account != session ||
             _disposed ||
             !identical(_activeListing, listing)) {
           continue;
@@ -1595,12 +1626,23 @@ class AppController extends ChangeNotifier {
         notifyListeners();
       }
     } catch (e) {
-      error ??= errorMessage(e);
-      _pendingDays.clear();
+      if (!_disposed &&
+          requestVersion == _loadVersion &&
+          account == requestSession &&
+          identical(requestListing, _activeListing)) {
+        error ??= errorMessage(e);
+        _pendingDays.clear();
+      }
     } finally {
       _fetchingDays = false;
       fetchingDays = false;
       notifyListeners();
+      if (!_disposed &&
+          _browsingActive &&
+          _pendingDays.isNotEmpty &&
+          error == null) {
+        unawaited(_drainDays());
+      }
     }
   }
 
@@ -2496,9 +2538,14 @@ class AppController extends ChangeNotifier {
     if (session == null) {
       throw const CloudException('Sign in again to open this item.');
     }
+    final generation = _cacheGeneration;
     final found = await client.resolveFileIds(session, [id]);
-    if (_disposed || !identical(account, session)) {
-      throw const CloudException('The account changed. Open this item again.');
+    if (_disposed ||
+        !identical(account, session) ||
+        generation != _cacheGeneration) {
+      throw const CloudException(
+        'The account or cache changed. Open this item again.',
+      );
     }
     _applyResolved([id], found);
     return _resolvedIds[id] ??
@@ -2782,6 +2829,20 @@ class AppController extends ChangeNotifier {
   Future<int> downloadSize() async => await cache?.downloadSize() ?? 0;
 
   Future<void> clearCache() async {
+    if (busy) {
+      throw const CloudException('Wait for the current transfer to finish.');
+    }
+    _loadVersion++;
+    _cacheGeneration++;
+    _warmVersion++;
+    _warmTimer?.cancel();
+    warming = false;
+    loading = false;
+    refreshing = false;
+    loadingMore = false;
+    _pendingDays.clear();
+    _initialDays = null;
+    _detectingTimelineIndex = null;
     _clearPreviews();
     _covers.clear();
     await _invalidateBrowse();
