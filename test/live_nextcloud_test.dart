@@ -62,13 +62,14 @@ void main() {
       );
       expect(recursiveDays!.fold<int>(0, (sum, day) => sum + day.count), 202);
       expect(files.every((f) => f.path.length == 2), isTrue);
-      final davDirect = await client.search(
+      final davDirect = await client.searchPage(
         session,
         path: ['ncloud-index'],
         recursive: false,
       );
-      expect(davDirect, hasLength(200));
-      expect(davDirect.every((f) => f.path.length == 2), isTrue);
+      expect(davDirect.scanned, 200);
+      expect(davDirect.files, isNotEmpty);
+      expect(davDirect.files.every((f) => f.path.length == 2), isTrue);
       final controller = AppController(store: MemoryStore(), client: client)
         ..account = session.withPhotoRoot(['ncloud-index']);
       addTearDown(controller.dispose);

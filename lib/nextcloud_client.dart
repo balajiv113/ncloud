@@ -391,6 +391,26 @@ class NextcloudClient {
     int limit = photoLimit,
     List<String>? fileIds,
     bool recursive = true,
+  }) async => (await searchPage(
+    account,
+    favorites: favorites,
+    path: path,
+    offset: offset,
+    limit: limit,
+    fileIds: fileIds,
+    recursive: recursive,
+  )).files;
+
+  /// Like [search], but also reports how many results the server returned
+  /// before client-side filtering, which is what paging offsets must use.
+  Future<({List<CloudFile> files, int scanned})> searchPage(
+    Account account, {
+    bool favorites = false,
+    List<String> path = const [],
+    int offset = 0,
+    int limit = photoLimit,
+    List<String>? fileIds,
+    bool recursive = true,
   }) async {
     // Relative SEARCH scopes are literal DAV paths, not URI-encoded URLs.
     final scope = XmlText(
@@ -424,7 +444,14 @@ class NextcloudClient {
     );
     _expect(response, {207});
     final files = parseFiles(response.body, account);
-    return files.where((f) => favorites ? f.favorite : f.isMedia).toList();
+    return (
+      files: files
+          .where((f) => favorites ? f.favorite : f.isMedia)
+          // Nextcloud ignores SEARCH depth 1 and returns nested files too.
+          .where((f) => recursive || f.path.length == path.length + 1)
+          .toList(),
+      scanned: files.length,
+    );
   }
 
   Future<List<dynamic>?> _memories(

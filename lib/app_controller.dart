@@ -19,6 +19,9 @@ abstract interface class SessionStore {
   Future<void> clear();
 }
 
+/// A fetched page; [scanned] counts server results before filtering.
+typedef _Page = ({List<CloudFile> files, List<int> days, int scanned});
+
 class SecureSessionStore implements SessionStore {
   static const _storage = FlutterSecureStorage(
     aOptions: AndroidOptions(encryptedSharedPreferences: true),
@@ -806,7 +809,7 @@ class AppController extends ChangeNotifier {
 
   /// Fetches the next unloaded days (or WebDAV page) without changing
   /// [listing]; the caller merges the result only if it is still current.
-  Future<({List<CloudFile> files, List<int> days})> _nextPage(
+  Future<_Page> _nextPage(
     _MediaListing listing,
     Account session,
     int currentTab,
@@ -826,7 +829,7 @@ class AppController extends ChangeNotifier {
         ids.add(day.id);
         count += day.count;
       }
-      if (ids.isEmpty) return (files: <CloudFile>[], days: ids);
+      if (ids.isEmpty) return (files: <CloudFile>[], days: ids, scanned: 0);
       final files = await client.memoryDayFiles(
         session,
         ids,
@@ -835,9 +838,9 @@ class AppController extends ChangeNotifier {
         recursive: recursive,
         resolvePaths: !_pathless(currentTab),
       );
-      return (files: files, days: ids);
+      return (files: files, days: ids, scanned: files.length);
     }
-    final page = await client.search(
+    final page = await client.searchPage(
       session,
       favorites: currentTab == 2,
       path: path,
@@ -845,12 +848,13 @@ class AppController extends ChangeNotifier {
       recursive: recursive,
     );
     final existing = listing.keys.toSet();
-    if (page.isNotEmpty && page.every((f) => existing.contains(f.key))) {
+    if (page.files.isNotEmpty &&
+        page.files.every((f) => existing.contains(f.key))) {
       throw const CloudException(
         'The server repeated a page. Pull to refresh your library.',
       );
     }
-    return (files: page, days: <int>[]);
+    return (files: page.files, days: <int>[], scanned: page.scanned);
   }
 
   Future<void> _fetchPage(
@@ -862,17 +866,14 @@ class AppController extends ChangeNotifier {
     _mergePage(listing, await _nextPage(listing, session, currentTab, path));
   }
 
-  void _mergePage(
-    _MediaListing listing,
-    ({List<CloudFile> files, List<int> days}) page,
-  ) {
+  void _mergePage(_MediaListing listing, _Page page) {
     listing.add(fileStore, page.files);
     if (listing.days case final days?) {
       listing.loaded.addAll(page.days);
       listing.more = days.any((d) => !listing.loaded.contains(d.id));
     } else {
-      listing.offset += page.files.length;
-      listing.more = page.files.length == NextcloudClient.photoLimit;
+      listing.offset += page.scanned;
+      listing.more = page.scanned == NextcloudClient.photoLimit;
     }
   }
 
@@ -1067,7 +1068,7 @@ class AppController extends ChangeNotifier {
             !identical(_activeListing, listing)) {
           continue;
         }
-        _mergePage(listing, (files: files, days: batch));
+        _mergePage(listing, (files: files, days: batch, scanned: files.length));
         await _publishListing(listing, key);
         notifyListeners();
       }

@@ -166,6 +166,39 @@ void main() {
     },
   );
 
+  test(
+    'non-recursive SEARCH drops nested files but pages by raw count',
+    () async {
+      final client = NextcloudClient(
+        transport: MockClient((request) async {
+          return http.Response(
+            multistatus(
+              responseEntry() +
+                  responseEntry(
+                    href:
+                        '/nextcloud/remote.php/dav/files/alice/Photos/Japan/a.jpg',
+                    name: 'a.jpg',
+                  ),
+            ),
+            207,
+          );
+        }),
+      );
+      addTearDown(client.close);
+      final page = await client.searchPage(
+        account,
+        path: ['Photos'],
+        recursive: false,
+      );
+      expect(page.files.map((f) => f.path), [
+        ['Photos', 'Beach & sun.jpg'],
+      ]);
+      expect(page.scanned, 2);
+      final all = await client.searchPage(account, path: ['Photos']);
+      expect(all.files, hasLength(2));
+    },
+  );
+
   test('login flow preserves a poll token and treats 404 as pending', () async {
     var calls = 0;
     final client = NextcloudClient(
