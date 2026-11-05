@@ -30,15 +30,26 @@ android {
         versionName = flutter.versionName
     }
 
-    System.getenv("NCLOUD_PREVIEW_KEYSTORE")?.let {
-        signingConfigs.getByName("debug").storeFile = file(it)
+    val previewKeystore = System.getenv("NCLOUD_PREVIEW_KEYSTORE")
+    signingConfigs {
+        if (previewKeystore != null) {
+            create("preview") {
+                storeFile = file(previewKeystore)
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
+        }
     }
 
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            // CI uses a persistent preview key so updates install over each other.
+            signingConfig = if (previewKeystore != null) {
+                signingConfigs.getByName("preview")
+            } else {
+                signingConfigs.getByName("debug")
+            }
         }
     }
 }

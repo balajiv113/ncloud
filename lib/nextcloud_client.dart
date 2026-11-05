@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -26,6 +27,8 @@ class NextcloudClient {
     : _transport = transport ?? http.Client();
 
   final http.Client _transport;
+  final _previewQueue = Queue<Completer<void>>();
+  int _activePreviews = 0;
   static const _timeout = Duration(seconds: 45);
   static const photoLimit = 200;
   static const _properties = '''
@@ -650,37 +653,92 @@ class NextcloudClient {
     }
   }
 
-  Future<Uint8List> preview(Account account, CloudFile file) async {
-    if (file.id == null) throw const CloudException('No preview is available.');
-    final request =
-        http.Request(
-            'GET',
-            serverEndpoint(
-              account.server,
-              ['index.php', 'core', 'preview'],
-              {'fileId': file.id!, 'x': '720', 'y': '720', 'a': 'true'},
-            ),
-          )
+  Future<Uint8List> preview(
+    Account account,
+    CloudFile file, {
+    int size = 384,
+  }) async {
+    if (size < 1 || size > 2048) {
+      throw ArgumentError.value(size, 'size', 'Must be between 1 and 2048');
+    }
+    if (_activePreviews >= 4) {
+      final ready = Completer<void>();
+      _previewQueue.add(ready);
+      await ready.future;
+    } else {
+      _activePreviews++;
+    }
+    try {
+      final canUseOriginal =
+          file.size > 0 &&
+          file.size <= 2 * 1024 * 1024 &&
+          const {
+            'image/jpeg',
+            'image/png',
+            'image/webp',
+            'image/gif',
+          }.contains(file.contentType);
+      var original = file.id == null;
+      if (original && !canUseOriginal) {
+        throw const CloudException(
+          'No preview is available. Download the original to view this file.',
+        );
+      }
+      for (var attempt = 0; ; attempt++) {
+        final uri = original
+            ? davUri(account, file.path)
+            : serverEndpoint(
+                account.server,
+                ['index.php', 'core', 'preview'],
+                {'fileId': file.id!, 'x': '$size', 'y': '$size', 'a': 'true'},
+              );
+        final request = http.Request('GET', uri)
           ..followRedirects = false
           ..headers['Authorization'] = account.authorization;
-    try {
-      final response = await _transport.send(request).timeout(_timeout);
-      if (response.statusCode != 200) {
-        await response.stream.drain<void>().timeout(_timeout);
-        throw statusError(response.statusCode);
-      }
-      final bytes = BytesBuilder(copy: false);
-      await for (final chunk in response.stream.timeout(_timeout)) {
-        bytes.add(chunk);
-        if (bytes.length > 8 * 1024 * 1024) {
-          throw const CloudException('The preview is too large to display.');
+        final response = await _transport.send(request).timeout(_timeout);
+        if (response.statusCode != 200) {
+          await response.stream.drain<void>().timeout(_timeout);
+          if (!original &&
+              canUseOriginal &&
+              const {404, 415}.contains(response.statusCode)) {
+            original = true;
+            continue;
+          }
+          if (attempt == 0 &&
+              const {429, 502, 503, 504}.contains(response.statusCode)) {
+            final seconds = int.tryParse(response.headers['retry-after'] ?? '');
+            if (seconds == null || seconds <= 3) {
+              await Future<void>.delayed(
+                Duration(seconds: (seconds ?? 1).clamp(1, 3)),
+              );
+              continue;
+            }
+          }
+          throw statusError(response.statusCode);
         }
+        final bytes = BytesBuilder(copy: false);
+        await for (final chunk in response.stream.timeout(_timeout)) {
+          bytes.add(chunk);
+          if (bytes.length > 8 * 1024 * 1024) {
+            throw const CloudException('The preview is too large to display.');
+          }
+        }
+        final result = bytes.takeBytes();
+        if (result.isEmpty) {
+          throw const CloudException('The server returned an empty preview.');
+        }
+        return result;
       }
-      return bytes.takeBytes();
     } on TimeoutException {
       throw const CloudException('Preview timed out. Tap to retry.');
     } on http.ClientException {
       throw const CloudException('Preview unavailable. Tap to retry.');
+    } finally {
+      if (_previewQueue.isNotEmpty) {
+        _previewQueue.removeFirst().complete();
+      } else {
+        _activePreviews--;
+      }
     }
   }
 }

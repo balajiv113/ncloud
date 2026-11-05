@@ -66,6 +66,8 @@ Video playback downloads the original to app cache before playing through the na
 
 Photos use WebDAV SEARCH, not an Immich API. Dates are file modification times, **not EXIF capture dates**. Previews depend on your server's preview providers (especially HEIC and video); unavailable previews have a retry state. Search/preview API errors are displayed, never replaced with fake demo data. Pagination uses Nextcloud SEARCH offsets; refreshing restarts the listing, and concurrent server changes can shift page boundaries.
 
+Thumbnail requests are limited to four concurrent transfers. Grids request 384px previews and the viewer requests 1280px, with bounded decoding and a session-scoped 24 MiB/128-entry LRU cache. Transient server overload is retried once; failed requests are not permanently cached. If the preview provider cannot supply a small JPEG/PNG/WebP/GIF, the app can display its original instead (up to 2 MiB). Larger originals, HEIC and video still require working Nextcloud preview providers. This cache is not offline sync.
+
 Transfers require the app to stay open. Uploads never overwrite existing filenames. There is no background/resumable transfer queue or camera-library access yet. Downloads are streamed to temporary app storage and handed to the system share sheet; choose Save to Files or an appropriate app. Disconnect removes credentials and ncloud's downloaded cache, but not files you saved/shared elsewhere. Revoke the app password in Nextcloud Security settings to revoke server access.
 
 ## Develop

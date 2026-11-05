@@ -98,11 +98,14 @@ jobs:
         run: |
           apksigner=$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)
           test -n "$apksigner"
-          expected=$(keytool -exportcert -keystore "$NCLOUD_PREVIEW_KEYSTORE" \
-            -storepass android -alias androiddebugkey | sha256sum | cut -d ' ' -f 1)
+          expected=$(keytool -list -v -keystore "$NCLOUD_PREVIEW_KEYSTORE" \
+            -storepass android -alias androiddebugkey \
+            | sed -n 's/^[[:space:]]*SHA256: //p' | tr -d ':' | tr 'A-F' 'a-f')
           actual=$("$apksigner" verify --print-certs build/app/outputs/flutter-apk/app-release.apk \
             | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
-          if [ "$expected" != "$actual" ]; then
+          echo "Expected signer: $expected"
+          echo "APK signer:      $actual"
+          if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then
             echo "APK signing certificate does not match the cached preview key"
             exit 1
           fi

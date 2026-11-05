@@ -383,6 +383,7 @@ class _ZoomAssetState extends State<ZoomAsset> {
               file: widget.file,
               controller: widget.controller,
               fit: BoxFit.contain,
+              previewSize: 1280,
             ),
           ),
         ),

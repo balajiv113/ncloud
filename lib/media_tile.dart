@@ -11,10 +11,12 @@ class MediaTile extends StatefulWidget {
     required this.file,
     required this.controller,
     this.fit = BoxFit.cover,
+    this.previewSize = 384,
   });
   final CloudFile file;
   final AppController controller;
   final BoxFit fit;
+  final int previewSize;
 
   @override
   State<MediaTile> createState() => _MediaTileState();
@@ -32,15 +34,24 @@ class _MediaTileState extends State<MediaTile> {
   @override
   void didUpdateWidget(MediaTile oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.file.key != widget.file.key) {
+    if (oldWidget.file.key != widget.file.key ||
+        oldWidget.file.modified != widget.file.modified ||
+        oldWidget.file.size != widget.file.size ||
+        oldWidget.file.id != widget.file.id ||
+        oldWidget.previewSize != widget.previewSize ||
+        oldWidget.controller != widget.controller) {
       _preview = null;
       _load();
     }
   }
 
   void _load({bool retry = false}) {
-    if (widget.file.demoColor == null && widget.file.id != null) {
-      _preview = widget.controller.preview(widget.file, retry: retry);
+    if (widget.file.demoColor == null) {
+      _preview = widget.controller.preview(
+        widget.file,
+        retry: retry,
+        size: widget.previewSize,
+      );
     }
   }
 
@@ -63,12 +74,19 @@ class _MediaTileState extends State<MediaTile> {
           );
         }
         if (snapshot.data case final bytes?) {
-          return Image.memory(
-            bytes,
+          return Image(
+            image: ResizeImage(
+              MemoryImage(bytes),
+              width: widget.previewSize,
+              height: widget.previewSize,
+              policy: ResizeImagePolicy.fit,
+            ),
             fit: widget.fit,
             gaplessPlayback: true,
-            errorBuilder: (_, _, _) =>
-                _fallback(context, 'Unsupported preview'),
+            errorBuilder: (_, _, _) => InkWell(
+              onTap: () => setState(() => _load(retry: true)),
+              child: _fallback(context, 'Unsupported preview. Tap to retry.'),
+            ),
           );
         }
         return ColoredBox(

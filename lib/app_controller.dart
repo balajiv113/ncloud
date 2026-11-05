@@ -75,6 +75,8 @@ class AppController extends ChangeNotifier {
   bool _disposed = false;
   List<CloudFile> _demo = [];
   final Map<String, Future<Uint8List>> _previews = {};
+  final Map<String, int> _previewSizes = {};
+  int _previewBytes = 0;
   final Map<String, Future<CloudFile?>> _covers = {};
   final Map<String, List<CloudFile>> _demoTrash = {};
 
@@ -213,7 +215,7 @@ class AppController extends ChangeNotifier {
       }
       _loadVersion++;
       _loginVersion++;
-      _previews.clear();
+      _clearPreviews();
       _covers.clear();
       _demoTrash.clear();
       account = null;
@@ -451,7 +453,6 @@ class AppController extends ChangeNotifier {
       failure = e;
     }
     _covers.clear();
-    _previews.clear();
     await load();
     if (failure != null) {
       error = '$completed of $total completed. ${errorMessage(failure)}';
@@ -555,16 +556,59 @@ class AppController extends ChangeNotifier {
         await client.upload(account!, [...directory, name], bytes, size);
       }, 'Upload complete');
 
-  Future<Uint8List> preview(CloudFile file, {bool retry = false}) {
-    if (retry) _previews.remove(file.key);
-    // Keep only a small, session-scoped thumbnail cache.
-    if (_previews.length >= 40 && !_previews.containsKey(file.key)) {
-      _previews.remove(_previews.keys.first);
+  void _discardPreview(String key) {
+    _previews.remove(key);
+    _previewBytes -= _previewSizes.remove(key) ?? 0;
+  }
+
+  void _clearPreviews() {
+    _previews.clear();
+    _previewSizes.clear();
+    _previewBytes = 0;
+  }
+
+  Future<Uint8List> preview(
+    CloudFile file, {
+    bool retry = false,
+    int size = 384,
+  }) {
+    final session = account;
+    if (session == null) {
+      return Future.error(const CloudException('Reconnect to load previews.'));
     }
-    return _previews.putIfAbsent(
-      file.key,
-      () => client.preview(account!, file),
-    );
+    final key =
+        '${session.server}|${session.userId}|${file.id ?? file.key}|'
+        '${file.modified?.microsecondsSinceEpoch}|${file.size}|$size';
+    if (retry) _discardPreview(key);
+    final cached = _previews.remove(key);
+    if (cached != null) {
+      _previews[key] = cached;
+      return cached;
+    }
+    late final Future<Uint8List> pending;
+    pending = client
+        .preview(session, file, size: size)
+        .then(
+          (bytes) {
+            if (identical(_previews[key], pending)) {
+              _previewSizes[key] = bytes.length;
+              _previewBytes += bytes.length;
+              while (_previewBytes > 24 * 1024 * 1024 && _previews.isNotEmpty) {
+                _discardPreview(_previews.keys.first);
+              }
+            }
+            return bytes;
+          },
+          onError: (Object error, StackTrace stack) {
+            if (identical(_previews[key], pending)) _discardPreview(key);
+            Error.throwWithStackTrace(error, stack);
+          },
+        );
+    _previews[key] = pending;
+    while (_previews.length > 128) {
+      _discardPreview(_previews.keys.first);
+    }
+    return pending;
   }
 
   Future<File> download(CloudFile file) async {
