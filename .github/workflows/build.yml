@@ -271,13 +271,10 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: Start simulator while dependencies and app compile
-        id: simulator
-        uses: futureware-tech/simulator-action@e89aa8f93d3aec35083ff49d2854d07f7186f7f5 # v5
-        with:
-          model: iPhone 16
-          os_version: '18.5'
-          erase_before_boot: false
-          wait_for_boot: false
+        run: |
+          bash .github/scripts/boot-ios-simulator.sh \
+            > "$RUNNER_TEMP/ncloud-simulator-boot.log" 2>&1 &
+          echo "Simulator launch running as process $!"
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
@@ -310,9 +307,11 @@ jobs:
         timeout-minutes: 15
         run: |
           start=$SECONDS
+          test -s "$RUNNER_TEMP/ncloud-simulator-device"
+          device=$(cat "$RUNNER_TEMP/ncloud-simulator-device")
           xcodebuild build-for-testing \
             -workspace ios/Runner.xcworkspace -scheme Runner \
-            -configuration Debug -destination "platform=iOS Simulator,id=${{ steps.simulator.outputs.udid }},arch=arm64" \
+            -configuration Debug -destination "platform=iOS Simulator,id=$device,arch=arm64" \
             -derivedDataPath "$RUNNER_TEMP/ncloud-ios-simulator" \
             FLUTTER_TARGET="$GITHUB_WORKSPACE/integration_test/mobile_test.dart" \
             CODE_SIGNING_ALLOWED=NO -quiet
@@ -321,20 +320,31 @@ jobs:
         timeout-minutes: 6
         run: |
           start=$SECONDS
-          xcrun simctl bootstatus "${{ steps.simulator.outputs.udid }}"
+          for attempt in $(seq 1 300); do
+            if [ -f "$RUNNER_TEMP/ncloud-simulator-failed" ]; then
+              cat "$RUNNER_TEMP/ncloud-simulator-boot.log"
+              exit 1
+            fi
+            if [ -f "$RUNNER_TEMP/ncloud-simulator-ready" ]; then break; fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/ncloud-simulator-boot.log"
+          test -f "$RUNNER_TEMP/ncloud-simulator-ready"
+          device=$(cat "$RUNNER_TEMP/ncloud-simulator-device")
           echo "Remaining simulator boot wait: $((SECONDS - start))s" >> "$GITHUB_STEP_SUMMARY"
           printf '%s' 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGOQqMgGAAGnAPzLMdOkAAAAAElFTkSuQmCC' \
             | base64 --decode > "$RUNNER_TEMP/ncloud-probe.png"
-          xcrun simctl addmedia "${{ steps.simulator.outputs.udid }}" "$RUNNER_TEMP/ncloud-probe.png"
+          xcrun simctl addmedia "$device" "$RUNNER_TEMP/ncloud-probe.png"
       - name: Run native and Photos UI tests in one XCTest session
         timeout-minutes: 10
         run: |
           start=$SECONDS
+          device=$(cat "$RUNNER_TEMP/ncloud-simulator-device")
           xcodebuild test-without-building \
             -workspace ios/Runner.xcworkspace -scheme Runner \
             -configuration Debug \
             -derivedDataPath "$RUNNER_TEMP/ncloud-ios-simulator" \
-            -destination "platform=iOS Simulator,id=${{ steps.simulator.outputs.udid }},arch=arm64" \
+            -destination "platform=iOS Simulator,id=$device,arch=arm64" \
             -parallel-testing-enabled NO \
             -resultBundlePath "$RUNNER_TEMP/ncloud-ios-tests.xcresult" \
             -quiet
@@ -351,7 +361,8 @@ jobs:
         timeout-minutes: 5
         run: |
           start=$SECONDS
-          xcrun simctl launch "${{ steps.simulator.outputs.udid }}" app.ncloud.ncloud \
+          device=$(cat "$RUNNER_TEMP/ncloud-simulator-device")
+          xcrun simctl launch "$device" app.ncloud.ncloud \
             --enable-checked-mode --verify-entry-points \
             --vm-service-port=8585 --disable-service-auth-codes
           for attempt in $(seq 1 30); do
@@ -370,6 +381,7 @@ jobs:
             ${{ runner.temp }}/ncloud-ios-tests.xcresult
             ${{ runner.temp }}/ncloud-ios-summary.json
             ${{ runner.temp }}/ncloud-ios-test-durations.json
+            ${{ runner.temp }}/ncloud-simulator-boot.log
 
   ios-release:
     if: github.event_name == 'workflow_dispatch' && inputs.build_ios
