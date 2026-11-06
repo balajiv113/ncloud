@@ -18,7 +18,7 @@ class LibraryDatabase {
   }) : path = File(path).absolute.path,
        _factory = factory ?? databaseFactory;
 
-  static const schemaVersion = 4;
+  static const schemaVersion = 5;
   final String path;
   final DatabaseFactory _factory;
   final void Function(String) onError;
@@ -703,7 +703,7 @@ class LibraryDatabase {
     return payload;
   });
 
-  String _folderKey(String key, String path) => '$key|\u0000folder|$path';
+  String _folderKey(String key, String path) => '$key|folder|$path';
 
   Future<void> writeLibrary(String key, FileStoreChanges changes) => _run(
     (db) => db.transaction((txn) async {

@@ -29,7 +29,24 @@ Future<void> main() async {
         'Drive did not open only the requested direct children: $child',
       );
     }
-    stdout.writeln('iOS simulator: unique Drive folders/navigation passed.');
+    await driver.tap(find.byValueKey('drive:Trips/Summer'));
+    await driver.waitFor(
+      find.byValueKey('drive:Trips/Summer/Autumn'),
+      timeout: const Duration(seconds: 45),
+    );
+    await driver.waitFor(
+      find.byValueKey('drive:Trips/Summer/notes.txt'),
+      timeout: const Duration(seconds: 45),
+    );
+    final grandchild = jsonDecode(await driver.requestData('driveState'));
+    if (grandchild['directory'] != 'Trips/Summer' ||
+        jsonEncode(grandchild['items']) !=
+            '["Trips/Summer/Autumn","Trips/Summer/notes.txt"]') {
+      throw StateError(
+        'Drive repeated the parent instead of opening the second folder: $grandchild',
+      );
+    }
+    stdout.writeln('iOS simulator: two-level Drive navigation passed.');
     final albumResult = await driver.requestData(
       'testAlbum',
       timeout: const Duration(minutes: 3),

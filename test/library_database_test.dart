@@ -428,7 +428,79 @@ void main() {
     },
   );
 
-  for (final version in [1, 2, 3]) {
+  test(
+    'folder keys stay distinct with Darwin null-terminated text bindings',
+    () async {
+      final store = FileStore()
+        ..putFolder([], [
+          const CloudFile(path: ['A'], name: 'A', isDirectory: true),
+        ], etag: 'root')
+        ..putFolder(
+          ['A'],
+          [
+            const CloudFile(path: ['A', 'B'], name: 'B', isDirectory: true),
+          ],
+          etag: 'a',
+        )
+        ..putFolder(
+          ['A', 'B'],
+          [
+            photo('A/B/file.jpg', id: 'photo'),
+            const CloudFile(
+              path: ['A', 'B', 'Empty'],
+              name: 'Empty',
+              isDirectory: true,
+            ),
+          ],
+          etag: 'b',
+        )
+        ..putFolder(['A', 'B', 'Empty'], [], etag: 'empty');
+      await cache.writeLibrary(library, store);
+      expect(cache.writeError, isNull);
+      final db = await inspect();
+      try {
+        final rows = await db.query(
+          'collections',
+          columns: ['cache_key'],
+          where: 'kind=?',
+          whereArgs: ['folder'],
+        );
+        final keys = rows.map((row) => row['cache_key'] as String).toList();
+        expect(keys, hasLength(4));
+        // sqflite_darwin binds UTF-8 strings with length -1.
+        expect(
+          keys.map((key) => key.split('\u0000').first).toSet(),
+          hasLength(4),
+        );
+        expect(keys.every((key) => !key.contains('\u0000')), isTrue);
+      } finally {
+        await db.close();
+      }
+      await cache.close();
+      cache = LocalCache(() async => root, databaseFactory: databaseFactoryFfi);
+      for (final path in [
+        <String>[],
+        ['A'],
+        ['A', 'B'],
+        ['A', 'B', 'Empty'],
+      ]) {
+        final snapshot = await cache.readFolderSnapshot(library, path);
+        expect(snapshot, isNotNull);
+        expect(
+          snapshot!.files.map((file) => file.key),
+          store.folder(path)!.map((file) => file.key),
+        );
+        expect(
+          snapshot.etag,
+          {'': 'root', 'A': 'a', 'A/B': 'b', 'A/B/Empty': 'empty'}[pathKey(
+            path,
+          )],
+        );
+      }
+    },
+  );
+
+  for (final version in [1, 2, 3, 4]) {
     test(
       'schema $version resets metadata without touching offline originals',
       () async {

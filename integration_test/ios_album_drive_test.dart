@@ -54,14 +54,22 @@ Future<void> main() async {
         '<d:resourcetype><d:collection/></d:resourcetype>',
       )
       .replaceFirst('image/jpeg', 'httpd/unix-directory')
+      .replaceFirst('<oc:fileid>42</oc:fileid>', '<oc:fileid>$path</oc:fileid>')
       .replaceFirst('</d:prop>', '<d:getetag>"folder-v1"</d:getetag></d:prop>');
   final client = NextcloudClient(
     transport: MockClient((request) async {
       if (request.method != 'PROPFIND') return http.Response('', 404);
       final nested = request.url.path.endsWith('/Trips');
+      final summer = request.url.path.endsWith('/Trips/Summer');
       return http.Response(
         multistatus(
-          nested
+          summer
+              ? folder('Trips/Summer') +
+                    folder('Trips/Summer/Autumn') +
+                    responseEntry(
+                      href: '$root/Trips/Summer/notes.txt',
+                    ).replaceFirst('image/jpeg', 'text/plain')
+              : nested
               ? folder('Unrelated') +
                     folder('Trips') +
                     folder('Trips/Summer') +
