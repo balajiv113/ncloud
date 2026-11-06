@@ -246,6 +246,9 @@ class NextcloudClient implements CloudBackend {
             as Map<String, dynamic>;
     final meta = ocs['meta'] as Map<String, dynamic>;
     if (meta['status'] != 'ok') {
+      final code = int.tryParse('${meta['statuscode']}');
+      if (code == 997 || code == 401) throw statusError(401);
+      if (code == 403) throw statusError(403);
       throw const CloudException('Nextcloud could not verify this account.');
     }
     final data = ocs['data'] as Map<String, dynamic>;

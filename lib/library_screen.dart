@@ -650,7 +650,14 @@ class _LibraryScreenState extends State<LibraryScreen>
                                     : Text(
                                         _selecting
                                             ? '${_selected.length} selected'
-                                            : title,
+                                            : c.directory.isNotEmpty ||
+                                                  c.activeCloudAlbum != null ||
+                                                  c.activePerson != null ||
+                                                  c.activeMapBounds != null ||
+                                                  (_albumHome &&
+                                                      _albumsExpanded)
+                                            ? title
+                                            : 'ncloud',
                                         key: const ValueKey('library-title'),
                                         maxLines: 1,
                                         overflow: TextOverflow.ellipsis,
@@ -778,35 +785,6 @@ class _LibraryScreenState extends State<LibraryScreen>
                                       style: TextStyle(
                                         color: theme.colorScheme.primary,
                                       ),
-                                    ),
-                                  ),
-                                ),
-                              if (_drive)
-                                SliverToBoxAdapter(
-                                  child: Padding(
-                                    padding: const EdgeInsets.fromLTRB(
-                                      18,
-                                      8,
-                                      12,
-                                      12,
-                                    ),
-                                    child: Row(
-                                      children: [
-                                        Expanded(
-                                          child: Text(
-                                            title,
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: theme
-                                                .textTheme
-                                                .headlineMedium
-                                                ?.copyWith(
-                                                  fontWeight: FontWeight.w700,
-                                                  letterSpacing: -.8,
-                                                ),
-                                          ),
-                                        ),
-                                      ],
                                     ),
                                   ),
                                 ),

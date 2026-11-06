@@ -42,6 +42,164 @@ http.Response _user() => http.Response(
 
 void main() {
   test(
+    'one-time credentials survive an OCS authentication lag inside HTTP 200',
+    () async {
+      var exchanges = 0;
+      var verifications = 0;
+      final client = NextcloudClient(
+        transport: MockClient((request) async {
+          if (request.url.path.endsWith('/login/v2')) return _approval();
+          if (request.url.path.endsWith('/login/poll')) {
+            exchanges++;
+            return _credentials();
+          }
+          if (++verifications == 1) {
+            return http.Response(
+              jsonEncode({
+                'ocs': {
+                  'meta': {
+                    'status': 'failure',
+                    'statuscode': '997',
+                    'message': 'Unauthorised',
+                  },
+                  'data': [],
+                },
+              }),
+              200,
+            );
+          }
+          return _user();
+        }),
+      );
+      addTearDown(client.close);
+      final server = Uri.parse('https://cloud.example');
+      final flow = await client.startLogin(server);
+      await expectLater(
+        client.pollLogin(server, flow),
+        throwsA(
+          isA<CloudException>()
+              .having((e) => e.statusCode, 'status', 401)
+              .having((e) => e.retryable, 'retryable', true),
+        ),
+      );
+      expect((await client.pollLogin(server, flow))?.userId, 'alice');
+      expect(exchanges, 1);
+      expect(verifications, 2);
+    },
+  );
+
+  testWidgets('browser polling waits for app resume without failing sign-in', (
+    tester,
+  ) async {
+    var polls = 0;
+    final controller = AppController(
+      store: MemoryStore(),
+      client: NextcloudClient(
+        transport: MockClient((request) async {
+          if (request.url.path.endsWith('/login/v2')) return _approval();
+          if (request.url.path.endsWith('/login/poll')) {
+            polls++;
+            return _credentials();
+          }
+          if (request.url.path.endsWith('/cloud/user')) return _user();
+          if (request.url.path.contains('/apps/memories/')) {
+            return http.Response('', 404);
+          }
+          return http.Response('<d:multistatus xmlns:d="DAV:"/>', 207);
+        }),
+      ),
+    );
+    addTearDown(controller.dispose);
+    await controller.initialize();
+    final login = controller.browserLogin('https://cloud.example', (_) async {
+      controller.setBrowsingActive(false);
+      return true;
+    });
+    await tester.pump();
+    await tester.pump(const Duration(minutes: 2));
+    expect(polls, 0);
+    expect(controller.signingIn, isTrue);
+    expect(controller.error, isNull);
+    controller.setBrowsingActive(true);
+    await tester.pump();
+    await login;
+    expect(polls, 1);
+    expect(controller.connected, isTrue);
+    expect(controller.error, isNull);
+  });
+
+  testWidgets('cancel wakes a login waiting for browser return', (
+    tester,
+  ) async {
+    final requests = <String>[];
+    final controller = AppController(
+      store: MemoryStore(),
+      client: NextcloudClient(
+        transport: MockClient((request) async {
+          requests.add(request.url.path);
+          return _approval();
+        }),
+      ),
+    );
+    addTearDown(controller.dispose);
+    final login = controller.browserLogin('https://cloud.example', (_) async {
+      controller.setBrowsingActive(false);
+      return true;
+    });
+    await tester.pump();
+    controller.cancelLogin();
+    await tester.pump();
+    await login;
+    expect(controller.signingIn, isFalse);
+    expect(controller.connected, isFalse);
+    expect(controller.error, isNull);
+    expect(requests, ['/index.php/login/v2']);
+  });
+
+  testWidgets('an interrupted background poll retries after browser return', (
+    tester,
+  ) async {
+    final poll = Completer<http.Response>();
+    var polls = 0;
+    final controller = AppController(
+      store: MemoryStore(),
+      client: NextcloudClient(
+        transport: MockClient((request) async {
+          if (request.url.path.endsWith('/login/v2')) return _approval();
+          if (request.url.path.endsWith('/login/poll')) {
+            return ++polls == 1 ? poll.future : _credentials();
+          }
+          if (request.url.path.endsWith('/cloud/user')) return _user();
+          if (request.url.path.contains('/apps/memories/')) {
+            return http.Response('', 404);
+          }
+          return http.Response('<d:multistatus xmlns:d="DAV:"/>', 207);
+        }),
+      ),
+    );
+    addTearDown(controller.dispose);
+    await controller.initialize();
+    final login = controller.browserLogin(
+      'https://cloud.example',
+      (_) async => true,
+    );
+    await tester.pump();
+    expect(polls, 1);
+    controller.setBrowsingActive(false);
+    poll.complete(http.Response('', 503));
+    await tester.pump();
+    await tester.pump(const Duration(minutes: 1));
+    expect(polls, 1);
+    expect(controller.signingIn, isTrue);
+    expect(controller.error, isNull);
+    controller.setBrowsingActive(true);
+    await tester.pump();
+    await login;
+    expect(polls, 2);
+    expect(controller.connected, isTrue);
+  });
+
+  test(
     'one-time browser exchange survives transient verification failure',
     () async {
       var exchanges = 0;

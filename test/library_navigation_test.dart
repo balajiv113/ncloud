@@ -63,17 +63,17 @@ void main() {
     expect(controller.tab, 0);
     await _swipe(tester, -140);
     expect(controller.tab, 4);
-    expect(_title(tester), 'Albums');
+    expect(_title(tester), 'ncloud');
     await _swipe(tester, -140);
     expect(controller.tab, 1);
-    expect(_title(tester), 'Drive');
+    expect(_title(tester), 'ncloud');
     await _swipe(tester, -140);
     expect(controller.tab, 1);
     await _swipe(tester, 140);
     expect(controller.tab, 4);
     await _swipe(tester, 140);
     expect(controller.tab, 0);
-    expect(_title(tester), 'Timeline');
+    expect(_title(tester), 'ncloud');
     expect(tester.takeException(), isNull);
   });
 
@@ -85,7 +85,7 @@ void main() {
     expect(controller.tab, 0);
   });
 
-  testWidgets('every destination and nested folder has its own title', (
+  testWidgets('destinations show the app name and nested views keep context', (
     tester,
   ) async {
     final controller = await _library(tester);
@@ -99,7 +99,11 @@ void main() {
     ]) {
       await controller.selectTab(tab);
       await tester.pumpAndSettle();
-      expect(_title(tester), title);
+      expect(_title(tester), 'ncloud', reason: title);
+      if (tab == 1) {
+        expect(find.text('Drive'), findsOneWidget);
+        expect(find.text('Drive').hitTestable(), findsOneWidget);
+      }
     }
     await controller.selectTab(1);
     await controller.openFolder(
@@ -173,7 +177,7 @@ void main() {
     }
     await tester.pumpAndSettle();
     expect(controller.tab, 0);
-    expect(_title(tester), 'Timeline');
+    expect(_title(tester), 'ncloud');
     expect(_slide(tester).position.value, Offset.zero);
     expect(_fade(tester).opacity.value, 1);
     expect(tester.takeException(), isNull);
@@ -215,7 +219,7 @@ void main() {
     await tester.drag(carousel, const Offset(-160, 0));
     await tester.pumpAndSettle();
     expect(controller.tab, 4);
-    expect(_title(tester), 'Albums');
+    expect(_title(tester), 'ncloud');
   });
 
   testWidgets('selection and search cannot be dismissed by a swipe', (
@@ -255,7 +259,7 @@ void main() {
     await first.up();
     await tester.pumpAndSettle();
     expect(controller.tab, 0);
-    expect(_title(tester), 'Timeline');
+    expect(_title(tester), 'ncloud');
   });
 
   testWidgets('nested albums, folders and collections do not swipe away', (
@@ -271,7 +275,7 @@ void main() {
     expect(_title(tester), 'Smart albums');
     await tester.tap(find.byTooltip('Back'));
     await tester.pumpAndSettle();
-    expect(_title(tester), 'Albums');
+    expect(_title(tester), 'ncloud');
     await controller.openSmartAlbum(['Photos', 'Travel', 'Japan', 'Kyoto']);
     await tester.pumpAndSettle();
     await _swipe(tester, -140);
@@ -279,7 +283,7 @@ void main() {
     expect(controller.directory, ['Photos', 'Travel', 'Japan', 'Kyoto']);
     await tester.tap(find.byTooltip('Back'));
     await tester.pumpAndSettle();
-    expect(_title(tester), 'Albums');
+    expect(_title(tester), 'ncloud');
     await tester.tap(find.byKey(const ValueKey('navigate-1')));
     await tester.pumpAndSettle();
     await controller.openFolder(
@@ -293,7 +297,7 @@ void main() {
     await tester.pumpAndSettle();
     await _swipe(tester, -140);
     expect(controller.tab, 2);
-    expect(_title(tester), 'Favorites');
+    expect(_title(tester), 'ncloud');
   });
 
   testWidgets('returning to a destination restores its scroll position', (

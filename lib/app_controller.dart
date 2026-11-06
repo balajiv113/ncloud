@@ -210,9 +210,11 @@ class AppController extends ChangeNotifier {
   final Set<String> _thumbnailWarmupKnown = {};
   bool _warmingThumbnails = false;
   bool _browsingActive = true;
+  Completer<void>? _loginResume;
 
   void setBrowsingActive(bool active) {
     _browsingActive = active;
+    if (active) _wakeLogin();
     if (!active) {
       _thumbnailWarmupTimer?.cancel();
       _thumbnailWarmupTimer = null;
@@ -346,13 +348,25 @@ class AppController extends ChangeNotifier {
       final deadline = DateTime.now().add(const Duration(minutes: 20));
       var failures = 0;
       while (version == _loginVersion && DateTime.now().isBefore(deadline)) {
+        if (!_browsingActive) {
+          final resume = _loginResume ??= Completer<void>();
+          await resume.future.timeout(
+            deadline.difference(DateTime.now()),
+            onTimeout: () {},
+          );
+          if (version != _loginVersion) return;
+          if (!DateTime.now().isBefore(deadline)) break;
+        }
         Account? result;
         try {
           result = await client.pollLogin(uri, flow);
           failures = 0;
         } on CloudException catch (e) {
-          if (!e.retryable || ++failures >= 5) rethrow;
           if (version != _loginVersion) return;
+          // A request interrupted by leaving for browser approval must not
+          // consume the foreground retry budget.
+          if (!_browsingActive && e.retryable) continue;
+          if (!e.retryable || ++failures >= 5) rethrow;
           notice = 'Sign-in connection interrupted. Retrying…';
           notifyListeners();
         }
@@ -383,9 +397,16 @@ class AppController extends ChangeNotifier {
   void cancelLogin() {
     if (_savingAccount) return;
     _loginVersion++;
+    _wakeLogin();
     signingIn = false;
     notice = null;
     notifyListeners();
+  }
+
+  void _wakeLogin() {
+    final pending = _loginResume;
+    _loginResume = null;
+    if (pending != null && !pending.isCompleted) pending.complete();
   }
 
   Future<void> _saveAccount(Account result) async {
@@ -2979,6 +3000,7 @@ class AppController extends ChangeNotifier {
     _peopleVersion++;
     _loadVersion++;
     _loginVersion++;
+    _wakeLogin();
     client.close();
     unawaited(cache?.close());
     super.dispose();

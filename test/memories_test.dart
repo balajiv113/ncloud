@@ -1170,7 +1170,7 @@ void main() {
     expect(edge.hitTestable(), findsOneWidget);
     await tester.pump(const Duration(seconds: 2));
     final gesture = await tester.startGesture(
-      tester.getTopRight(edge) + const Offset(-12, 24),
+      tester.getTopRight(edge) + const Offset(-36, 24),
     );
     await gesture.moveBy(const Offset(0, 80));
     await tester.pump();
@@ -1190,7 +1190,7 @@ void main() {
     expect(tester.widget<AnimatedOpacity>(visibility).opacity, 0);
     expect(thumb.hitTestable(), findsNothing);
     await tester.dragFrom(
-      tester.getBottomRight(edge) + const Offset(-12, -24),
+      tester.getBottomRight(edge) + const Offset(-36, -24),
       const Offset(0, -1200),
     );
     await tester.pumpAndSettle();

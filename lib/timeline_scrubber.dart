@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 
 /// Google Photos-style fast scroller: a thumb on the right edge that can be
@@ -171,14 +172,11 @@ class TimelineScrubberState extends State<TimelineScrubber> {
                 right: 0,
                 top: 0,
                 bottom: 0,
-                width: 24,
+                width: 48,
                 child: GestureDetector(
                   key: const ValueKey('timeline-scrubber-edge'),
                   behavior: HitTestBehavior.opaque,
-                  onTapDown: (_) {
-                    setState(() => _active = true);
-                    _scheduleHide();
-                  },
+                  dragStartBehavior: DragStartBehavior.down,
                   onVerticalDragStart: (details) => _startDrag(details, track),
                   onVerticalDragUpdate: (details) =>
                       _seek(details.globalPosition, track),
@@ -187,7 +185,6 @@ class TimelineScrubberState extends State<TimelineScrubber> {
                 ),
               ),
               IgnorePointer(
-                ignoring: !_active && !_dragging,
                 child: AnimatedOpacity(
                   key: const ValueKey('timeline-scrubber-visibility'),
                   opacity: _active || _dragging ? 1 : 0,
@@ -227,45 +224,34 @@ class TimelineScrubberState extends State<TimelineScrubber> {
                             Semantics(
                               label: 'Scrub timeline by date',
                               slider: true,
-                              child: GestureDetector(
+                              child: SizedBox(
                                 key: const ValueKey('timeline-scrubber'),
-                                behavior: HitTestBehavior.opaque,
-                                onVerticalDragStart: (details) {
-                                  _startDrag(details, track);
-                                },
-                                onVerticalDragUpdate: (details) =>
-                                    _seek(details.globalPosition, track),
-                                onVerticalDragEnd: (_) => _endDrag(),
-                                onVerticalDragCancel: _endDrag,
-                                child: SizedBox(
-                                  width: 48,
-                                  height: _thumbHeight,
-                                  child: Center(
-                                    child: Container(
-                                      width: 34,
-                                      height: 44,
-                                      decoration: BoxDecoration(
-                                        color: theme
-                                            .colorScheme
-                                            .secondaryContainer,
-                                        borderRadius:
-                                            const BorderRadius.horizontal(
-                                              left: Radius.circular(22),
-                                            ),
-                                        boxShadow: const [
-                                          BoxShadow(
-                                            blurRadius: 6,
-                                            color: Color(0x33000000),
+                                width: 48,
+                                height: _thumbHeight,
+                                child: Center(
+                                  child: Container(
+                                    width: 34,
+                                    height: 44,
+                                    decoration: BoxDecoration(
+                                      color:
+                                          theme.colorScheme.secondaryContainer,
+                                      borderRadius:
+                                          const BorderRadius.horizontal(
+                                            left: Radius.circular(22),
                                           ),
-                                        ],
-                                      ),
-                                      child: Icon(
-                                        Icons.unfold_more,
-                                        size: 20,
-                                        color: theme
-                                            .colorScheme
-                                            .onSecondaryContainer,
-                                      ),
+                                      boxShadow: const [
+                                        BoxShadow(
+                                          blurRadius: 6,
+                                          color: Color(0x33000000),
+                                        ),
+                                      ],
+                                    ),
+                                    child: Icon(
+                                      Icons.unfold_more,
+                                      size: 20,
+                                      color: theme
+                                          .colorScheme
+                                          .onSecondaryContainer,
                                     ),
                                   ),
                                 ),
