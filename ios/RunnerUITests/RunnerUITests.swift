@@ -25,7 +25,7 @@ final class RunnerUITests: XCTestCase {
     let permission = app.descendants(matching: .any)
       .matching(identifier: "ios-photos-permission").firstMatch
     guard permission.waitForExistence(timeout: 45) else {
-      XCTFail("Missing integration fixture button ios-photos-permission. Build the album integration Dart target, not production main.dart.\n\(app.debugDescription)")
+      XCTFail("Missing integration fixture button ios-photos-permission. Build integration_test/mobile_test.dart, not production main.dart.\n\(app.debugDescription)")
       return
     }
     guard permission.isHittable else {

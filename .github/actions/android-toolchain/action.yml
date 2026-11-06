@@ -17,6 +17,19 @@ runs:
         echo "sdk-root=${ANDROID_HOME:?ANDROID_HOME is required}" >> "$GITHUB_OUTPUT"
         echo "ndk=$ndk" >> "$GITHUB_OUTPUT"
         echo "platform=$platform" >> "$GITHUB_OUTPUT"
+    - name: Make cached SDK destinations writable
+      shell: bash
+      run: |
+        set -euo pipefail
+        for path in \
+          "$ANDROID_HOME/ndk/${{ steps.versions.outputs.ndk }}" \
+          "$ANDROID_HOME/cmake/3.22.1" \
+          "$ANDROID_HOME/platforms/android-${{ steps.versions.outputs.platform }}" \
+          "$ANDROID_HOME/build-tools/35.0.0"; do
+          if [ -d "$path" ]; then
+            sudo chown -R "$(id -u):$(id -g)" "$path"
+          fi
+        done
     - name: Restore shared Android SDK packages
       id: sdk
       uses: actions/cache/restore@v4

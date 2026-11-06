@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       build_ios:
-        description: Also build an unsigned iOS app (requires macOS runner)
+        description: Also build the optional unsigned iOS device release
         type: boolean
         default: false
 
@@ -22,27 +22,16 @@ env:
   FLUTTER_VERSION: '3.38.5'
 
 jobs:
-  android:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+  checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: '17'
-      - name: Restore Gradle dependencies and task outputs
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          cache-read-only: ${{ github.event_name == 'pull_request' }}
-          cache-overwrite-existing: true
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
           cache: true
-      - name: Restore Android SDK and NDK
-        uses: ./.github/actions/android-toolchain
       - run: flutter pub get
       - run: dart format --output=none --set-exit-if-changed lib test integration_test test_driver
       - run: flutter analyze
@@ -100,6 +89,27 @@ jobs:
           flutter test test/live_nextcloud_test.dart \
             --dart-define=LIVE_NEXTCLOUD=true \
             --dart-define=NEXTCLOUD_TEST_PASSWORD="$NEXTCLOUD_TEST_PASSWORD"
+
+  android:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
+          cache-overwrite-existing: true
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - uses: ./.github/actions/android-toolchain
+      - run: flutter pub get
       - name: Set Android preview signing location
         run: echo "NCLOUD_PREVIEW_KEYSTORE=$RUNNER_TEMP/ncloud-android/debug.keystore" >> "$GITHUB_ENV"
       - name: Reuse development preview signer when available
@@ -124,9 +134,6 @@ jobs:
           echo "Release APK build: ${elapsed}s"
           echo "### Android release APK" >> "$GITHUB_STEP_SUMMARY"
           echo "Build time: **${elapsed} seconds** (excluding tests and cache restore/save)." >> "$GITHUB_STEP_SUMMARY"
-      - name: Verify native Android folder sync routing
-        working-directory: android
-        run: ./gradlew :app:testDebugUnitTest :ncloud_folder_access:testDebugUnitTest --no-daemon --console=plain
       - name: Verify APK uses the cached preview signer
         run: |
           set -euo pipefail
@@ -156,8 +163,8 @@ jobs:
           name: dependency-lock
           path: pubspec.lock
 
-  android-background-build:
-    runs-on: ubuntu-latest
+  android-device-build:
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
@@ -168,7 +175,7 @@ jobs:
       - name: Reuse existing Android Gradle cache
         uses: gradle/actions/setup-gradle@v4
         with:
-          cache-read-only: true
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
           cache-overwrite-existing: true
       - uses: subosito/flutter-action@v2
         with:
@@ -178,23 +185,34 @@ jobs:
       - name: Restore Android SDK and NDK
         uses: ./.github/actions/android-toolchain
       - run: flutter pub get
-      - name: Build background service device checks
+      - name: Build shared mobile fixture and native Android checks once
         run: |
-          flutter build apk --debug --no-pub --target-platform android-x64
+          flutter build apk --debug --no-pub --target-platform android-x64 \
+            --target integration_test/mobile_test.dart
           cd android
-          ./gradlew :app:assembleDebugAndroidTest -Ptarget-platform=android-x64 --no-daemon --console=plain
+          ./gradlew :app:assembleDebugAndroidTest :app:testDebugUnitTest \
+            :ncloud_folder_access:testDebugUnitTest \
+            -Ptarget-platform=android-x64 -Ptarget=../integration_test/mobile_test.dart \
+            --no-daemon --console=plain
       - uses: actions/upload-artifact@v4
         with:
-          name: android-background-check
+          name: android-device-checks
           path: |
             build/app/outputs/apk/debug/app-debug.apk
             build/app/outputs/apk/androidTest/debug/app-debug-androidTest.apk
 
-  android-background:
-    needs: android-background-build
-    runs-on: ubuntu-latest
+  android-device:
+    needs: android-device-build
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
+      - uses: actions/checkout@v5
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - run: flutter pub get
       - name: Locate Android SDK
         id: sdk
         run: echo "root=${ANDROID_HOME:?ANDROID_HOME is required}" >> "$GITHUB_OUTPUT"
@@ -205,7 +223,7 @@ jobs:
           key: android-system-image-v1-${{ runner.os }}-${{ runner.arch }}-35-google-apis-x86_64
       - uses: actions/download-artifact@v4
         with:
-          name: android-background-check
+          name: android-device-checks
       - name: Allow Android emulator acceleration
         run: if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; fi
       - uses: reactivecircus/android-emulator-runner@v2
@@ -215,23 +233,19 @@ jobs:
           target: google_apis
           disable-animations: true
           script: |
-            adb install -r debug/app-debug.apk
-            adb install -r androidTest/debug/app-debug-androidTest.apk
-            adb shell am instrument -w app.ncloud.ncloud.test/androidx.test.runner.AndroidJUnitRunner | tee native-background-result.txt
-            adb logcat -d > native-background-logcat.txt
-            grep -q '^OK (' native-background-result.txt
+            bash .github/scripts/android-device-tests.sh
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: android-background-result
+          name: android-device-results
           path: |
-            native-background-result.txt
-            native-background-logcat.txt
+            *-device-*.log
+            native-android-result.txt
 
   publish:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-    needs: [android, android-background]
-    runs-on: ubuntu-latest
+    needs: [checks, android, android-device, ios]
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
@@ -250,71 +264,94 @@ jobs:
             --notes "ncloud 0.5.5 preview: Drive lists unique direct children of the selected folder. Android selected-folder backup supports opt-in best-effort interval/daily/weekly schedules, notification controls, retryable settings loading, subfolder/type filters and up to three create-only upload lanes. No device or cloud originals are deleted or overwritten. Per-file receipts preserve confirmed progress; interrupted originals restart in full. Source folders and subfolders are preserved. Updates reuse the cached development signer. The accompanying iOS source includes scene lifecycle support and explicitly selected whole-Photos-album backup with best-effort background processing; this Android APK is not an iOS installer."
 
   ios:
-    if: github.event_name == 'workflow_dispatch' && inputs.build_ios
-    runs-on: macos-latest
+    runs-on: macos-15
     timeout-minutes: 30
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
     steps:
       - uses: actions/checkout@v5
+      - name: Start simulator while dependencies and app compile
+        id: simulator
+        uses: futureware-tech/simulator-action@e89aa8f93d3aec35083ff49d2854d07f7186f7f5 # v5
+        with:
+          model: iPhone 16
+          os_version: '18.5'
+          erase_before_boot: false
+          wait_for_boot: false
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
           cache: true
       - run: flutter pub get
-      - run: flutter build ios --release --no-codesign
+      - name: Restore CocoaPods dependencies
+        id: pods
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ios/Pods
+            ~/Library/Caches/CocoaPods
+          key: pods-${{ runner.os }}-${{ runner.arch }}-xcode-16.4-flutter-${{ env.FLUTTER_VERSION }}-${{ hashFiles('ios/Podfile', 'ios/Podfile.lock', 'pubspec.lock') }}
+      - name: Configure simulator fixture and install pods
+        run: |
+          flutter build ios --simulator --debug --config-only --no-pub \
+            --target integration_test/mobile_test.dart
+          cd ios
+          pod install --deployment
+      - name: Save CocoaPods dependencies before testing
+        if: steps.pods.outputs.cache-hit != 'true' && github.event_name != 'pull_request'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ios/Pods
+            ~/Library/Caches/CocoaPods
+          key: ${{ steps.pods.outputs.cache-primary-key }}
       - name: Build iOS simulator checks once
-        id: ios_simulator
         timeout-minutes: 15
         run: |
-          device=$(xcrun simctl list devices available --json | jq -r '[.devices[][] | select(.name | startswith("iPhone"))][0].udid')
-          test -n "$device" && test "$device" != null
+          start=$SECONDS
           xcodebuild build-for-testing \
             -workspace ios/Runner.xcworkspace -scheme Runner \
-            -configuration Debug -destination "id=$device" \
+            -configuration Debug -destination "platform=iOS Simulator,id=${{ steps.simulator.outputs.udid }},arch=arm64" \
             -derivedDataPath "$RUNNER_TEMP/ncloud-ios-simulator" \
-            FLUTTER_TARGET="$GITHUB_WORKSPACE/integration_test/ios_album_drive_test.dart" \
+            FLUTTER_TARGET="$GITHUB_WORKSPACE/integration_test/mobile_test.dart" \
             CODE_SIGNING_ALLOWED=NO -quiet
-          echo "device=$device" >> "$GITHUB_OUTPUT"
-      - name: Run iOS native tests without rebuilding
-        timeout-minutes: 10
+          echo "Simulator build: $((SECONDS - start))s" >> "$GITHUB_STEP_SUMMARY"
+      - name: Wait for early simulator boot and seed Photos
+        timeout-minutes: 6
         run: |
-          xcrun simctl bootstatus "${{ steps.ios_simulator.outputs.device }}" -b
-          xcodebuild test-without-building \
-            -workspace ios/Runner.xcworkspace -scheme Runner \
-            -configuration Debug \
-            -derivedDataPath "$RUNNER_TEMP/ncloud-ios-simulator" \
-            -destination "id=${{ steps.ios_simulator.outputs.device }}" \
-            -parallel-testing-enabled NO -only-testing:RunnerTests \
-            -resultBundlePath "$RUNNER_TEMP/ncloud-ios-native.xcresult" \
-            -quiet
-          xcrun xcresulttool get test-results summary \
-            --path "$RUNNER_TEMP/ncloud-ios-native.xcresult" \
-            | tee "$RUNNER_TEMP/ncloud-ios-native-summary.json"
-          jq -e '.passedTests >= 23 and .failedTests == 0 and .skippedTests == 0' \
-            "$RUNNER_TEMP/ncloud-ios-native-summary.json"
-      - name: Run iOS Photos UI and Drive checks without rebuilding
-        timeout-minutes: 8
-        run: |
-          device="${{ steps.ios_simulator.outputs.device }}"
-          xcrun simctl bootstatus "$device" -b
+          start=$SECONDS
+          xcrun simctl bootstatus "${{ steps.simulator.outputs.udid }}"
+          echo "Remaining simulator boot wait: $((SECONDS - start))s" >> "$GITHUB_STEP_SUMMARY"
           printf '%s' 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGOQqMgGAAGnAPzLMdOkAAAAAElFTkSuQmCC' \
             | base64 --decode > "$RUNNER_TEMP/ncloud-probe.png"
-          xcrun simctl addmedia "$device" "$RUNNER_TEMP/ncloud-probe.png"
+          xcrun simctl addmedia "${{ steps.simulator.outputs.udid }}" "$RUNNER_TEMP/ncloud-probe.png"
+      - name: Run native and Photos UI tests in one XCTest session
+        timeout-minutes: 10
+        run: |
+          start=$SECONDS
           xcodebuild test-without-building \
             -workspace ios/Runner.xcworkspace -scheme Runner \
             -configuration Debug \
             -derivedDataPath "$RUNNER_TEMP/ncloud-ios-simulator" \
-            -destination "id=$device" \
-            -parallel-testing-enabled NO -only-testing:RunnerUITests \
-            -resultBundlePath "$RUNNER_TEMP/ncloud-ios-photos-ui.xcresult" \
+            -destination "platform=iOS Simulator,id=${{ steps.simulator.outputs.udid }},arch=arm64" \
+            -parallel-testing-enabled NO \
+            -resultBundlePath "$RUNNER_TEMP/ncloud-ios-tests.xcresult" \
             -quiet
+          echo "XCTest session (including launch/teardown): $((SECONDS - start))s" >> "$GITHUB_STEP_SUMMARY"
           xcrun xcresulttool get test-results summary \
-            --path "$RUNNER_TEMP/ncloud-ios-photos-ui.xcresult" \
-            | tee "$RUNNER_TEMP/ncloud-ios-photos-ui-summary.json"
-          jq -e '.passedTests >= 1 and .failedTests == 0 and .skippedTests == 0' \
-            "$RUNNER_TEMP/ncloud-ios-photos-ui-summary.json"
-          xcrun simctl bootstatus "$device" -b
-          xcrun simctl launch "$device" app.ncloud.ncloud \
+            --path "$RUNNER_TEMP/ncloud-ios-tests.xcresult" \
+            | tee "$RUNNER_TEMP/ncloud-ios-summary.json"
+          jq -e '.passedTests >= 24 and .failedTests == 0 and .skippedTests == 0' \
+            "$RUNNER_TEMP/ncloud-ios-summary.json"
+          xcrun xcresulttool get test-results tests \
+            --path "$RUNNER_TEMP/ncloud-ios-tests.xcresult" \
+            > "$RUNNER_TEMP/ncloud-ios-test-durations.json"
+      - name: Run shared mobile contract and PhotoKit checks without rebuilding
+        timeout-minutes: 5
+        run: |
+          start=$SECONDS
+          xcrun simctl launch "${{ steps.simulator.outputs.udid }}" app.ncloud.ncloud \
             --enable-checked-mode --verify-entry-points \
             --vm-service-port=8585 --disable-service-auth-codes
           for attempt in $(seq 1 30); do
@@ -323,20 +360,38 @@ jobs:
           done
           curl -fsS http://127.0.0.1:8585/getVM > /dev/null
           VM_SERVICE_URL=http://127.0.0.1:8585 \
-            dart run test_driver/ios_album_drive_test.dart
+            dart run test_driver/mobile_test.dart
+          echo "Shared mobile + PhotoKit checks: $((SECONDS - start))s" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: ios-native-test-results
+          name: ios-device-results
           path: |
-            ${{ runner.temp }}/ncloud-ios-native.xcresult
-            ${{ runner.temp }}/ncloud-ios-photos-ui.xcresult
-            ${{ runner.temp }}/ncloud-ios-native-summary.json
-            ${{ runner.temp }}/ncloud-ios-photos-ui-summary.json
-      - uses: actions/upload-artifact@v4
+            ${{ runner.temp }}/ncloud-ios-tests.xcresult
+            ${{ runner.temp }}/ncloud-ios-summary.json
+            ${{ runner.temp }}/ncloud-ios-test-durations.json
+
+  ios-release:
+    if: github.event_name == 'workflow_dispatch' && inputs.build_ios
+    runs-on: macos-15
+    timeout-minutes: 20
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v5
+      - uses: subosito/flutter-action@v2
         with:
-          name: ios-dependency-lock
-          path: ios/Podfile.lock
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - uses: actions/cache/restore@v4
+        with:
+          path: |
+            ios/Pods
+            ~/Library/Caches/CocoaPods
+          key: pods-${{ runner.os }}-${{ runner.arch }}-xcode-16.4-flutter-${{ env.FLUTTER_VERSION }}-${{ hashFiles('ios/Podfile', 'ios/Podfile.lock', 'pubspec.lock') }}
+      - run: flutter build ios --release --no-codesign --no-pub
       - uses: actions/upload-artifact@v4
         with:
           name: ncloud-ios-unsigned-not-installable

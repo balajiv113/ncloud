@@ -12,6 +12,7 @@ import 'package:ncloud/library_screen.dart';
 import 'package:ncloud/local_cache.dart';
 import 'package:ncloud/models.dart';
 import 'package:ncloud/nextcloud_client.dart';
+import 'package:ncloud/sync_run_lock.dart';
 
 import '../test/app_test.dart' show MemoryStore;
 import '../test/folder_sync_test.dart' show CloudFolders;
@@ -22,14 +23,38 @@ Future<void> main() async {
   late AppController controller;
   late LocalCache cache;
   late Directory cacheRoot;
-  final permissionStatus = ValueNotifier<String>('iOS integration');
+  late ValueNotifier<AppController> current;
+  var listings = 0;
+  final permissionStatus = ValueNotifier<String>('Mobile integration');
+  AppController createController() =>
+      AppController(
+          store: MemoryStore(),
+          client: createClient(() => listings++),
+          cache: cache,
+        )
+        ..account = account
+        ..tab = 1;
   enableFlutterDriverExtension(
     handler: (message) async {
+      if (message == 'platform') return Platform.operatingSystem;
+      if (message == 'nativeContract') return _testNativeContract();
+      if (message == 'reopen') {
+        controller.dispose();
+        await cache.close();
+        cache = LocalCache(() async => cacheRoot);
+        controller = createController();
+        await controller.load(refresh: false);
+        current.value = controller;
+        return 'reopened';
+      }
       if (message == 'driveState') {
         return jsonEncode({
           'directory': controller.directory.join('/'),
           'items': controller.items.map((f) => f.path.join('/')).toList()
             ..sort(),
+          'listings': listings,
+          'loading': controller.loading,
+          'error': controller.error,
         });
       }
       if (message == 'testAlbum') return _testRealAlbum();
@@ -42,11 +67,74 @@ Future<void> main() async {
       throw ArgumentError.value(
         message,
         'message',
-        'Unknown iOS test operation',
+        'Unknown mobile test operation',
       );
     },
   );
   WidgetsBinding.instance.ensureSemantics();
+  cacheRoot = await Directory.systemTemp.createTemp('ncloud-mobile-');
+  cache = LocalCache(() async => cacheRoot);
+  await cache.writeLibrary(
+    'library-v1|${account.server}|${account.userId}',
+    FileStore()..putFolder(
+      ['Trips'],
+      [
+        const CloudFile(
+          path: ['Other', 'Summer'],
+          name: 'Summer',
+          isDirectory: true,
+          id: 'invalid-snapshot',
+        ),
+      ],
+      etag: '"folder-v1"',
+    ),
+  );
+  controller = createController();
+  await controller.load();
+  current = ValueNotifier(controller);
+  runApp(
+    MaterialApp(
+      home: Scaffold(
+        appBar: Platform.isIOS
+            ? AppBar(
+                title: ValueListenableBuilder<String>(
+                  valueListenable: permissionStatus,
+                  builder: (_, value, _) => Text(value),
+                ),
+                actions: [
+                  Semantics(
+                    identifier: 'ios-photos-permission',
+                    child: TextButton(
+                      onPressed: () async {
+                        permissionStatus.value = 'Requesting Photos access';
+                        try {
+                          await NativeFolderAccess().albums();
+                          permissionStatus.value = 'Photos access ready';
+                        } catch (error) {
+                          permissionStatus.value =
+                              'Photos access failed: $error';
+                        }
+                      },
+                      child: const Text('Choose Photos album'),
+                    ),
+                  ),
+                ],
+              )
+            : null,
+        body: ValueListenableBuilder<AppController>(
+          valueListenable: current,
+          builder: (_, value, _) => ListenableBuilder(
+            listenable: value,
+            builder: (_, _) =>
+                LibraryScreen(key: ObjectKey(value), controller: value),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+NextcloudClient createClient(VoidCallback onListing) {
   const root = '/nextcloud/remote.php/dav/files/alice';
   String folder(String path) => responseEntry(href: '$root/$path/')
       .replaceFirst(
@@ -56,14 +144,18 @@ Future<void> main() async {
       .replaceFirst('image/jpeg', 'httpd/unix-directory')
       .replaceFirst('<oc:fileid>42</oc:fileid>', '<oc:fileid>$path</oc:fileid>')
       .replaceFirst('</d:prop>', '<d:getetag>"folder-v1"</d:getetag></d:prop>');
-  final client = NextcloudClient(
+  return NextcloudClient(
     transport: MockClient((request) async {
       if (request.method != 'PROPFIND') return http.Response('', 404);
+      if (request.headers['Depth'] == '1') onListing();
       final nested = request.url.path.endsWith('/Trips');
       final summer = request.url.path.endsWith('/Trips/Summer');
+      final empty = request.url.path.endsWith('/Trips/Summer/Autumn');
       return http.Response(
         multistatus(
-          summer
+          empty
+              ? folder('Trips/Summer/Autumn')
+              : summer
               ? folder('Trips/Summer') +
                     folder('Trips/Summer/Autumn') +
                     responseEntry(
@@ -85,60 +177,43 @@ Future<void> main() async {
       );
     }),
   );
-  cacheRoot = await Directory.systemTemp.createTemp('ncloud-ios-drive-');
-  cache = LocalCache(() async => cacheRoot);
-  await cache.writeLibrary(
-    'library-v1|${account.server}|${account.userId}',
-    FileStore()..putFolder(
-      ['Trips'],
-      [
-        const CloudFile(
-          path: ['Other', 'Summer'],
-          name: 'Summer',
-          isDirectory: true,
-          id: 'invalid-snapshot',
-        ),
-      ],
-      etag: '"folder-v1"',
-    ),
+}
+
+Future<String> _testNativeContract() async {
+  final access = NativeFolderAccess();
+  final conditions = await NativeFolderAccess.channel
+      .invokeMapMethod<String, dynamic>('conditions');
+  _require(
+    conditions?['wifi'] is bool && conditions?['charging'] is bool,
+    'Native conditions must return Wi-Fi and charging booleans.',
   );
-  controller = AppController(store: MemoryStore(), client: client, cache: cache)
-    ..account = account
-    ..tab = 1;
-  await controller.load();
-  runApp(
-    MaterialApp(
-      home: Scaffold(
-        appBar: AppBar(
-          title: ValueListenableBuilder<String>(
-            valueListenable: permissionStatus,
-            builder: (_, value, _) => Text(value),
-          ),
-          actions: [
-            Semantics(
-              identifier: 'ios-photos-permission',
-              child: TextButton(
-                onPressed: () async {
-                  permissionStatus.value = 'Requesting Photos access';
-                  try {
-                    await NativeFolderAccess().albums();
-                    permissionStatus.value = 'Photos access ready';
-                  } catch (error) {
-                    permissionStatus.value = 'Photos access failed: $error';
-                  }
-                },
-                child: const Text('Choose Photos album'),
-              ),
-            ),
-          ],
-        ),
-        body: ListenableBuilder(
-          listenable: controller,
-          builder: (_, _) => LibraryScreen(controller: controller),
-        ),
-      ),
-    ),
-  );
+  final staged = await access.stage();
+  try {
+    _require(await staged.exists(), 'Native staging file was not created.');
+    await staged.writeAsBytes([1, 2, 3]);
+  } finally {
+    await access.discard(staged);
+  }
+  _require(!await staged.exists(), 'Native discard left its staging file.');
+  final lock = NativeSyncRunLock();
+  const owner = 'mobile-contract';
+  _require(await lock.acquire(owner), 'Could not acquire native account lock.');
+  try {
+    _require(
+      !await lock.acquire(owner),
+      'Native lock allowed duplicate ownership.',
+    );
+    _require(
+      await lock.acquire('$owner-other'),
+      'Independent account was blocked.',
+    );
+    await lock.release('$owner-other');
+  } finally {
+    await lock.release(owner);
+  }
+  _require(await lock.acquire(owner), 'Native lock was not released.');
+  await lock.release(owner);
+  return 'Native staging, conditions and account locks verified.';
 }
 
 void _require(bool condition, String message) {
