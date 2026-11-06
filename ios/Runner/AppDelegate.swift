@@ -5,19 +5,19 @@ import Network
 
 @main
 @objc class AppDelegate: FlutterAppDelegate {
-  private var folders: FolderSyncBridge?
+  let flutterEngine = FlutterEngine(name: "ncloud")
   override func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
-    GeneratedPluginRegistrant.register(with: self)
-    if let controller = window?.rootViewController as? FlutterViewController {
-      folders = FolderSyncBridge(controller: controller)
+    guard flutterEngine.run() else {
+      preconditionFailure("Could not start the ncloud Flutter engine.")
     }
+    GeneratedPluginRegistrant.register(with: flutterEngine)
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 
-  private final class FolderSyncBridge: NSObject, UIDocumentPickerDelegate {
+  final class FolderSyncBridge: NSObject, UIDocumentPickerDelegate {
     private weak var controller: UIViewController?
     private let channel: FlutterMethodChannel
     private let queue = DispatchQueue(label: "app.ncloud.folder-sync")
@@ -34,6 +34,30 @@ import Network
       super.init()
       channel.setMethodCallHandler { [weak self] call, result in
         self?.handle(call, result)
+      }
+    }
+
+    @objc class SceneDelegate: FlutterSceneDelegate {
+      private var folders: AppDelegate.FolderSyncBridge?
+
+      override func scene(
+        _ scene: UIScene,
+        willConnectTo session: UISceneSession,
+        options connectionOptions: UIScene.ConnectionOptions
+      ) {
+        guard let windowScene = scene as? UIWindowScene,
+              let app = UIApplication.shared.delegate as? AppDelegate else {
+          preconditionFailure("Could not connect the ncloud window scene.")
+        }
+        let controller = FlutterViewController(
+          engine: app.flutterEngine, nibName: nil, bundle: nil
+        )
+        let sceneWindow = UIWindow(windowScene: windowScene)
+        sceneWindow.rootViewController = controller
+        window = sceneWindow
+        folders = AppDelegate.FolderSyncBridge(controller: controller)
+        sceneWindow.makeKeyAndVisible()
+        super.scene(scene, willConnectTo: session, options: connectionOptions)
       }
     }
 

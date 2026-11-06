@@ -132,6 +132,8 @@ For a custom device folder choose **Folder sync → Add folder** on Android, or 
 
 ## iPhone / iPad testing
 
+iOS uses a single `FlutterSceneDelegate` window scene. The application owns an explicit Flutter engine and registers plugins at process launch; scene connection creates the window and binds the Files-folder method channel to that scene's Flutter view controller. This works with the pinned Flutter 3.38.5 SDK without relying on newer implicit-engine callbacks.
+
 iOS does **not** allow an arbitrary unsigned download to be installed like an APK. The complete iOS project is included, but a Mac with Xcode and Apple signing is required:
 
 ```sh
