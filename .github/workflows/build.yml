@@ -282,6 +282,7 @@ jobs:
             --target integration_test/ios_album_drive_test.dart
           xcrun simctl install "$device" build/ios/iphonesimulator/Runner.app
           xcrun simctl privacy "$device" grant photos app.ncloud.ncloud
+          xcrun simctl privacy "$device" grant photos-add app.ncloud.ncloud
           xcrun simctl launch "$device" app.ncloud.ncloud \
             --enable-checked-mode --verify-entry-points \
             --vm-service-port=8585 --disable-service-auth-codes
@@ -290,10 +291,8 @@ jobs:
             sleep 1
           done
           curl -fsS http://127.0.0.1:8585/getVM > /dev/null
-          flutter drive --use-existing-app=http://127.0.0.1:8585 \
-            --target integration_test/ios_album_drive_test.dart \
-            --driver test_driver/ios_album_drive_test.dart -d "$device" \
-            --no-keep-app-running
+          VM_SERVICE_URL=http://127.0.0.1:8585 \
+            dart run test_driver/ios_album_drive_test.dart
       - uses: actions/upload-artifact@v4
         with:
           name: ios-dependency-lock
