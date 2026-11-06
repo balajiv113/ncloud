@@ -269,11 +269,12 @@ jobs:
           test -n "$device" && test "$device" != null
           xcodebuild -workspace ios/Runner.xcworkspace -scheme Runner \
             -configuration Debug -destination "id=$device" \
-            CODE_SIGNING_ALLOWED=NO test -quiet
+            -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO test -quiet
       - name: Verify iOS Drive navigation and real PhotoKit album exports
         timeout-minutes: 15
         run: |
           device=$(xcrun simctl list devices available --json | jq -r '[.devices[][] | select(.name | startswith("iPhone"))][0].udid')
+          xcrun simctl bootstatus "$device" -b
           printf '%s' 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGOQqMgGAAGnAPzLMdOkAAAAAElFTkSuQmCC' \
             | base64 --decode > "$RUNNER_TEMP/ncloud-probe.png"
           xcrun simctl addmedia "$device" "$RUNNER_TEMP/ncloud-probe.png"
