@@ -19,4 +19,11 @@ class RunnerTests: XCTestCase {
     XCTAssertNil(scenes?.first?["UISceneStoryboardFile"])
   }
 
+  func testSceneOwnsFlutterWindow() {
+    let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+    XCTAssertTrue(scenes.contains { scene in
+      scene.windows.contains { $0.rootViewController is FlutterViewController }
+    })
+  }
+
 }

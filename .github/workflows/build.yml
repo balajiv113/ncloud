@@ -262,6 +262,14 @@ jobs:
           cache: true
       - run: flutter pub get
       - run: flutter build ios --release --no-codesign
+      - name: Verify iOS scene startup
+        timeout-minutes: 15
+        run: |
+          device=$(xcrun simctl list devices available --json | jq -r '[.devices[][] | select(.name | startswith("iPhone"))][0].udid')
+          test -n "$device" && test "$device" != null
+          xcodebuild -workspace ios/Runner.xcworkspace -scheme Runner \
+            -configuration Debug -destination "id=$device" \
+            CODE_SIGNING_ALLOWED=NO test -quiet
       - uses: actions/upload-artifact@v4
         with:
           name: ios-dependency-lock
