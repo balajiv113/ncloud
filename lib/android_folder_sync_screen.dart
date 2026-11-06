@@ -70,7 +70,7 @@ class _AndroidFolderSyncScreenState extends State<AndroidFolderSyncScreen> {
           const Text('Choose folders. Decide what gets uploaded.'),
           const SizedBox(height: 20),
           if (loading) const LinearProgressIndicator(),
-          if (sync.error case final error?)
+          if (sync.error case final error?) ...[
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 12),
               child: Text(
@@ -78,6 +78,18 @@ class _AndroidFolderSyncScreenState extends State<AndroidFolderSyncScreen> {
                 style: TextStyle(color: Theme.of(context).colorScheme.error),
               ),
             ),
+            TextButton.icon(
+              onPressed: loading
+                  ? null
+                  : () async {
+                      setState(() => loading = true);
+                      await sync.load();
+                      if (mounted) setState(() => loading = false);
+                    },
+              icon: const Icon(Icons.refresh),
+              label: const Text('Retry loading folder settings'),
+            ),
+          ],
           for (final pair in sync.pairs) _card(pair),
           if (!loading && sync.pairs.isEmpty)
             const Padding(

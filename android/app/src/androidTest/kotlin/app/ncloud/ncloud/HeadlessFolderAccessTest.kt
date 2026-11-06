@@ -1,6 +1,8 @@
 package app.ncloud.ncloud
 
 import android.content.Context
+import android.database.sqlite.SQLiteDatabase
+import android.database.sqlite.SQLiteException
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -17,6 +19,23 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class HeadlessFolderAccessTest {
+    @Test
+    fun busyTimeoutConfigurationRequiresQueryOnAndroid() {
+        SQLiteDatabase.create(null).use { database ->
+            try {
+                database.execSQL("PRAGMA busy_timeout=5000")
+                fail("Android execSQL unexpectedly accepted a result-producing PRAGMA")
+            } catch (expected: SQLiteException) {
+                assertTrue(expected.message.orEmpty().contains("query", ignoreCase = true))
+            }
+            database.rawQuery("PRAGMA busy_timeout=5000", null).use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals(5000, cursor.getInt(0))
+            }
+            database.execSQL("CREATE TABLE receipts (id INTEGER PRIMARY KEY)")
+        }
+    }
+
     private fun call(plugin: FolderAccessPlugin, method: String, args: Map<String, Any> = emptyMap()): Pair<Any?, String?> {
         val ready = CountDownLatch(1)
         var value: Any? = null

@@ -295,7 +295,7 @@ class SyncJournal {
       options: OpenDatabaseOptions(
         version: 2,
         onConfigure: (db) async {
-          await db.execute('PRAGMA busy_timeout=5000');
+          await db.rawQuery('PRAGMA busy_timeout=5000');
           await db.rawQuery('PRAGMA journal_mode=WAL');
         },
         onUpgrade: (db, oldVersion, _) async {
@@ -550,6 +550,7 @@ class FolderSyncController extends ChangeNotifier {
       phase = '';
       _notify();
     }
+    var operation = 'read saved folder settings';
     try {
       final saved = await journal.pairs(syncAccount(session));
       if (syncAccount(session) != _accountKey ||
@@ -559,17 +560,27 @@ class FolderSyncController extends ChangeNotifier {
       }
       _owner = _accountKey;
       pairs = saved;
+      operation = 'enable the backup account';
       await journal.enableAccount(syncAccount(session), true);
       for (final pair in pairs) {
+        operation = 'read saved backup results';
         results[pair.id] = await journal.state(pair.id);
+        operation = 'register Android backup schedules';
         await _register(pair);
       }
       error = null;
     } on Object catch (e) {
       _owner = null;
-      error =
-          'Could not load folder settings or register schedules (${e.runtimeType}). '
-          'Check storage and notification settings, then reopen Folder sync.';
+      final detail = switch (e) {
+        DatabaseException() =>
+          'Database error ${e.getResultCode() ?? 'unknown'}. Saved folders and receipts have not been reset.',
+        MissingPluginException() =>
+          'The native backup service is unavailable. Fully close ncloud and install the latest APK.',
+        PlatformException() => 'Android service error (${e.code}).',
+        FormatException() => 'The saved folder settings contain invalid data.',
+        _ => 'Operation failed (${e.runtimeType}).',
+      };
+      error = 'Could not $operation. $detail Retry loading folder settings.';
     }
     _notify();
   }

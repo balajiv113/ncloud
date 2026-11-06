@@ -244,6 +244,26 @@ void main() {
   );
 
   test(
+    'schedule load errors identify registration and retry without clearing pairs or receipts',
+    () async {
+      final pair = await add();
+      await device.put('photo.jpg', 'original');
+      await ui.run(pair);
+      scheduler.fail = true;
+      final restored = controller();
+      await restored.load();
+      expect(restored.error, contains('register Android backup schedules'));
+      expect(restored.error, contains('schedule_denied'));
+      expect(restored.pairs.single.id, pair.id);
+      expect(await journal.receipt(pair.id, 'local', ['photo.jpg']), isNotNull);
+      scheduler.fail = false;
+      await restored.load();
+      expect(restored.error, isNull);
+      expect(scheduler.jobs[pair.id], pair.revision);
+    },
+  );
+
+  test(
     'headless run uses receipts and no picker, UI engine or legacy service',
     () async {
       final pair = await add();
