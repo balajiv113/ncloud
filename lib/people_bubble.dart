@@ -47,7 +47,7 @@ class _PeopleBubbleState extends State<PeopleBubble> {
     final generation = ++_generation;
     final person = widget.person;
     final controller = widget.controller;
-    _bytes = controller.cachedPersonPreview(person) ?? _bytes;
+    _bytes = controller.cachedPersonPreview(person);
     _error = null;
     try {
       final saved = await controller.restorePersonPreview(person);
@@ -58,8 +58,12 @@ class _PeopleBubbleState extends State<PeopleBubble> {
         setState(() => _bytes = bytes);
       }
     } catch (e) {
+      if (e is PreviewCancelled) return;
       if (mounted && generation == _generation) {
-        setState(() => _error = errorMessage(e));
+        setState(() {
+          _bytes = null;
+          _error = errorMessage(e);
+        });
       }
     }
   }

@@ -132,6 +132,26 @@ void main() {
     expect(controller.error, isNull);
   });
 
+  test('Timeline retains its index and loaded photos during refresh', () async {
+    final controller = AppController(store: _DelayedStore(), client: _Backend())
+      ..account = account
+      ..timelineIndexAvailable = true;
+    addTearDown(controller.dispose);
+    await controller.load();
+    final days = controller.indexedDays;
+    final items = controller.items;
+    final refresh = controller.load();
+    expect(controller.loading, isTrue);
+    expect(controller.refreshing, isTrue);
+    expect(controller.indexedDays, days);
+    expect(controller.items, items);
+    expect(controller.dayLoaded(3), isTrue);
+    await refresh;
+    expect(controller.error, isNull);
+    expect(controller.indexedDays, hasLength(3));
+    expect(controller.loading, isFalse);
+  });
+
   test('a stale day failure does not strand a new destination queue', () async {
     final backend = _Backend();
     final controller = AppController(store: _DelayedStore(), client: backend)

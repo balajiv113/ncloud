@@ -250,7 +250,8 @@ void main() {
           return http.Response(
             '''<d:multistatus xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns">
         <d:response><d:href>/nextcloud/remote.php/dav/photos/alice/albums/Trip%20%26%20friends/42</d:href>
-        <d:propstat><d:prop><d:getcontenttype>image/jpeg</d:getcontenttype><oc:fileid>42</oc:fileid></d:prop>
+        <d:propstat><d:prop><d:getcontenttype>image/jpeg</d:getcontenttype><oc:fileid>42</oc:fileid>
+        <d:getetag>new-revision</d:getetag><d:getcontentlength>2048</d:getcontentlength><oc:favorite>0</oc:favorite></d:prop>
         <d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>
         <d:response><d:href>/nextcloud/remote.php/dav/photos/alice/albums/Trip%20%26%20friends/99</d:href>
         <d:propstat><d:prop><d:displayname>Shared.jpg</d:displayname><d:getcontenttype>image/jpeg</d:getcontenttype>
@@ -270,9 +271,17 @@ void main() {
         isDirectory: false,
         id: '42',
         contentType: 'image/jpeg',
+        etag: 'old-revision',
+        size: 1024,
+        favorite: true,
       );
       final files = await client.albumFiles(account, albums.first, [photo]);
-      expect(files.first, same(photo));
+      expect(files.first.path, photo.path);
+      expect(files.first.name, photo.name);
+      expect(files.first.readOnly, isFalse);
+      expect(files.first.etag, 'new-revision');
+      expect(files.first.size, 2048);
+      expect(files.first.favorite, isFalse);
       expect(files.last.name, 'Shared.jpg');
       expect(files.last.readOnly, isTrue);
       expect(client.fileUri(account, files.last).pathSegments, [
@@ -287,6 +296,42 @@ void main() {
       ]);
     },
   );
+
+  test('renamed native album members resolve their current file path', () async {
+    final client = NextcloudClient(
+      transport: MockClient(
+        (_) async => http.Response(
+          '''<d:multistatus xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns" xmlns:nc="http://nextcloud.org/ns">
+        <d:response><d:href>/nextcloud/remote.php/dav/photos/alice/albums/Trip/42</d:href>
+        <d:propstat><d:prop><oc:fileid>42</oc:fileid><nc:file-name>Renamed.jpg</nc:file-name></d:prop>
+        <d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>''',
+          207,
+        ),
+      ),
+    );
+    addTearDown(client.close);
+    final files = await client.albumFiles(
+      account,
+      const CloudAlbum(
+        name: 'Trip',
+        count: 1,
+        reference: ['photos', 'alice', 'albums', 'Trip'],
+      ),
+      [
+        const CloudFile(
+          path: ['Photos', 'Original.jpg'],
+          name: 'Original.jpg',
+          isDirectory: false,
+          id: '42',
+          contentType: 'image/jpeg',
+        ),
+      ],
+    );
+    expect(files.single.name, 'Renamed.jpg');
+    expect(files.single.pending, isTrue);
+    expect(files.single.id, '42');
+    expect(files.single.readOnly, isFalse);
+  });
 
   test(
     'missing native albums are optional but permission and server errors are surfaced',

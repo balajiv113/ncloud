@@ -153,6 +153,7 @@ class AppController extends ChangeNotifier {
   DateTime? _peopleUpdated;
   Future<void>? _peopleTask;
   int _peopleVersion = 0;
+  final Map<String, int> _facePreviewGenerations = {};
   List<TimelineDay> get indexedDays => _activeListing?.days ?? [];
   List<CloudFile> _libraryFiles = [];
   List<CloudAlbum> nativeAlbums = [];
@@ -811,7 +812,7 @@ class AppController extends ChangeNotifier {
     loadingMore = false;
     hasMore = false;
     error = null;
-    _activeListing = null;
+    if (!keepItems) _activeListing = null;
     _timelineChanges = null;
     _pendingDays.clear();
     if (!keepItems) {
@@ -949,7 +950,12 @@ class AppController extends ChangeNotifier {
         if (version != _loadVersion || account != session || _disposed) return;
         listing.add(fileStore, files);
       } else if (currentTab == 1) {
-        final files = await _listFolder(session, path, force: refresh);
+        final files = await _listFolder(
+          session,
+          path,
+          force: refresh,
+          isCurrent: () => version == _loadVersion,
+        );
         if (version != _loadVersion || account != session || _disposed) return;
         listing.add(fileStore, files);
       } else {
@@ -1103,10 +1109,14 @@ class AppController extends ChangeNotifier {
     Account session,
     List<String> path, {
     bool force = false,
+    bool Function()? isCurrent,
   }) async {
     final generation = _cacheGeneration;
     bool current() =>
-        account == session && !_disposed && generation == _cacheGeneration;
+        account == session &&
+        !_disposed &&
+        generation == _cacheGeneration &&
+        (isCurrent?.call() ?? true);
     await _restoreStore(session);
     if (!current()) return [];
     if (!force) {
@@ -1559,7 +1569,9 @@ class AppController extends ChangeNotifier {
 
   void ensureDays(Iterable<int> days) {
     final listing = _activeListing;
-    if (listing?.days == null || account == null || error != null) return;
+    if (loading || listing?.days == null || account == null || error != null) {
+      return;
+    }
     for (final day in days) {
       if (listing!.loaded.contains(day) && !listing.staleDays.contains(day)) {
         continue;
@@ -1679,7 +1691,7 @@ class AppController extends ChangeNotifier {
   Future<void> loadPeople({bool refresh = false}) async {
     final session = account;
     if (demo || session == null || _disposed) return;
-    if (_peopleTask case final pending?) return pending;
+    if (_peopleTask case final pending? when !refresh) return pending;
     if (!refresh &&
         _peopleUpdated != null &&
         DateTime.now().difference(_peopleUpdated!) <
@@ -1698,7 +1710,7 @@ class AppController extends ChangeNotifier {
     notifyListeners();
     final task = () async {
       try {
-        if (people.isEmpty) {
+        if (people.isEmpty && !refresh) {
           final saved = await cache?.readDocument(key);
           if (!current()) return;
           if (saved != null) {
@@ -1723,6 +1735,23 @@ class AppController extends ChangeNotifier {
         }
         final result = await client.people(session, optional: true);
         if (!current()) return;
+        final next = {
+          for (final person in result ?? <RecognizedPerson>[])
+            person.id: person,
+        };
+        for (final previous in people) {
+          final replacement = next[previous.id];
+          if (replacement == null ||
+              _personPreviewVersion(previous) !=
+                  _personPreviewVersion(replacement)) {
+            final faceKey = _personPreviewKey(previous)!;
+            final removed = _thumbs.remove(faceKey);
+            if (removed != null) _thumbBytes -= removed.bytes.length;
+            _facePreviewGenerations.remove(faceKey);
+            await cache?.removeThumbnail(faceKey);
+            if (!current()) return;
+          }
+        }
         peopleAvailable = result != null;
         people = result ?? [];
         _peopleUpdated = DateTime.now();
@@ -1756,16 +1785,21 @@ class AppController extends ChangeNotifier {
   String _personPreviewVersion(RecognizedPerson person) =>
       '${person.cover ?? ''}|${person.coverEtag ?? ''}';
 
-  Uint8List? cachedPersonPreview(RecognizedPerson person) =>
-      _thumbs[_personPreviewKey(person)]?.bytes;
+  Uint8List? cachedPersonPreview(RecognizedPerson person) {
+    final saved = _thumbs[_personPreviewKey(person)];
+    return saved?.version == _personPreviewVersion(person)
+        ? saved?.bytes
+        : null;
+  }
 
   Future<Uint8List?> restorePersonPreview(RecognizedPerson person) async {
     final generation = _peopleVersion;
     final key = _personPreviewKey(person);
     if (key == null) return null;
-    if (_thumbs[key] case final saved?) return saved.bytes;
+    if (cachedPersonPreview(person) case final saved?) return saved;
     final saved = await cache?.readThumbnail(key);
     if (saved == null ||
+        saved.version != _personPreviewVersion(person) ||
         generation != _peopleVersion ||
         key != _personPreviewKey(person) ||
         _disposed) {
@@ -1783,18 +1817,45 @@ class AppController extends ChangeNotifier {
       throw const CloudException('Sign in to load people.');
     }
     final version = _personPreviewVersion(person);
-    if (_thumbs[key] case final saved? when saved.version == version) {
+    if (_thumbs[key] case final saved?
+        when saved.version == version &&
+            _facePreviewGenerations[key] == generation) {
       return saved.bytes;
     }
-    final loadKey = '$key|$version';
+    final loadKey = '$key|$version|$generation';
     if (_previewLoads[loadKey] case final pending?) return pending;
     final task = () async {
-      final bytes = await client.personPreview(session, person);
-      if (generation == _peopleVersion &&
-          key == _personPreviewKey(person) &&
-          !_disposed) {
-        _rememberPreview(key, bytes, version);
-        await cache?.writeThumbnail(key, bytes, version: version);
+      Uint8List bytes;
+      try {
+        bytes = await client.personPreview(session, person);
+      } on CloudException catch (error) {
+        if (generation == _peopleVersion &&
+            key == _personPreviewKey(person) &&
+            !_disposed &&
+            (error.statusCode == 404 || error.statusCode == 410)) {
+          final removed = _thumbs.remove(key);
+          if (removed != null) _thumbBytes -= removed.bytes.length;
+          _facePreviewGenerations.remove(key);
+          await cache?.removeThumbnail(key);
+        }
+        rethrow;
+      }
+      if (generation != _peopleVersion ||
+          key != _personPreviewKey(person) ||
+          _disposed) {
+        throw const PreviewCancelled();
+      }
+      _rememberPreview(key, bytes, version);
+      _facePreviewGenerations.remove(key);
+      _facePreviewGenerations[key] = generation;
+      while (_facePreviewGenerations.length > 4000) {
+        _facePreviewGenerations.remove(_facePreviewGenerations.keys.first);
+      }
+      await cache?.writeThumbnail(key, bytes, version: version);
+      if (generation != _peopleVersion ||
+          key != _personPreviewKey(person) ||
+          _disposed) {
+        throw const PreviewCancelled();
       }
       return bytes;
     }();
@@ -1812,7 +1873,9 @@ class AppController extends ChangeNotifier {
     final session = account;
     if (demo || session == null || _disposed) return;
     final pending = _catalogueTask;
-    if (pending != null && _catalogueSession == session) return pending;
+    if (!refresh && pending != null && _catalogueSession == session) {
+      return pending;
+    }
     final generation = _catalogueVersion + 1;
     final task = () async {
       try {
@@ -1837,7 +1900,7 @@ class AppController extends ChangeNotifier {
 
   Future<void> _prepareSharedAlbums({required bool refresh}) async {
     final pending = _sharedAlbumsTask;
-    if (pending != null) return pending;
+    if (!refresh && pending != null) return pending;
     final session = account!;
     final generation = ++_sharedAlbumsVersion;
     final task = () async {
@@ -1934,7 +1997,11 @@ class AppController extends ChangeNotifier {
       if (saved != null) {
         _autoPhotoRoot = (saved['path'] as List).cast<String>();
       } else {
-        final roots = await _listFolder(session, []);
+        final roots = await _listFolder(
+          session,
+          [],
+          isCurrent: () => generation == _catalogueVersion,
+        );
         if (account != session ||
             generation != _catalogueVersion ||
             _disposed) {
@@ -2062,7 +2129,12 @@ class AppController extends ChangeNotifier {
               ? await client.timelineFolders(session, folder.path)
               : [];
         } else {
-          final contents = await _listFolder(session, folder.path);
+          final contents = await _listFolder(
+            session,
+            folder.path,
+            force: refresh,
+            isCurrent: () => generation == _catalogueVersion,
+          );
           covers = contents.where((f) => f.isMedia).take(1).toList();
           children = covers.isNotEmpty && !atRoot
               ? []
@@ -2417,6 +2489,7 @@ class AppController extends ChangeNotifier {
     _thumbnailWarmupKnown.clear();
     _resolvedIds.clear();
     _thumbs.clear();
+    _facePreviewGenerations.clear();
     _thumbBytes = 0;
     _previewLoads.clear();
     _previewInterest.clear();

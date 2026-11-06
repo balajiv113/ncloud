@@ -14,6 +14,8 @@ Initial and subsequent listing pages are checked against the initiating account 
 
 Clearing browsing metadata also invalidates in-flight folder, index and path-resolution work. Late Timeline failures from a previous destination do not replace the current view's error state or discard its queued date requests. Disposed controllers cannot restore a saved login.
 
+Pull-to-refresh keeps cached albums, folders, photos and the Timeline date index visible and usable until their replacements arrive. An explicit refresh bypasses folder-list freshness shortcuts and supersedes older discovery requests; successful responses reconcile removals as well as additions. Refresh errors keep existing content with an error notice. People previews are revision-checked and revalidated after catalogue refresh; removed people and missing face previews are purged from memory and disk rather than displayed indefinitely.
+
 `media_listing.dart` owns cached listing membership/paging, and `timeline_scrubber.dart` owns scrolling gestures and accessibility. The scrubber remains available to screen readers while visually hidden, with date announcements and increase/decrease actions.
 
 ## Release readiness and support

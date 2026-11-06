@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:ncloud/app_controller.dart';
+import 'package:ncloud/cloud_backend.dart';
 import 'package:ncloud/discovery_models.dart';
 import 'package:ncloud/library_screen.dart';
 import 'package:ncloud/local_cache.dart';
@@ -25,6 +26,13 @@ const samplePerson = RecognizedPerson(
   cover: 41,
   coverEtag: 'new',
 );
+final samplePersonResponse = {
+  'id': samplePerson.id,
+  'name': samplePerson.name,
+  'count': samplePerson.count,
+  'cover': samplePerson.cover,
+  'cover_etag': samplePerson.coverEtag,
+};
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -57,7 +65,7 @@ void main() {
       final first = c.loadPeople();
       await requested.future;
       c.account = account.withPhotoRoot(['Other photos']);
-      responses.single.complete(jsonResponse([samplePerson.toJson()]));
+      responses.single.complete(jsonResponse([samplePersonResponse]));
       await first;
       expect(c.people.single.id, 12);
       expect(c.loadingPeople, isFalse);
@@ -65,7 +73,7 @@ void main() {
       final second = c.loadPeople(refresh: true);
       await requested.future;
       await c.signOut();
-      responses.last.complete(jsonResponse([samplePerson.toJson()]));
+      responses.last.complete(jsonResponse([samplePersonResponse]));
       await second;
       expect(c.people, isEmpty);
       expect(c.peopleError, isNull);
@@ -82,7 +90,7 @@ void main() {
         transport: MockClient((_) async {
           calls++;
           return status == 200
-              ? jsonResponse([samplePerson.toJson()])
+              ? jsonResponse([samplePersonResponse])
               : http.Response('', status);
         }),
       ),
@@ -132,7 +140,7 @@ void main() {
     await requested.future;
     expect(c.loadingPeople, isTrue);
     expect(c.people.map((p) => p.count), [10, 1]);
-    response.complete(jsonResponse([samplePerson.toJson()]));
+    response.complete(jsonResponse([samplePersonResponse]));
     await loading;
     expect(c.people.single.id, 12);
 
@@ -143,7 +151,7 @@ void main() {
       cache: cache,
       client: NextcloudClient(
         transport: MockClient(
-          (_) async => jsonResponse([samplePerson.toJson()]),
+          (_) async => jsonResponse([samplePersonResponse]),
         ),
       ),
     )..account = account;
@@ -154,35 +162,218 @@ void main() {
     expect(other.peopleError, isNull);
   });
 
-  test('face cache is shown before a deduplicated revision update', () async {
-    final dir = await Directory.systemTemp.createTemp('ncloud-face-');
-    addTearDown(() => dir.delete(recursive: true));
+  test(
+    'outdated face cache is hidden during a deduplicated revision update',
+    () async {
+      final dir = await Directory.systemTemp.createTemp('ncloud-face-');
+      addTearDown(() => dir.delete(recursive: true));
+      final cache = LocalCache(() async => dir);
+      final key = 'face-v1|${account.server}|${account.userId}|12';
+      await cache.writeThumbnail(key, png, version: '41|old');
+      final response = Completer<http.Response>();
+      var calls = 0;
+      final c = AppController(
+        store: MemoryStore(),
+        cache: cache,
+        client: NextcloudClient(
+          transport: MockClient((_) {
+            calls++;
+            return response.future;
+          }),
+        ),
+      )..account = account;
+      addTearDown(c.dispose);
+      expect(await c.restorePersonPreview(samplePerson), isNull);
+      expect(calls, 0);
+      final first = c.personPreview(samplePerson);
+      final second = c.personPreview(samplePerson);
+      response.complete(http.Response.bytes(png, 200));
+      await Future.wait([first, second]);
+      expect(calls, 1);
+      expect((await cache.readThumbnail(key))!.version, '41|new');
+      expect(await c.personPreview(samplePerson), png);
+      expect(calls, 1);
+    },
+  );
+
+  test(
+    'forced People refresh supersedes a stale in-flight catalogue',
+    () async {
+      final old = Completer<http.Response>();
+      var calls = 0;
+      final c = AppController(
+        store: MemoryStore(),
+        client: NextcloudClient(
+          transport: MockClient((_) async {
+            if (++calls == 1) return old.future;
+            return jsonResponse([]);
+          }),
+        ),
+      )..account = account;
+      addTearDown(c.dispose);
+      final first = c.loadPeople();
+      await Future<void>.delayed(Duration.zero);
+      await c.loadPeople(refresh: true);
+      old.complete(jsonResponse([samplePersonResponse]));
+      await first;
+      expect(calls, 2);
+      expect(c.people, isEmpty);
+      expect(c.loadingPeople, isFalse);
+      expect(c.peopleError, isNull);
+    },
+  );
+
+  test('removed people purge their face from memory and disk', () async {
+    final dir = await Directory.systemTemp.createTemp('ncloud-removed-face-');
     final cache = LocalCache(() async => dir);
-    final key = 'face-v1|${account.server}|${account.userId}|12';
-    await cache.writeThumbnail(key, png, version: '41|old');
-    final response = Completer<http.Response>();
-    var calls = 0;
+    var removed = false;
     final c = AppController(
       store: MemoryStore(),
       cache: cache,
       client: NextcloudClient(
-        transport: MockClient((_) {
-          calls++;
-          return response.future;
+        transport: MockClient((request) async {
+          if (request.url.path.endsWith('/preview')) {
+            return http.Response.bytes(png, 200);
+          }
+          return jsonResponse(removed ? [] : [samplePersonResponse]);
+        }),
+      ),
+    )..account = account;
+    addTearDown(() async {
+      c.dispose();
+      await cache.close();
+      await dir.delete(recursive: true);
+    });
+    await c.loadPeople();
+    await c.personPreview(samplePerson);
+    final key = 'face-v1|${account.server}|${account.userId}|12';
+    expect(c.cachedPersonPreview(samplePerson), png);
+    removed = true;
+    await c.loadPeople(refresh: true);
+    expect(c.people, isEmpty);
+    expect(c.cachedPersonPreview(samplePerson), isNull);
+    expect(await cache.readThumbnail(key), isNull);
+    expect(
+      (await cache.readDocument(
+        'people-v1|${account.server}|${account.userId}',
+      ))!['people'],
+      isEmpty,
+    );
+  });
+
+  testWidgets('refresh removes a face whose server preview has disappeared', (
+    tester,
+  ) async {
+    var gone = false;
+    var previewCalls = 0;
+    final c = AppController(
+      store: MemoryStore(),
+      client: NextcloudClient(
+        transport: MockClient((request) async {
+          if (request.url.path.endsWith('/preview')) {
+            previewCalls++;
+            return gone
+                ? http.Response('', 404)
+                : http.Response.bytes(png, 200);
+          }
+          return jsonResponse([samplePersonResponse]);
         }),
       ),
     )..account = account;
     addTearDown(c.dispose);
-    expect(await c.restorePersonPreview(samplePerson), png);
-    expect(calls, 0);
-    final first = c.personPreview(samplePerson);
-    final second = c.personPreview(samplePerson);
-    response.complete(http.Response.bytes(png, 200));
-    await Future.wait([first, second]);
-    expect(calls, 1);
-    expect((await cache.readThumbnail(key))!.version, '41|new');
-    expect(await c.personPreview(samplePerson), png);
-    expect(calls, 1);
+    await c.loadPeople();
+    Widget bubble() => MaterialApp(
+      home: Scaffold(
+        body: PeopleBubble(
+          person: c.people.single,
+          controller: c,
+          onTap: () {},
+        ),
+      ),
+    );
+    await tester.pumpWidget(bubble());
+    await tester.pumpAndSettle();
+    expect(find.byType(Image), findsOneWidget);
+    gone = true;
+    await c.loadPeople(refresh: true);
+    await tester.pumpWidget(bubble());
+    await tester.pumpAndSettle();
+    expect(previewCalls, 2);
+    expect(find.byType(Image), findsNothing);
+    expect(find.byIcon(Icons.broken_image_outlined), findsOneWidget);
+    expect(c.cachedPersonPreview(samplePerson), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  test('a late face response cannot replace a refreshed preview', () async {
+    final old = Completer<http.Response>();
+    var previews = 0;
+    final c = AppController(
+      store: MemoryStore(),
+      client: NextcloudClient(
+        transport: MockClient((request) async {
+          if (request.url.path.endsWith('/preview')) {
+            return ++previews == 1
+                ? old.future
+                : http.Response.bytes([4, 5, 6], 200);
+          }
+          return jsonResponse([samplePersonResponse]);
+        }),
+      ),
+    )..account = account;
+    addTearDown(c.dispose);
+    await c.loadPeople();
+    final cancelled = expectLater(
+      c.personPreview(samplePerson),
+      throwsA(isA<PreviewCancelled>()),
+    );
+    await Future<void>.delayed(Duration.zero);
+    await c.loadPeople(refresh: true);
+    expect(await c.personPreview(c.people.single), [4, 5, 6]);
+    old.complete(http.Response.bytes(png, 200));
+    await cancelled;
+    expect(c.cachedPersonPreview(samplePerson), [4, 5, 6]);
+    expect(previews, 2);
+  });
+
+  test('missing face previews also invalidate the disk thumbnail', () async {
+    final dir = await Directory.systemTemp.createTemp('ncloud-face-404-');
+    final cache = LocalCache(() async => dir);
+    var gone = false;
+    final c = AppController(
+      store: MemoryStore(),
+      cache: cache,
+      client: NextcloudClient(
+        transport: MockClient((request) async {
+          if (request.url.path.endsWith('/preview')) {
+            return gone
+                ? http.Response('', 404)
+                : http.Response.bytes(png, 200);
+          }
+          return jsonResponse([samplePersonResponse]);
+        }),
+      ),
+    )..account = account;
+    addTearDown(() async {
+      c.dispose();
+      await cache.close();
+      await dir.delete(recursive: true);
+    });
+    await c.loadPeople();
+    await c.personPreview(samplePerson);
+    gone = true;
+    await c.loadPeople(refresh: true);
+    await expectLater(
+      c.personPreview(samplePerson),
+      throwsA(isA<CloudException>()),
+    );
+    expect(
+      await cache.readThumbnail(
+        'face-v1|${account.server}|${account.userId}|12',
+      ),
+      isNull,
+    );
+    expect(c.cachedPersonPreview(samplePerson), isNull);
   });
 
   test(

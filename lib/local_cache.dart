@@ -227,6 +227,14 @@ class LocalCache {
     return dir;
   }
 
+  Future<void> removeThumbnail(String key) => _serialized(() async {
+    await _index();
+    final file = await _file('thumbs', key);
+    if (await file.exists()) await file.delete();
+    final entry = _entries!.remove(file.path);
+    if (entry != null) _totalBytes -= entry.size;
+  });
+
   Future<File> _file(String folder, String key, [String suffix = '']) async =>
       File('${(await _folder(folder)).path}/${cacheDigest(key)}$suffix');
 

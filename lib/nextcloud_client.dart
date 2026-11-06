@@ -424,26 +424,37 @@ class NextcloudClient implements CloudBackend {
           '';
       final id = value('fileid', 'http://owncloud.org/ns');
       final existing = known[id];
-      if (existing != null) {
-        result.add(existing);
-        continue;
-      }
-      final type = value('getcontenttype');
+      final type = value('getcontenttype').isEmpty
+          ? existing?.contentType ?? ''
+          : value('getcontenttype');
       if (!type.startsWith('image/') && !type.startsWith('video/')) continue;
       final filename = value('file-name', 'http://nextcloud.org/ns');
-      final name = filename.isEmpty ? value('displayname') : filename;
+      final name = filename.isEmpty
+          ? existing?.name ?? value('displayname')
+          : filename;
       result.add(
         CloudFile(
-          path: ['Albums', ...album.reference, segments.last],
+          path: existing == null
+              ? ['Albums', ...album.reference, segments.last]
+              : name != existing.name && !existing.readOnly
+              ? [CloudFile.pendingRoot, id]
+              : existing.path,
           name: name.isEmpty ? segments.last : name,
           isDirectory: false,
           contentType: type,
           id: id.isEmpty ? null : id,
-          size: int.tryParse(value('getcontentlength')) ?? 0,
-          modified: _parseModified(value('getlastmodified')),
-          etag: value('getetag').isEmpty ? null : value('getetag'),
-          albumReference: [...album.reference, segments.last],
-          favorite: value('favorite', 'http://owncloud.org/ns') == '1',
+          size: int.tryParse(value('getcontentlength')) ?? existing?.size ?? 0,
+          modified:
+              _parseModified(value('getlastmodified')) ?? existing?.modified,
+          etag: value('getetag').isEmpty ? existing?.etag : value('getetag'),
+          albumReference: existing == null
+              ? [...album.reference, segments.last]
+              : existing.albumReference,
+          favorite: value('favorite', 'http://owncloud.org/ns').isEmpty
+              ? existing?.favorite ?? false
+              : value('favorite', 'http://owncloud.org/ns') == '1',
+          taken: existing?.taken,
+          captureDay: existing?.captureDay,
         ),
       );
     }
