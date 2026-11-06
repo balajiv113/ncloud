@@ -7,12 +7,22 @@ import 'package:ncloud/discovery_models.dart';
 import 'package:ncloud/nextcloud_client.dart';
 import 'package:ncloud/cloud_backend.dart';
 import 'package:ncloud/nextcloud_discovery.dart';
+import 'package:ncloud/models.dart';
 
 import 'nextcloud_client_test.dart' show account;
 import 'preview_test.dart' show png;
 
 http.Response jsonResponse(Object? value, [int status = 200]) =>
     http.Response(jsonEncode(value), status);
+
+http.Response recognizeFacesResponse(
+  List<String> names,
+) => http.Response('''<d:multistatus xmlns:d="DAV:">${names.map((name) {
+  final path = serverEndpoint(account.server, ['remote.php', 'dav', 'recognize', account.userId, 'faces', name]).path;
+  return '<d:response><d:href>${htmlEscape.convert(path)}</d:href>'
+      '<d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop>'
+      '<d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>';
+}).join()}</d:multistatus>''', 207);
 
 void main() {
   const person = RecognizedPerson(id: 12, name: 'Sample', count: 2);
@@ -23,12 +33,19 @@ void main() {
     () async {
       final client = NextcloudClient(
         transport: MockClient(
-          (_) async => jsonResponse([
-            {'id': 7, 'name': 'Sample A', 'count': 8},
-            {'id': 9, 'name': '', 'count': 21},
-            {'id': 3, 'name': 'Sample B', 'count': 8},
-            {'id': 2, 'name': 'Sample C', 'count': 15},
-          ]),
+          (request) async => request.method == 'PROPFIND'
+              ? recognizeFacesResponse([
+                  'Sample A',
+                  '9',
+                  'Sample B',
+                  'Sample C',
+                ])
+              : jsonResponse([
+                  {'id': 7, 'name': 'Sample A', 'count': 8},
+                  {'id': 9, 'name': '', 'count': 21},
+                  {'id': 3, 'name': 'Sample B', 'count': 8},
+                  {'id': 2, 'name': 'Sample C', 'count': 15},
+                ]),
         ),
       );
       addTearDown(client.close);
@@ -43,6 +60,15 @@ void main() {
     () async {
       final client = NextcloudClient(
         transport: MockClient((request) async {
+          if (request.method == 'PROPFIND') {
+            expect(
+              request.url.path,
+              '/nextcloud/remote.php/dav/recognize/alice/faces',
+            );
+            expect(request.headers['Depth'], '1');
+            expect(request.headers['Authorization'], account.authorization);
+            return recognizeFacesResponse(['Sample', '13']);
+          }
           expect(
             request.url.path,
             '/nextcloud/index.php/apps/memories/api/clusters/recognize',
@@ -76,6 +102,99 @@ void main() {
       expect(people.first.coverEtag, 'rev');
       expect(people.first.named, isTrue);
       expect(people.last.named, isFalse);
+    },
+  );
+
+  test(
+    'Photos people listing excludes stale Memories clusters, including after reconnect',
+    () async {
+      for (var session = 0; session < 2; session++) {
+        final client = NextcloudClient(
+          transport: MockClient((request) async {
+            if (request.method == 'PROPFIND') {
+              return recognizeFacesResponse(['Visible & family', '13']);
+            }
+            return jsonResponse([
+              {'id': 12, 'name': 'Removed', 'count': 100},
+              {'id': 13, 'name': '', 'count': 1},
+              {'id': 14, 'name': 'Visible & family', 'count': 2},
+            ]);
+          }),
+        );
+        addTearDown(client.close);
+        expect((await client.people(account))!.map((p) => p.id), [14, 13]);
+      }
+    },
+  );
+
+  test(
+    'Recognize DAV negotiates the server API key on permission challenge',
+    () async {
+      var davCalls = 0;
+      final client = NextcloudClient(
+        transport: MockClient((request) async {
+          expect(request.headers['Authorization'], account.authorization);
+          expect(request.followRedirects, isFalse);
+          if (request.method == 'PROPFIND') {
+            expect(request.headers['Cache-Control'], 'no-cache');
+            if (++davCalls == 1) return http.Response('', 403);
+            expect(request.headers['X-Recognize-Api-Key'], 'test-key');
+            return recognizeFacesResponse(['Sample']);
+          }
+          if (request.url.path.endsWith('/recognize/api-key')) {
+            return jsonResponse({'apiKey': 'test-key'});
+          }
+          return jsonResponse([
+            {'id': 12, 'name': 'Sample', 'count': 2},
+          ]);
+        }),
+      );
+      addTearDown(client.close);
+      expect((await client.people(account))!.single.id, 12);
+      expect(davCalls, 2);
+    },
+  );
+
+  test(
+    'failed Photos verification never publishes Memories-only people',
+    () async {
+      for (final status in [401, 403, 404, 500, 207]) {
+        final client = NextcloudClient(
+          transport: MockClient((request) async {
+            if (request.method == 'PROPFIND' ||
+                request.url.path.endsWith('/api-key')) {
+              return http.Response('invalid', status == 403 ? 403 : status);
+            }
+            return jsonResponse([
+              {'id': 12, 'name': 'Removed', 'count': 2},
+            ]);
+          }),
+        );
+        addTearDown(client.close);
+        await expectLater(client.people(account), throwsA(isA<Exception>()));
+      }
+    },
+  );
+
+  test(
+    'a failed DAV root property is not an authoritative empty people list',
+    () async {
+      final client = NextcloudClient(
+        transport: MockClient((request) async {
+          if (request.method == 'PROPFIND') {
+            return http.Response('''<d:multistatus xmlns:d="DAV:">
+            <d:response><d:href>/nextcloud/remote.php/dav/recognize/alice/faces/</d:href>
+            <d:propstat><d:prop><d:resourcetype/></d:prop>
+            <d:status>HTTP/1.1 403 Forbidden</d:status></d:propstat></d:response>
+            </d:multistatus>''', 207);
+          }
+          return jsonResponse([
+            {'id': 12, 'name': 'Sample', 'count': 2},
+          ]);
+        }),
+      );
+      addTearDown(client.close);
+      await expectLater(client.people(account), throwsA(isA<CloudException>()));
     },
   );
 

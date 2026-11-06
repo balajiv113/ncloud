@@ -15,7 +15,7 @@ import 'package:ncloud/nextcloud_client.dart';
 import 'package:ncloud/people_bubble.dart';
 
 import 'app_test.dart' show MemoryStore;
-import 'discovery_test.dart' show jsonResponse;
+import 'discovery_test.dart' show jsonResponse, recognizeFacesResponse;
 import 'nextcloud_client_test.dart' show account, multistatus;
 import 'preview_test.dart' show photo, png;
 
@@ -33,6 +33,16 @@ final samplePersonResponse = {
   'cover': samplePerson.cover,
   'cover_etag': samplePerson.coverEtag,
 };
+
+MockClient peopleTransport(
+  Future<http.Response> Function(http.Request) handler,
+) => MockClient((request) async {
+  if (request.method == 'PROPFIND' &&
+      request.url.path.endsWith('/recognize/${account.userId}/faces')) {
+    return recognizeFacesResponse(['Sample']);
+  }
+  return handler(request);
+});
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -53,7 +63,7 @@ void main() {
       final c = AppController(
         store: MemoryStore(),
         client: NextcloudClient(
-          transport: MockClient((_) {
+          transport: peopleTransport((_) {
             final response = Completer<http.Response>();
             responses.add(response);
             requested.complete();
@@ -87,7 +97,7 @@ void main() {
     final c = AppController(
       store: MemoryStore(),
       client: NextcloudClient(
-        transport: MockClient((_) async {
+        transport: peopleTransport((_) async {
           calls++;
           return status == 200
               ? jsonResponse([samplePersonResponse])
@@ -129,7 +139,7 @@ void main() {
       store: MemoryStore(),
       cache: cache,
       client: NextcloudClient(
-        transport: MockClient((_) {
+        transport: peopleTransport((_) {
           requested.complete();
           return response.future;
         }),
@@ -150,7 +160,7 @@ void main() {
       store: MemoryStore(),
       cache: cache,
       client: NextcloudClient(
-        transport: MockClient(
+        transport: peopleTransport(
           (_) async => jsonResponse([samplePersonResponse]),
         ),
       ),
@@ -204,7 +214,7 @@ void main() {
       final c = AppController(
         store: MemoryStore(),
         client: NextcloudClient(
-          transport: MockClient((_) async {
+          transport: peopleTransport((_) async {
             if (++calls == 1) return old.future;
             return jsonResponse([]);
           }),
@@ -223,43 +233,59 @@ void main() {
     },
   );
 
-  test('removed people purge their face from memory and disk', () async {
-    final dir = await Directory.systemTemp.createTemp('ncloud-removed-face-');
-    final cache = LocalCache(() async => dir);
-    var removed = false;
-    final c = AppController(
-      store: MemoryStore(),
-      cache: cache,
-      client: NextcloudClient(
-        transport: MockClient((request) async {
-          if (request.url.path.endsWith('/preview')) {
-            return http.Response.bytes(png, 200);
-          }
-          return jsonResponse(removed ? [] : [samplePersonResponse]);
-        }),
-      ),
-    )..account = account;
-    addTearDown(() async {
-      c.dispose();
-      await cache.close();
-      await dir.delete(recursive: true);
-    });
-    await c.loadPeople();
-    await c.personPreview(samplePerson);
-    final key = 'face-v1|${account.server}|${account.userId}|12';
-    expect(c.cachedPersonPreview(samplePerson), png);
-    removed = true;
-    await c.loadPeople(refresh: true);
-    expect(c.people, isEmpty);
-    expect(c.cachedPersonPreview(samplePerson), isNull);
-    expect(await cache.readThumbnail(key), isNull);
-    expect(
-      (await cache.readDocument(
-        'people-v1|${account.server}|${account.userId}',
-      ))!['people'],
-      isEmpty,
-    );
-  });
+  test(
+    'Photos removal purges a Memories-only face from memory and disk',
+    () async {
+      final dir = await Directory.systemTemp.createTemp('ncloud-removed-face-');
+      final cache = LocalCache(() async => dir);
+      var removed = false;
+      var davFailed = false;
+      final c = AppController(
+        store: MemoryStore(),
+        cache: cache,
+        client: NextcloudClient(
+          transport: MockClient((request) async {
+            if (request.method == 'PROPFIND') {
+              if (davFailed) return http.Response('', 500);
+              return recognizeFacesResponse(removed ? [] : ['Sample']);
+            }
+            if (request.url.path.endsWith('/preview')) {
+              return http.Response.bytes(png, 200);
+            }
+            return jsonResponse([samplePersonResponse]);
+          }),
+        ),
+      )..account = account;
+      addTearDown(() async {
+        c.dispose();
+        await cache.close();
+        await dir.delete(recursive: true);
+      });
+      await c.loadPeople();
+      await c.personPreview(samplePerson);
+      final key = 'face-v1|${account.server}|${account.userId}|12';
+      expect(c.cachedPersonPreview(samplePerson), png);
+      davFailed = true;
+      await c.loadPeople(refresh: true);
+      expect(c.people.single.id, 12);
+      expect(c.peopleError, isNotNull);
+      expect(c.cachedPersonPreview(samplePerson), png);
+      expect(await cache.readThumbnail(key), isNotNull);
+      davFailed = false;
+      removed = true;
+      await c.loadPeople(refresh: true);
+      expect(c.people, isEmpty);
+      expect(c.peopleError, isNull);
+      expect(c.cachedPersonPreview(samplePerson), isNull);
+      expect(await cache.readThumbnail(key), isNull);
+      expect(
+        (await cache.readDocument(
+          'people-v1|${account.server}|${account.userId}',
+        ))!['people'],
+        isEmpty,
+      );
+    },
+  );
 
   testWidgets('refresh removes a face whose server preview has disappeared', (
     tester,
@@ -269,7 +295,7 @@ void main() {
     final c = AppController(
       store: MemoryStore(),
       client: NextcloudClient(
-        transport: MockClient((request) async {
+        transport: peopleTransport((request) async {
           if (request.url.path.endsWith('/preview')) {
             previewCalls++;
             return gone
@@ -311,7 +337,7 @@ void main() {
     final c = AppController(
       store: MemoryStore(),
       client: NextcloudClient(
-        transport: MockClient((request) async {
+        transport: peopleTransport((request) async {
           if (request.url.path.endsWith('/preview')) {
             return ++previews == 1
                 ? old.future
@@ -344,7 +370,7 @@ void main() {
       store: MemoryStore(),
       cache: cache,
       client: NextcloudClient(
-        transport: MockClient((request) async {
+        transport: peopleTransport((request) async {
           if (request.url.path.endsWith('/preview')) {
             return gone
                 ? http.Response('', 404)
