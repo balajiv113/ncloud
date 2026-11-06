@@ -1,15 +1,104 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:ncloud/app_controller.dart';
+import 'package:ncloud/file_store.dart';
 import 'package:ncloud/library_screen.dart';
+import 'package:ncloud/local_cache.dart';
+import 'package:ncloud/media_listing.dart';
+import 'package:ncloud/models.dart';
 import 'package:ncloud/nextcloud_client.dart';
 
 import 'app_test.dart' show MemoryStore;
 import 'nextcloud_client_test.dart' show account, multistatus, responseEntry;
 
 void main() {
+  for (final folderSnapshot in [true, false]) {
+    test(
+      'Drive rejects an out-of-scope ${folderSnapshot ? 'folder snapshot with matching etag' : 'hydrated browse listing'}',
+      () async {
+        final root = await Directory.systemTemp.createTemp(
+          'ncloud-drive-cache-',
+        );
+        final cache = LocalCache(() async => root);
+        final store = FileStore()
+          ..putFolder(
+            ['Trips'],
+            [
+              const CloudFile(
+                path: ['Other', 'Summer'],
+                name: 'Summer',
+                isDirectory: true,
+                id: '42',
+              ),
+            ],
+            etag: '"unchanged"',
+          );
+        if (folderSnapshot) {
+          await cache.writeLibrary(
+            'library-v1|${account.server}|${account.userId}',
+            store,
+          );
+        } else {
+          final key =
+              'browse-v4|${account.server}|${account.userId}|1|false|Trips|';
+          final files = store.where((_) => true);
+          await cache.writeListing(key, files);
+          final listing = MediaListing()..add(FileStore(), files);
+          await cache.writeDocument(key, listing.toJson());
+        }
+        var walks = 0;
+        final controller =
+            AppController(
+                store: MemoryStore(),
+                cache: cache,
+                client: NextcloudClient(
+                  transport: MockClient((request) async {
+                    if (request.headers['Depth'] == '1') walks++;
+                    return http.Response(
+                      multistatus(
+                        responseEntry(
+                              href:
+                                  '/nextcloud/remote.php/dav/files/alice/Trips/',
+                              properties: '<d:getetag>"unchanged"</d:getetag>',
+                            ) +
+                            (request.headers['Depth'] == '1'
+                                ? responseEntry(
+                                    href:
+                                        '/nextcloud/remote.php/dav/files/alice/Trips/Summer/',
+                                  ).replaceFirst(
+                                    '<d:resourcetype/>',
+                                    '<d:resourcetype><d:collection/></d:resourcetype>',
+                                  )
+                                : ''),
+                      ),
+                      207,
+                    );
+                  }),
+                ),
+              )
+              ..account = account
+              ..tab = 1
+              ..directory = ['Trips'];
+        try {
+          await controller.load(refresh: false);
+          expect(controller.error, isNull);
+          expect(walks, 1);
+          expect(controller.items.map((file) => file.path), [
+            ['Trips', 'Summer'],
+          ]);
+        } finally {
+          controller.dispose();
+          await cache.close();
+          await root.delete(recursive: true);
+        }
+      },
+    );
+  }
+
   testWidgets(
     'iOS Drive displays unique direct children and opens the correct folder',
     (tester) async {

@@ -554,9 +554,11 @@ class LibraryDatabase {
           [account, key, FileStore.maxFiles],
         );
         if (members.any((row) => row['file_key'] == null)) return null;
+        final files = members.map(_file).toList();
+        if (!FileStore.validChildren(folder, files)) return null;
         await _touch(db, key);
         return (
-          files: members.map(_file).toList(),
+          files: files,
           etag: payload['etag'] as String?,
           updated: DateTime.parse(payload['updated'] as String),
         );

@@ -829,6 +829,7 @@ class AppController extends ChangeNotifier {
       items = previous != null
           ? fileStore.resolve(previous.keys)
           : _seed(currentTab, path, native);
+      if (currentTab == 1 && !FileStore.validChildren(path, items)) items = [];
     }
     _visibleListingKey = listingKey;
     notifyListeners();
@@ -888,18 +889,6 @@ class AppController extends ChangeNotifier {
         if (document != null) previous = MediaListing.fromJson(document);
       }
       var known = previous == null ? null : fileStore.resolve(previous.keys);
-      if (currentTab == 1 &&
-          known != null &&
-          (known.map((f) => f.key).toSet().length != known.length ||
-              known.any(
-                (f) =>
-                    f.path.length != path.length + 1 ||
-                    !pathStartsWith(f.path, path),
-              ))) {
-        previous = null;
-        known = null;
-        items = [];
-      }
       if (previous?.days != null) timelineIndexAvailable ??= true;
       if (previous != null &&
           known!.length != previous.keys.length &&
@@ -910,6 +899,13 @@ class AppController extends ChangeNotifier {
           fileStore.putAll(persisted);
           known = fileStore.resolve(previous.keys);
         }
+      }
+      if (currentTab == 1 &&
+          known != null &&
+          !FileStore.validChildren(path, known)) {
+        previous = null;
+        known = null;
+        items = [];
       }
       if (previous != null && known!.length == previous.keys.length) {
         items = known;

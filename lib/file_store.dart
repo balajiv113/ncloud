@@ -113,6 +113,12 @@ class FileStore {
     for (final key in keys) ?_files[key],
   ];
 
+  static bool validChildren(List<String> path, List<CloudFile> files) =>
+      files.map((f) => f.key).toSet().length == files.length &&
+      files.every(
+        (f) => f.path.length == path.length + 1 && pathStartsWith(f.path, path),
+      );
+
   /// Records the direct children of [path], as returned by the server.
   void putFolder(List<String> path, List<CloudFile> children, {String? etag}) {
     putAll(children);
@@ -139,12 +145,7 @@ class FileStore {
     if (index == null) return null;
     if (fresh && !_folderFresh(key, index)) return null;
     final files = resolve(index.children);
-    if (files.length != index.children.length ||
-        files.map((f) => f.key).toSet().length != files.length ||
-        files.any(
-          (f) =>
-              f.path.length != path.length + 1 || !pathStartsWith(f.path, path),
-        )) {
+    if (files.length != index.children.length || !validChildren(path, files)) {
       return null;
     }
     return files;
