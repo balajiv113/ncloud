@@ -530,31 +530,31 @@ private final class FakeAlbumScheduler: AlbumTaskScheduler {
     if let failure = failure { throw failure }
     requests.append(request)
   }
-
-  private final class NativeTestMessenger: NSObject, FlutterBinaryMessenger {
-    var handlers: [String: FlutterBinaryMessageHandler] = [:]
-
-    func send(onChannel channel: String, message: Data?) {}
-    func send(onChannel channel: String, message: Data?, binaryReply callback: FlutterBinaryReply?) {
-      callback?(nil)
-    }
-    func setMessageHandlerOnChannel(_ channel: String,
-                                   binaryMessageHandler handler: FlutterBinaryMessageHandler?) -> FlutterBinaryMessengerConnection {
-      handlers[channel] = handler
-      return 1
-    }
-    func cleanUpConnection(_ connection: FlutterBinaryMessengerConnection) { handlers.removeAll() }
-
-    func invoke(_ method: String, account: String) throws -> Any? {
-      let handler = try XCTUnwrap(handlers["app.ncloud/folder_sync"])
-      let codec = FlutterStandardMethodCodec.sharedInstance()
-      let message = codec.encodeMethodCall(FlutterMethodCall(methodName: method, arguments: ["account": account]))
-      var replied = false
-      var response: Data?
-      handler(message) { response = $0; replied = true }
-      XCTAssertTrue(replied)
-      return try codec.decodeEnvelope(XCTUnwrap(response))
-    }
-  }
   func cancel(identifier: String) { cancelled.append(identifier) }
+}
+
+private final class NativeTestMessenger: NSObject, FlutterBinaryMessenger {
+  var handlers: [String: FlutterBinaryMessageHandler] = [:]
+
+  func send(onChannel channel: String, message: Data?) {}
+  func send(onChannel channel: String, message: Data?, binaryReply callback: FlutterBinaryReply?) {
+    callback?(nil)
+  }
+  func setMessageHandlerOnChannel(_ channel: String,
+                                 binaryMessageHandler handler: FlutterBinaryMessageHandler?) -> FlutterBinaryMessengerConnection {
+    handlers[channel] = handler
+    return 1
+  }
+  func cleanUpConnection(_ connection: FlutterBinaryMessengerConnection) { handlers.removeAll() }
+
+  func invoke(_ method: String, account: String) throws -> Any? {
+    let handler = try XCTUnwrap(handlers["app.ncloud/folder_sync"])
+    let codec = FlutterStandardMethodCodec.sharedInstance()
+    let message = codec.encode(FlutterMethodCall(methodName: method, arguments: ["account": account]))
+    var replied = false
+    var response: Data?
+    handler(message) { response = $0; replied = true }
+    XCTAssertTrue(replied)
+    return try codec.decodeEnvelope(XCTUnwrap(response))
+  }
 }

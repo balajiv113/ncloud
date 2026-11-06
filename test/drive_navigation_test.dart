@@ -15,10 +15,12 @@ void main() {
     (tester) async {
       final requests = <String>[];
       const root = '/nextcloud/remote.php/dav/files/alice';
-      String folder(String path) => responseEntry(
-        href: '$root/$path/',
-        properties: '<d:resourcetype><d:collection/></d:resourcetype>',
-      );
+      String folder(String path) => responseEntry(href: '$root/$path/')
+          .replaceFirst(
+            '<d:resourcetype/>',
+            '<d:resourcetype><d:collection/></d:resourcetype>',
+          )
+          .replaceFirst('image/jpeg', 'httpd/unix-directory');
       final client = NextcloudClient(
         transport: MockClient((request) async {
           if (request.method != 'PROPFIND') return http.Response('', 404);

@@ -44,7 +44,7 @@ jobs:
       - name: Restore Android SDK and NDK
         uses: ./.github/actions/android-toolchain
       - run: flutter pub get
-      - run: dart format --output=none --set-exit-if-changed lib test integration_test
+      - run: dart format --output=none --set-exit-if-changed lib test integration_test test_driver
       - run: flutter analyze
       - run: flutter test
       - run: flutter test test/ui_capture_test.dart --dart-define=CAPTURE_UI=true
@@ -278,7 +278,8 @@ jobs:
             | base64 --decode > "$RUNNER_TEMP/ncloud-probe.png"
           xcrun simctl addmedia "$device" "$RUNNER_TEMP/ncloud-probe.png"
           xcrun simctl privacy "$device" grant photos app.ncloud.ncloud
-          flutter test integration_test/ios_album_drive_test.dart -d "$device"
+          flutter drive --target integration_test/ios_album_drive_test.dart \
+            --driver test_driver/ios_album_drive_test.dart -d "$device"
       - uses: actions/upload-artifact@v4
         with:
           name: ios-dependency-lock
