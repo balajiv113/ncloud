@@ -269,7 +269,9 @@ jobs:
           test -n "$device" && test "$device" != null
           xcodebuild -workspace ios/Runner.xcworkspace -scheme Runner \
             -configuration Debug -destination "id=$device" \
-            -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO test -quiet
+            -parallel-testing-enabled NO -only-testing:RunnerTests \
+            -resultBundlePath "$RUNNER_TEMP/ncloud-ios-native.xcresult" \
+            CODE_SIGNING_ALLOWED=NO test -quiet
       - name: Verify iOS Drive navigation and real PhotoKit album exports
         timeout-minutes: 15
         run: |
@@ -280,9 +282,13 @@ jobs:
           xcrun simctl addmedia "$device" "$RUNNER_TEMP/ncloud-probe.png"
           flutter build ios --simulator --debug --no-pub \
             --target integration_test/ios_album_drive_test.dart
-          xcrun simctl install "$device" build/ios/iphonesimulator/Runner.app
-          xcrun simctl privacy "$device" grant photos app.ncloud.ncloud
-          xcrun simctl privacy "$device" grant photos-add app.ncloud.ncloud
+          xcodebuild -workspace ios/Runner.xcworkspace -scheme Runner \
+            -configuration Debug -destination "id=$device" \
+            -parallel-testing-enabled NO -only-testing:RunnerUITests \
+            -resultBundlePath "$RUNNER_TEMP/ncloud-ios-photos-ui.xcresult" \
+            FLUTTER_TARGET="$GITHUB_WORKSPACE/integration_test/ios_album_drive_test.dart" \
+            CODE_SIGNING_ALLOWED=NO test -quiet
+          xcrun simctl bootstatus "$device" -b
           xcrun simctl launch "$device" app.ncloud.ncloud \
             --enable-checked-mode --verify-entry-points \
             --vm-service-port=8585 --disable-service-auth-codes
@@ -293,6 +299,13 @@ jobs:
           curl -fsS http://127.0.0.1:8585/getVM > /dev/null
           VM_SERVICE_URL=http://127.0.0.1:8585 \
             dart run test_driver/ios_album_drive_test.dart
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ios-native-test-results
+          path: |
+            ${{ runner.temp }}/ncloud-ios-native.xcresult
+            ${{ runner.temp }}/ncloud-ios-photos-ui.xcresult
       - uses: actions/upload-artifact@v4
         with:
           name: ios-dependency-lock

@@ -22,6 +22,7 @@ Future<void> main() async {
   late AppController controller;
   late LocalCache cache;
   late Directory cacheRoot;
+  final permissionStatus = ValueNotifier<String>('iOS integration');
   enableFlutterDriverExtension(
     handler: (message) async {
       if (message == 'driveState') {
@@ -45,6 +46,7 @@ Future<void> main() async {
       );
     },
   );
+  WidgetsBinding.instance.ensureSemantics();
   const root = '/nextcloud/remote.php/dav/files/alice';
   String folder(String path) => responseEntry(href: '$root/$path/')
       .replaceFirst(
@@ -98,9 +100,34 @@ Future<void> main() async {
   await controller.load();
   runApp(
     MaterialApp(
-      home: ListenableBuilder(
-        listenable: controller,
-        builder: (_, _) => LibraryScreen(controller: controller),
+      home: Scaffold(
+        appBar: AppBar(
+          title: ValueListenableBuilder<String>(
+            valueListenable: permissionStatus,
+            builder: (_, value, _) => Text(value),
+          ),
+          actions: [
+            Semantics(
+              identifier: 'ios-photos-permission',
+              child: TextButton(
+                onPressed: () async {
+                  permissionStatus.value = 'Requesting Photos access';
+                  try {
+                    await NativeFolderAccess().albums();
+                    permissionStatus.value = 'Photos access ready';
+                  } catch (error) {
+                    permissionStatus.value = 'Photos access failed: $error';
+                  }
+                },
+                child: const Text('Choose Photos album'),
+              ),
+            ),
+          ],
+        ),
+        body: ListenableBuilder(
+          listenable: controller,
+          builder: (_, _) => LibraryScreen(controller: controller),
+        ),
       ),
     ),
   );
