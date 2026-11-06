@@ -274,20 +274,24 @@ jobs:
             -derivedDataPath "$RUNNER_TEMP/ncloud-ios-simulator" \
             FLUTTER_TARGET="$GITHUB_WORKSPACE/integration_test/ios_album_drive_test.dart" \
             CODE_SIGNING_ALLOWED=NO -quiet
-          test_bundle=$(find "$RUNNER_TEMP/ncloud-ios-simulator/Build/Products" \
-            -maxdepth 1 -name '*.xctestrun' -print -quit)
-          test -n "$test_bundle"
           echo "device=$device" >> "$GITHUB_OUTPUT"
-          echo "test_bundle=$test_bundle" >> "$GITHUB_OUTPUT"
       - name: Run iOS native tests without rebuilding
-        timeout-minutes: 5
+        timeout-minutes: 10
         run: |
+          xcrun simctl bootstatus "${{ steps.ios_simulator.outputs.device }}" -b
           xcodebuild test-without-building \
-            -xctestrun "${{ steps.ios_simulator.outputs.test_bundle }}" \
+            -workspace ios/Runner.xcworkspace -scheme Runner \
+            -configuration Debug \
+            -derivedDataPath "$RUNNER_TEMP/ncloud-ios-simulator" \
             -destination "id=${{ steps.ios_simulator.outputs.device }}" \
             -parallel-testing-enabled NO -only-testing:RunnerTests \
             -resultBundlePath "$RUNNER_TEMP/ncloud-ios-native.xcresult" \
             -quiet
+          xcrun xcresulttool get test-results summary \
+            --path "$RUNNER_TEMP/ncloud-ios-native.xcresult" \
+            | tee "$RUNNER_TEMP/ncloud-ios-native-summary.json"
+          jq -e '.passedTests >= 23 and .failedTests == 0 and .skippedTests == 0' \
+            "$RUNNER_TEMP/ncloud-ios-native-summary.json"
       - name: Run iOS Photos UI and Drive checks without rebuilding
         timeout-minutes: 8
         run: |
@@ -297,11 +301,18 @@ jobs:
             | base64 --decode > "$RUNNER_TEMP/ncloud-probe.png"
           xcrun simctl addmedia "$device" "$RUNNER_TEMP/ncloud-probe.png"
           xcodebuild test-without-building \
-            -xctestrun "${{ steps.ios_simulator.outputs.test_bundle }}" \
+            -workspace ios/Runner.xcworkspace -scheme Runner \
+            -configuration Debug \
+            -derivedDataPath "$RUNNER_TEMP/ncloud-ios-simulator" \
             -destination "id=$device" \
             -parallel-testing-enabled NO -only-testing:RunnerUITests \
             -resultBundlePath "$RUNNER_TEMP/ncloud-ios-photos-ui.xcresult" \
             -quiet
+          xcrun xcresulttool get test-results summary \
+            --path "$RUNNER_TEMP/ncloud-ios-photos-ui.xcresult" \
+            | tee "$RUNNER_TEMP/ncloud-ios-photos-ui-summary.json"
+          jq -e '.passedTests >= 1 and .failedTests == 0 and .skippedTests == 0' \
+            "$RUNNER_TEMP/ncloud-ios-photos-ui-summary.json"
           xcrun simctl bootstatus "$device" -b
           xcrun simctl launch "$device" app.ncloud.ncloud \
             --enable-checked-mode --verify-entry-points \
@@ -320,6 +331,8 @@ jobs:
           path: |
             ${{ runner.temp }}/ncloud-ios-native.xcresult
             ${{ runner.temp }}/ncloud-ios-photos-ui.xcresult
+            ${{ runner.temp }}/ncloud-ios-native-summary.json
+            ${{ runner.temp }}/ncloud-ios-photos-ui-summary.json
       - uses: actions/upload-artifact@v4
         with:
           name: ios-dependency-lock
