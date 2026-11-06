@@ -1,0 +1,16 @@
+name: ncloud_folder_access
+description: Native folder access registered in UI and headless Flutter engines.
+version: 0.1.0
+publish_to: none
+environment:
+  sdk: ^3.10.0
+  flutter: '>=3.38.0'
+dependencies:
+  flutter:
+    sdk: flutter
+flutter:
+  plugin:
+    platforms:
+      android:
+        package: app.ncloud.folders
+        pluginClass: FolderAccessPlugin

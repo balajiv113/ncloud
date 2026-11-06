@@ -20,6 +20,9 @@ dependencies:
   flutter_map: ^8.2.2
   latlong2: ^0.9.1
   sqflite: ^2.4.2
+  workmanager: 0.10.10
+  ncloud_folder_access:
+    path: packages/ncloud_folder_access
 
 dev_dependencies:
   flutter_test:

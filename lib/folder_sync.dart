@@ -12,6 +12,8 @@ import 'models.dart';
 import 'cloud_backend.dart';
 import 'sync_rules.dart';
 import 'sync_background.dart';
+import 'sync_schedule.dart';
+import 'sync_run_lock.dart';
 
 enum SyncMode { backup, download, merge }
 
@@ -82,6 +84,20 @@ abstract interface class FolderAccess {
 
 class NativeFolderAccess implements FolderAccess {
   static const channel = MethodChannel('app.ncloud/folder_sync');
+
+  Future<void> requireWorkerNotification(int id) async {
+    for (var attempt = 0; attempt < 20; attempt++) {
+      if (await channel.invokeMethod<bool>('workerNotification', {'id': id}) ==
+          true) {
+        return;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+    throw PlatformException(
+      code: 'scheduled_background',
+      message: 'Scheduled backup foreground notification is unavailable.',
+    );
+  }
 
   @override
   Future<SyncConditions> conditions() async {
@@ -185,6 +201,8 @@ class FolderPair {
     this.rules = const SyncRules.all(),
     this.uploadConcurrency = 1,
     this.background = false,
+    this.schedule,
+    this.revision = '',
   });
   final String id;
   final String account;
@@ -199,6 +217,8 @@ class FolderPair {
   final SyncRules rules;
   final int uploadConcurrency;
   final bool background;
+  final BackupSchedule? schedule;
+  final String revision;
 
   bool get includesSourceFolder => mode != SyncMode.download;
 
@@ -223,6 +243,8 @@ class FolderPair {
     'rules': rules.toJson(),
     'uploadConcurrency': uploadConcurrency,
     'background': background,
+    'schedule': schedule?.toJson(),
+    'revision': revision,
   };
 
   factory FolderPair.fromJson(Map<String, dynamic> value) => FolderPair(
@@ -243,6 +265,12 @@ class FolderPair {
     rules: SyncRules.fromJson((value['rules'] as Map).cast<String, dynamic>()),
     uploadConcurrency: value['uploadConcurrency'] as int,
     background: value['background'] as bool,
+    schedule: value['schedule'] == null
+        ? null
+        : BackupSchedule.fromJson(
+            (value['schedule'] as Map).cast<String, dynamic>(),
+          ),
+    revision: value['revision'] as String? ?? '',
   );
 }
 
@@ -265,12 +293,20 @@ class SyncJournal {
     return _database = await (factory ?? databaseFactory).openDatabase(
       location,
       options: OpenDatabaseOptions(
-        version: 1,
+        version: 2,
+        onConfigure: (db) async {
+          await db.execute('PRAGMA busy_timeout=5000');
+          await db.rawQuery('PRAGMA journal_mode=WAL');
+        },
+        onUpgrade: (db, oldVersion, _) async {
+          if (oldVersion < 2) await _createScheduleTables(db);
+        },
         onCreate: (db, _) async {
           await db.execute(
             'CREATE TABLE pairs (id TEXT PRIMARY KEY, account TEXT NOT NULL, '
             'payload TEXT NOT NULL)',
           );
+          await _createScheduleTables(db);
           await db.execute(
             'CREATE TABLE receipts (pair TEXT NOT NULL, side TEXT NOT NULL, '
             'path TEXT NOT NULL, version TEXT NOT NULL, target TEXT NOT NULL, '
@@ -280,6 +316,85 @@ class SyncJournal {
       ),
     );
   }
+
+  static Future<void> _createScheduleTables(Database db) async {
+    await db.execute(
+      'CREATE TABLE run_state (pair TEXT PRIMARY KEY, payload TEXT NOT NULL)',
+    );
+    await db.execute(
+      'CREATE TABLE sync_sessions (account TEXT PRIMARY KEY, enabled INTEGER NOT NULL)',
+    );
+  }
+
+  Future<void> enableAccount(String account, bool enabled) async =>
+      (await db).insert('sync_sessions', {
+        'account': account,
+        'enabled': enabled ? 1 : 0,
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+
+  Future<bool> accountEnabled(String account) async => (await (await db).query(
+    'sync_sessions',
+    where: 'account=? AND enabled=1',
+    whereArgs: [account],
+  )).isNotEmpty;
+
+  Future<FolderPair?> pair(String id) async {
+    final rows = await (await db).query(
+      'pairs',
+      where: 'id=?',
+      whereArgs: [id],
+    );
+    return rows.isEmpty
+        ? null
+        : FolderPair.fromJson(
+            (jsonDecode(rows.single['payload'] as String) as Map)
+                .cast<String, dynamic>(),
+          );
+  }
+
+  Future<Map<String, dynamic>> state(String id) async {
+    final rows = await (await db).query(
+      'run_state',
+      where: 'pair=?',
+      whereArgs: [id],
+    );
+    return rows.isEmpty
+        ? {}
+        : (jsonDecode(rows.single['payload'] as String) as Map)
+              .cast<String, dynamic>();
+  }
+
+  Future<void> writeState(String id, Map<String, dynamic> changes) async =>
+      (await db).transaction((txn) async {
+        final rows = await txn.query(
+          'run_state',
+          where: 'pair=?',
+          whereArgs: [id],
+        );
+        final old = rows.isEmpty
+            ? <String, dynamic>{}
+            : (jsonDecode(rows.single['payload'] as String) as Map)
+                  .cast<String, dynamic>();
+        await txn.insert('run_state', {
+          'pair': id,
+          'payload': jsonEncode({...old, ...changes}),
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
+      });
+
+  Future<void> completed(String id, DateTime time) async =>
+      (await db).transaction((txn) async {
+        final rows = await txn.query('pairs', where: 'id=?', whereArgs: [id]);
+        if (rows.isEmpty) return;
+        final payload = (jsonDecode(rows.single['payload'] as String) as Map)
+            .cast<String, dynamic>();
+        payload['lastRun'] = time.toIso8601String();
+        await txn.update(
+          'pairs',
+          {'payload': jsonEncode(payload)},
+          where: 'id=?',
+          whereArgs: [id],
+        );
+      });
 
   Future<List<FolderPair>> pairs(String account) async {
     final result = <FolderPair>[];
@@ -352,6 +467,7 @@ class SyncJournal {
   });
 
   Future<void> forget(String id) async => (await db).transaction((txn) async {
+    await txn.delete('run_state', where: 'pair=?', whereArgs: [id]);
     await txn.delete('receipts', where: 'pair=?', whereArgs: [id]);
     await txn.delete('pairs', where: 'id=?', whereArgs: [id]);
   });
@@ -375,9 +491,16 @@ class FolderSyncController extends ChangeNotifier {
     SyncJournal? journal,
     bool? android,
     SyncBackground? backgroundService,
+    BackupScheduler? scheduler,
+    SyncRunLock? runLock,
+    this.prepareExecution,
   }) : access = access ?? NativeFolderAccess(),
        journal = journal ?? SyncJournal(),
        backgroundService = backgroundService ?? NativeSyncBackground(),
+       scheduler = scheduler ?? UnsupportedBackupScheduler(),
+       runLock =
+           runLock ??
+           (Platform.isAndroid ? NativeSyncRunLock() : InProcessSyncRunLock()),
        android = android ?? Platform.isAndroid;
 
   final CloudBackend client;
@@ -386,6 +509,10 @@ class FolderSyncController extends ChangeNotifier {
   final SyncJournal journal;
   final bool android;
   final SyncBackground backgroundService;
+  final BackupScheduler scheduler;
+  final SyncRunLock runLock;
+  final Future<void> Function()? prepareExecution;
+  final Map<String, Map<String, dynamic>> results = {};
   List<FolderPair> pairs = [];
   String? error;
   String? activeId;
@@ -398,10 +525,10 @@ class FolderSyncController extends ChangeNotifier {
   bool _backgroundRequested = false;
   bool _stop = false;
   bool _disposed = false;
-  Timer? _timer;
   Future<void>? _running;
   Future<void>? _loading;
   String? _owner;
+  int _sessionGeneration = 0;
 
   void _notify() {
     if (!_disposed) notifyListeners();
@@ -413,10 +540,8 @@ class FolderSyncController extends ChangeNotifier {
   Future<void> _load() async {
     final session = account();
     if (session == null) return;
-    if (_owner == syncAccount(session)) {
-      _schedule();
-      return;
-    }
+    final generation = _sessionGeneration;
+    if (_owner == syncAccount(session)) return;
     if (_owner != null && _owner != syncAccount(session)) {
       pairs = [];
       _owner = null;
@@ -427,13 +552,24 @@ class FolderSyncController extends ChangeNotifier {
     }
     try {
       final saved = await journal.pairs(syncAccount(session));
-      if (syncAccount(session) != _accountKey || _disposed) return;
+      if (syncAccount(session) != _accountKey ||
+          _disposed ||
+          generation != _sessionGeneration) {
+        return;
+      }
       _owner = _accountKey;
       pairs = saved;
+      await journal.enableAccount(syncAccount(session), true);
+      for (final pair in pairs) {
+        results[pair.id] = await journal.state(pair.id);
+        await _register(pair);
+      }
       error = null;
-      _schedule();
-    } on Object {
-      error = 'Could not read sync pairs. Check device storage and retry.';
+    } on Object catch (e) {
+      _owner = null;
+      error =
+          'Could not load folder settings or register schedules (${e.runtimeType}). '
+          'Check storage and notification settings, then reopen Folder sync.';
     }
     _notify();
   }
@@ -469,6 +605,7 @@ class FolderSyncController extends ChangeNotifier {
     int uploadConcurrency = 1,
     bool background = false,
     FolderPair? replacing,
+    BackupSchedule? schedule,
   }) async {
     if (_running != null) {
       throw StateError('Pause the current transfer before editing.');
@@ -483,6 +620,11 @@ class FolderSyncController extends ChangeNotifier {
       throw StateError('This folder configuration is no longer available.');
     }
     _validateRules(rules, uploadConcurrency);
+    if (schedule != null && (!scheduler.supported || mode != SyncMode.backup)) {
+      throw const FormatException(
+        'Schedules currently support Android upload-only backups.',
+      );
+    }
     bool overlaps(List<String> a, List<String> b) =>
         a.length <= b.length &&
         List.generate(a.length, (i) => a[i] == b[i]).every((v) => v);
@@ -516,19 +658,46 @@ class FolderSyncController extends ChangeNotifier {
       rules: rules,
       uploadConcurrency: uploadConcurrency,
       background: android && background,
+      schedule: schedule,
+      revision: _id(),
     );
-    await journal.save(pair, replacing: replacing);
-    if (replacing != null) pairs.removeWhere((p) => p.id == replacing.id);
-    pairs.add(pair);
-    _schedule();
+    if (!await runLock.acquire(owner)) {
+      throw StateError('A backup is running. Pause it and retry editing.');
+    }
+    try {
+      await journal.save(pair, replacing: replacing);
+      if (replacing != null) pairs.removeWhere((p) => p.id == replacing.id);
+      pairs.add(pair);
+      _notify();
+      if (replacing != null) await scheduler.cancel(replacing.id);
+      await _register(pair);
+    } on Exception catch (e) {
+      _owner = null;
+      error =
+          'Schedule registration failed (${e.runtimeType}). Settings are saved; reopen Folder sync to retry.';
+      _notify();
+      rethrow;
+    } finally {
+      await runLock.release(owner);
+    }
     _notify();
   }
 
   Future<void> forget(FolderPair pair) async {
     await pause();
-    await journal.forget(pair.id);
+    await journal.writeState(pair.id, {'cancel': true});
+    await scheduler.cancel(pair.id);
+    if (!await runLock.acquire(pair.account)) {
+      throw StateError(
+        'Backup is stopping. Retry removing after its current file.',
+      );
+    }
+    try {
+      await journal.forget(pair.id);
+    } finally {
+      await runLock.release(pair.account);
+    }
     pairs.removeWhere((value) => value.id == pair.id);
-    _schedule();
     _notify();
   }
 
@@ -556,6 +725,8 @@ class FolderSyncController extends ChangeNotifier {
       rules: pair.rules,
       uploadConcurrency: pair.uploadConcurrency,
       background: pair.background,
+      schedule: pair.schedule,
+      revision: pair.revision,
     );
     await journal.save(updated);
     pairs[pairs.indexWhere((value) => value.id == pair.id)] = updated;
@@ -572,7 +743,6 @@ class FolderSyncController extends ChangeNotifier {
       pair.repeat = old;
       rethrow;
     }
-    _schedule();
     _notify();
   }
 
@@ -580,25 +750,23 @@ class FolderSyncController extends ChangeNotifier {
     _foreground = value;
     if (!value) {
       if (!_backgroundRequested) _stop = true;
-      _timer?.cancel();
-      _timer = null;
     } else {
-      _schedule();
+      unawaited(refreshResults());
     }
   }
 
-  void _schedule() {
-    _timer?.cancel();
-    if (_disposed || !_foreground || !android || !pairs.any((p) => p.repeat)) {
-      return;
+  Future<void> _register(FolderPair pair) async {
+    if (pair.schedule case final schedule?) {
+      await scheduler.put(
+        pair.id,
+        pair.revision,
+        schedule,
+        wifiOnly: pair.wifiOnly,
+        chargingOnly: pair.chargingOnly,
+      );
+    } else {
+      await scheduler.cancel(pair.id);
     }
-    _timer = Timer(const Duration(minutes: 15), () async {
-      for (final pair in List.of(pairs)) {
-        if (!_foreground || _disposed || _accountKey != pair.account) break;
-        if (pair.repeat && activeId == null) await run(pair);
-      }
-      _schedule();
-    });
   }
 
   Future<void> pause() async {
@@ -606,13 +774,60 @@ class FolderSyncController extends ChangeNotifier {
     await _running;
   }
 
+  void requestPause() {
+    _stop = true;
+  }
+
+  Future<void> pauseScheduled(FolderPair pair) async {
+    await journal.writeState(pair.id, {'cancel': true});
+    await refreshResults();
+  }
+
+  bool _refreshingResults = false;
+  Future<void> refreshResults() async {
+    if (_refreshingResults || _disposed) return;
+    _refreshingResults = true;
+    try {
+      for (final pair in List.of(pairs)) {
+        var state = await journal.state(pair.id);
+        if (state['status'] == 'running' &&
+            activeId != pair.id &&
+            await runLock.acquire(pair.account)) {
+          try {
+            await journal.writeState(pair.id, {
+              'status': 'interrupted',
+              'error':
+                  'The previous backup was interrupted. Completed transfers are saved.',
+            });
+            state = await journal.state(pair.id);
+          } finally {
+            await runLock.release(pair.account);
+          }
+        }
+        results[pair.id] = state;
+        pair.lastRun = (await journal.pair(pair.id))?.lastRun;
+      }
+      _notify();
+    } on Exception catch (e) {
+      error = 'Could not read backup results (${e.runtimeType}).';
+      _notify();
+    } finally {
+      _refreshingResults = false;
+    }
+  }
+
   Future<void> disconnect() async {
+    if (_disposed) return;
     _foreground = false;
-    _timer?.cancel();
+    _sessionGeneration++;
+    await _loading;
+    final owner = _owner ?? _accountKey;
+    if (owner != null) await journal.enableAccount(owner, false);
     await pause();
-    for (final pair in pairs) {
-      pair.repeat = false;
-      await journal.save(pair);
+    for (final pair
+        in owner == null ? <FolderPair>[] : await journal.pairs(owner)) {
+      await journal.writeState(pair.id, {'cancel': true});
+      await scheduler.cancel(pair.id);
     }
     pairs = [];
     _owner = null;
@@ -622,19 +837,33 @@ class FolderSyncController extends ChangeNotifier {
     _notify();
   }
 
-  Future<void> run(FolderPair pair) async {
-    if (_running != null || _disposed || !_foreground) return;
+  Future<void> run(FolderPair pair, {bool headless = false}) async {
+    if (_running != null || _disposed || (!_foreground && !headless)) return;
     final session = account();
     if (session == null || syncAccount(session) != pair.account) return;
     _stop = false;
-    _backgroundRequested = android && pair.background;
+    _backgroundRequested = !headless && android && pair.background;
     activeId = pair.id;
     statusPairId = pair.id;
     error = null;
     transferred = conflicts = 0;
     _notify();
     String? backgroundReason;
+    var locked = false;
     final task = () async {
+      locked = await runLock.acquire(pair.account);
+      if (!locked) {
+        throw StateError('Another manual or scheduled backup is running.');
+      }
+      await journal.writeState(pair.id, {
+        'status': 'running',
+        'started': DateTime.now().toUtc().toIso8601String(),
+        'finished': null,
+        'error': null,
+        'transferred': 0,
+        'cancel': false,
+      });
+      await prepareExecution?.call();
       if (_backgroundRequested) {
         await backgroundService.start((reason) {
           backgroundReason = reason;
@@ -648,7 +877,7 @@ class FolderSyncController extends ChangeNotifier {
     try {
       await task;
       pair.lastRun = DateTime.now();
-      await journal.save(pair);
+      await journal.completed(pair.id, pair.lastRun!);
       phase = 'Up to date · no files deleted';
     } on SyncStopped {
       phase = 'Paused · completed transfers are saved';
@@ -656,6 +885,7 @@ class FolderSyncController extends ChangeNotifier {
     } on Object catch (e) {
       error = switch (e) {
         CloudException() => e.message,
+        StateError() => e.message.toString(),
         FormatException() => e.message,
         MissingPluginException() =>
           'The native folder-sync service is unavailable. Install the latest ncloud build '
@@ -679,6 +909,9 @@ class FolderSyncController extends ChangeNotifier {
           'background_start' =>
             'Android could not start the upload service. Open ncloud and retry, '
                 'or turn off Continue in background.',
+          'scheduled_background' =>
+            'Android could not show the scheduled backup notification. '
+                'Allow Scheduled folder backups notifications and background activity in device Settings.',
           _ =>
             'The device folder operation failed (${e.code}). '
                 'Existing files were not overwritten. Check the selected folder provider.',
@@ -707,10 +940,30 @@ class FolderSyncController extends ChangeNotifier {
         }
       }
       _backgroundActive = _backgroundRequested = false;
-      activeId = null;
-      _running = null;
-      _schedule();
-      _notify();
+      try {
+        if (locked) {
+          try {
+            await journal.writeState(pair.id, {
+              'status': error != null
+                  ? 'error'
+                  : _stop
+                  ? 'paused'
+                  : 'success',
+              'phase': phase,
+              'error': error,
+              'transferred': transferred,
+              'finished': DateTime.now().toUtc().toIso8601String(),
+            });
+            results[pair.id] = await journal.state(pair.id);
+          } finally {
+            await runLock.release(pair.account);
+          }
+        }
+      } finally {
+        activeId = null;
+        _running = null;
+        _notify();
+      }
     }
   }
 
@@ -908,6 +1161,7 @@ class FolderSyncController extends ChangeNotifier {
           }
           await prepare(target);
           _check(pair);
+          await _conditions(pair);
           await client.upload(
             session,
             [...pair.cloudRoot, ...target],
@@ -932,6 +1186,10 @@ class FolderSyncController extends ChangeNotifier {
           await journal.confirm(pair.id, path, file.version, target, version);
           remote[_key(target)] = (target, confirmed);
           transferred++;
+          await journal.writeState(pair.id, {
+            'transferred': transferred,
+            'phase': phase,
+          });
           _notify();
         } finally {
           if (staged != null) await source.discard(staged);
@@ -1002,6 +1260,10 @@ class FolderSyncController extends ChangeNotifier {
           await journal.confirm(pair.id, target, saved.version, path, version);
           local[_key(target)] = (target, saved);
           transferred++;
+          await journal.writeState(pair.id, {
+            'transferred': transferred,
+            'phase': phase,
+          });
         } finally {
           await access.discard(staged);
         }
@@ -1052,7 +1314,6 @@ class FolderSyncController extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _stop = true;
-    _timer?.cancel();
     unawaited(
       (_running ?? Future<void>.value()).then((_) async {
         await _loading;

@@ -85,7 +85,7 @@ class _FolderSyncScreenState extends State<_LegacyFolderSyncScreen> {
                               'Saved access can be reused, but the provider may ask you to select it again. '
                               'This does not back up the Apple Photos library.'
                         : 'Android: select a folder using the system picker. '
-                              'Optional repeat runs every 15 minutes while ncloud is open.',
+                              'Scheduled backups are configured in Folder sync.',
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                   const SizedBox(height: 8),
@@ -218,24 +218,6 @@ class _FolderSyncScreenState extends State<_LegacyFolderSyncScreen> {
                     : 'Last completed: ${MaterialLocalizations.of(context).formatCompactDate(pair.lastRun!.toLocal())} '
                           '${MaterialLocalizations.of(context).formatTimeOfDay(TimeOfDay.fromDateTime(pair.lastRun!.toLocal()))}',
               ),
-            if (sync.android)
-              SwitchListTile.adaptive(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Repeat while app is open'),
-                subtitle: const Text(
-                  'Every 15 minutes · no background guarantee',
-                ),
-                value: pair.repeat,
-                onChanged: active
-                    ? null
-                    : (value) async {
-                        try {
-                          await sync.toggleRepeat(pair, value);
-                        } catch (e) {
-                          if (mounted) showError(context, e);
-                        }
-                      },
-              ),
             Align(
               alignment: Alignment.centerRight,
               child: TextButton.icon(
@@ -279,7 +261,6 @@ class _PairSetupState extends State<_PairSetup> {
   DeviceFolder? _source;
   List<String>? _destination;
   SyncMode _mode = SyncMode.backup;
-  bool _repeat = false;
   bool _wifiOnly = true;
   bool _chargingOnly = false;
   bool _busy = false;
@@ -317,7 +298,7 @@ class _PairSetupState extends State<_PairSetup> {
         _source!,
         _destination!,
         _mode,
-        _repeat,
+        false,
         wifiOnly: _wifiOnly,
         chargingOnly: _chargingOnly,
       );
@@ -388,18 +369,6 @@ class _PairSetupState extends State<_PairSetup> {
           'Changed files and name conflicts create separate copies; '
           'even two-way mode never propagates deletions. Empty folders are not copied.',
         ),
-        if (sync.android)
-          SwitchListTile.adaptive(
-            contentPadding: EdgeInsets.zero,
-            title: const Text('Repeat while app is open'),
-            subtitle: const Text(
-              'Every 15 minutes, using the current connection',
-            ),
-            value: _repeat,
-            onChanged: _busy
-                ? null
-                : (value) => setState(() => _repeat = value),
-          ),
         SwitchListTile.adaptive(
           contentPadding: EdgeInsets.zero,
           title: const Text('Wi-Fi only'),
@@ -443,7 +412,7 @@ class _PairSetupState extends State<_PairSetup> {
         ),
         const SizedBox(height: 12),
         const Text(
-          'No transfers start until you tap Sync now or an enabled repeat run becomes due.',
+          'No transfers start until you tap Sync now. Scheduled backup is not available on iOS.',
         ),
       ],
     ),

@@ -126,7 +126,7 @@ jobs:
           echo "Build time: **${elapsed} seconds** (excluding tests and cache restore/save)." >> "$GITHUB_STEP_SUMMARY"
       - name: Verify native Android folder sync routing
         working-directory: android
-        run: ./gradlew :app:testDebugUnitTest --no-daemon --console=plain
+        run: ./gradlew :app:testDebugUnitTest :ncloud_folder_access:testDebugUnitTest --no-daemon --console=plain
       - name: Verify APK uses the cached preview signer
         run: |
           set -euo pipefail

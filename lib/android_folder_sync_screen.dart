@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'app_controller.dart';
@@ -7,6 +9,7 @@ import 'sync_background.dart';
 import 'cloud_backend.dart' show CloudException;
 import 'screens.dart' show showError;
 import 'sync_rules.dart';
+import 'sync_schedule.dart';
 
 class AndroidFolderSyncScreen extends StatefulWidget {
   const AndroidFolderSyncScreen({super.key, required this.controller});
@@ -19,6 +22,7 @@ class AndroidFolderSyncScreen extends StatefulWidget {
 class _AndroidFolderSyncScreenState extends State<AndroidFolderSyncScreen> {
   FolderSyncController get sync => widget.controller.folderSync;
   bool loading = true;
+  Timer? _refresh;
 
   @override
   void initState() {
@@ -26,6 +30,15 @@ class _AndroidFolderSyncScreenState extends State<AndroidFolderSyncScreen> {
     sync.load().whenComplete(() {
       if (mounted) setState(() => loading = false);
     });
+    _refresh = Timer.periodic(const Duration(seconds: 3), (_) {
+      if (!loading) unawaited(sync.refreshResults());
+    });
+  }
+
+  @override
+  void dispose() {
+    _refresh?.cancel();
+    super.dispose();
   }
 
   Future<void> _edit({FolderPair? pair}) => Navigator.of(context).push<void>(
@@ -88,6 +101,13 @@ class _AndroidFolderSyncScreenState extends State<AndroidFolderSyncScreen> {
 
   Widget _card(FolderPair pair) {
     final active = sync.activeId == pair.id;
+    final schedule = pair.schedule;
+    final result = sync.results[pair.id];
+    final slot = schedule?.dueSlot(DateTime.now());
+    final due =
+        slot != null &&
+        !(result?['revision'] == pair.revision &&
+            schedule!.handled(slot, result?['slot'] as String?));
     return Card(
       margin: const EdgeInsets.only(bottom: 16),
       child: Padding(
@@ -116,6 +136,33 @@ class _AndroidFolderSyncScreenState extends State<AndroidFolderSyncScreen> {
             const SizedBox(height: 8),
             Text('Cloud: /${pair.cloudRoot.join('/')}'),
             const SizedBox(height: 10),
+            if (pair.schedule case final schedule?) ...[
+              Text('Schedule: ${schedule.kind.name} · Android best effort'),
+              Text(
+                due
+                    ? 'Due now · waiting for Android'
+                    : 'Next due: ${schedule.next(DateTime.now()).toLocal()}',
+              ),
+              if (sync.results[pair.id] case final result?)
+                Text(
+                  'Last result: ${result['status'] ?? 'Not run yet'}'
+                  '${result['transferred'] == null ? '' : ' · ${result['transferred']} confirmed'}'
+                  '${result['error'] == null ? '' : '\n${result['error']}'}',
+                ),
+              if (sync.results[pair.id]?['status'] == 'running' && !active)
+                TextButton.icon(
+                  onPressed: () async {
+                    try {
+                      await sync.pauseScheduled(pair);
+                    } catch (e) {
+                      if (mounted) showError(context, e);
+                    }
+                  },
+                  icon: const Icon(Icons.pause),
+                  label: const Text('Pause scheduled run'),
+                ),
+              const SizedBox(height: 8),
+            ],
             Wrap(
               spacing: 8,
               runSpacing: 4,
@@ -192,7 +239,11 @@ class _AndroidSyncSetupState extends State<AndroidSyncSetup> {
   List<String>? destination;
   late SyncRules rules;
   late SyncMode mode;
-  late bool wifiOnly, chargingOnly, repeat, background;
+  late bool wifiOnly, chargingOnly, background;
+  ScheduleKind? scheduleKind;
+  late final TextEditingController interval;
+  late TimeOfDay scheduleTime;
+  late int weekday;
   late int concurrency;
   bool busy = false;
 
@@ -207,7 +258,13 @@ class _AndroidSyncSetupState extends State<AndroidSyncSetup> {
     mode = pair?.mode ?? SyncMode.backup;
     wifiOnly = pair?.wifiOnly ?? true;
     chargingOnly = pair?.chargingOnly ?? false;
-    repeat = pair?.repeat ?? false;
+    scheduleKind = pair?.schedule?.kind;
+    interval = TextEditingController(text: '${pair?.schedule?.minutes ?? 60}');
+    scheduleTime = TimeOfDay(
+      hour: pair?.schedule?.hour ?? 2,
+      minute: pair?.schedule?.minute ?? 0,
+    );
+    weekday = pair?.schedule?.weekday ?? DateTime.monday;
     background = pair?.background ?? false;
     concurrency = pair?.uploadConcurrency ?? 3;
   }
@@ -215,6 +272,7 @@ class _AndroidSyncSetupState extends State<AndroidSyncSetup> {
   @override
   void dispose() {
     name.dispose();
+    interval.dispose();
     super.dispose();
   }
 
@@ -308,23 +366,49 @@ class _AndroidSyncSetupState extends State<AndroidSyncSetup> {
   Future<void> _save() async {
     setState(() => busy = true);
     try {
-      if (background && !await sync.backgroundService.permission()) {
+      if ((background || scheduleKind != null) &&
+          !await sync.backgroundService.permission()) {
         throw const CloudException(
           'Allow ncloud notifications in device Settings, or turn off Continue in background.',
         );
       }
+      final minutes = int.tryParse(interval.text);
+      if (scheduleKind == ScheduleKind.interval &&
+          (minutes == null || minutes < 15)) {
+        throw const FormatException(
+          'Enter an interval of at least 15 minutes.',
+        );
+      }
+      final original = widget.pair?.schedule;
+      final unchanged =
+          original?.kind == scheduleKind &&
+          original?.minutes == minutes &&
+          original?.hour == scheduleTime.hour &&
+          original?.minute == scheduleTime.minute &&
+          original?.weekday == weekday;
+      final schedule = scheduleKind == null
+          ? null
+          : BackupSchedule(
+              kind: scheduleKind!,
+              created: unchanged ? original!.created : DateTime.now(),
+              minutes: scheduleKind == ScheduleKind.interval ? minutes! : 60,
+              hour: scheduleTime.hour,
+              minute: scheduleTime.minute,
+              weekday: weekday,
+            );
       await sync.add(
         name.text,
         source!,
         destination!,
         mode,
-        repeat,
+        false,
         wifiOnly: wifiOnly,
         chargingOnly: chargingOnly,
         rules: rules,
         uploadConcurrency: concurrency,
         background: background,
         replacing: widget.pair,
+        schedule: schedule,
       );
       if (mounted) Navigator.pop(context);
     } catch (e) {
@@ -444,6 +528,107 @@ class _AndroidSyncSetupState extends State<AndroidSyncSetup> {
               rules: rules,
               download: mode == SyncMode.download,
             ),
+          if (sync.scheduler.supported) ...[
+            DropdownButtonFormField<String>(
+              initialValue: scheduleKind?.name ?? 'off',
+              decoration: const InputDecoration(labelText: 'Scheduled backup'),
+              items: [
+                const DropdownMenuItem(
+                  value: 'off',
+                  child: Text('Off · manual only'),
+                ),
+                for (final kind in ScheduleKind.values)
+                  DropdownMenuItem(value: kind.name, child: Text(kind.name)),
+              ],
+              onChanged: busy
+                  ? null
+                  : (value) => setState(() {
+                      scheduleKind = value == 'off'
+                          ? null
+                          : ScheduleKind.values.byName(value!);
+                      if (scheduleKind != null) mode = SyncMode.backup;
+                    }),
+            ),
+            if (scheduleKind == ScheduleKind.interval)
+              TextField(
+                controller: interval,
+                enabled: !busy,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Interval in minutes (minimum 15)',
+                ),
+              ),
+            if (scheduleKind == ScheduleKind.daily ||
+                scheduleKind == ScheduleKind.weekly)
+              ListTile(
+                title: const Text('Local device time'),
+                subtitle: Text(scheduleTime.format(context)),
+                onTap: busy
+                    ? null
+                    : () async {
+                        final time = await showTimePicker(
+                          context: context,
+                          initialTime: scheduleTime,
+                        );
+                        if (mounted && time != null) {
+                          setState(() => scheduleTime = time);
+                        }
+                      },
+              ),
+            if (scheduleKind == ScheduleKind.weekly)
+              DropdownButtonFormField<int>(
+                initialValue: weekday,
+                decoration: const InputDecoration(labelText: 'Weekday'),
+                items: [
+                  for (var day = 1; day <= 7; day++)
+                    DropdownMenuItem(
+                      value: day,
+                      child: Text(
+                        const [
+                          'Monday',
+                          'Tuesday',
+                          'Wednesday',
+                          'Thursday',
+                          'Friday',
+                          'Saturday',
+                          'Sunday',
+                        ][day - 1],
+                      ),
+                    ),
+                ],
+                onChanged: busy
+                    ? null
+                    : (value) => setState(() => weekday = value!),
+              ),
+            if (scheduleKind != null) ...[
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 12),
+                child: Text(
+                  'Android best effort, not an alarm. Battery restrictions, force-stop, '
+                  'network and charging can delay backups. Uses current device timezone; '
+                  'missed times coalesce into one run. Originals are never deleted.',
+                ),
+              ),
+              TextButton(
+                onPressed: busy
+                    ? null
+                    : () async {
+                        try {
+                          if (!await sync.backgroundService.permission(
+                            request: true,
+                          )) {
+                            throw const CloudException(
+                              'Enable ncloud notifications in device Settings.',
+                            );
+                          }
+                        } catch (e) {
+                          if (context.mounted) showError(context, e);
+                        }
+                      },
+                child: const Text('Allow scheduled backup notifications'),
+              ),
+            ],
+          ],
           SwitchListTile.adaptive(
             contentPadding: EdgeInsets.zero,
             title: const Text('Continue in background'),
@@ -521,14 +706,6 @@ class _AndroidSyncSetupState extends State<AndroidSyncSetup> {
                 onChanged: busy
                     ? null
                     : (v) => setState(() => chargingOnly = v),
-              ),
-              SwitchListTile.adaptive(
-                title: const Text('Repeat while app is open'),
-                subtitle: const Text(
-                  'Every 15 minutes; not an unattended schedule',
-                ),
-                value: repeat,
-                onChanged: busy ? null : (v) => setState(() => repeat = v),
               ),
               DropdownButtonFormField<int>(
                 initialValue: concurrency,

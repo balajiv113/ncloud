@@ -4,7 +4,6 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'demo.dart';
@@ -16,32 +15,13 @@ import 'local_cache.dart';
 import 'models.dart';
 import 'media_listing.dart';
 import 'cloud_backend.dart';
-
-abstract interface class SessionStore {
-  Future<String?> read();
-  Future<void> write(String value);
-  Future<void> clear();
-}
+import 'workmanager_backup.dart';
+import 'sync_schedule.dart';
+import 'session_store.dart';
+export 'session_store.dart';
 
 /// A fetched page; [scanned] counts server results before filtering.
 typedef _Page = ({List<CloudFile> files, List<int> days, int scanned});
-
-class SecureSessionStore implements SessionStore {
-  static const _storage = FlutterSecureStorage(
-    aOptions: AndroidOptions(encryptedSharedPreferences: true),
-    iOptions: IOSOptions(
-      accessibility: KeychainAccessibility.first_unlock_this_device,
-    ),
-  );
-  static const _key = 'ncloud.account.v1';
-
-  @override
-  Future<String?> read() => _storage.read(key: _key);
-  @override
-  Future<void> write(String value) => _storage.write(key: _key, value: value);
-  @override
-  Future<void> clear() => _storage.delete(key: _key);
-}
 
 String errorMessage(Object error) {
   Diagnostics.session.record(error);
@@ -89,6 +69,9 @@ class AppController extends ChangeNotifier {
   FolderSyncController get folderSync => _folderSync ??= FolderSyncController(
     client: client,
     account: () => demo ? null : account,
+    scheduler: Platform.isAndroid
+        ? AndroidBackupScheduler()
+        : UnsupportedBackupScheduler(),
   );
 
   void setSyncForeground(bool active) {
@@ -414,6 +397,7 @@ class AppController extends ChangeNotifier {
     _savingAccount = true;
     notifyListeners();
     try {
+      if (account != null && !demo) await folderSync.disconnect();
       await store.write(result.encode());
       account = result;
       demo = false;

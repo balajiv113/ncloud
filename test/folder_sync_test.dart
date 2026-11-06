@@ -1013,7 +1013,7 @@ void main() {
       await sync.run(value);
       expect(sync.error, isNull);
       expect(cloud.uploads, 1);
-      expect(calls.where((method) => method == 'conditions'), hasLength(3));
+      expect(calls.where((method) => method == 'conditions'), hasLength(4));
       expect(calls, isNot(contains('pick')));
       expect(device.picks, 0);
     },
