@@ -157,6 +157,8 @@ In Xcode select **Runner → Signing & Capabilities → your Apple team**, choos
 
 Alternatively, boot an iOS Simulator on the Mac and run `flutter run -d <simulator-id>`. Actions → **Build and test → Run workflow → build_ios** builds an unsigned release, runs native scene/permissions/resource/lock/scheduler tests, accepts the actual Full Photos Access system prompt through a native UI test, and runs Flutter integration tests for persisted Drive folder navigation and real PhotoKit original export/upload on a seeded simulator. Native test result bundles are retained for diagnosis. Its unsigned `.app` artifact is **not installable on an iPhone**. Simulator tests cannot verify real-device iCloud download behavior or when iOS chooses to deliver background processing; these still require a signed device build.
 
+iOS CI builds each required variant once: the device release and one simulator test app. Both native test suites use the simulator's shared `build-for-testing` output with `test-without-building`; the Drive/Photos driver then connects to that same installed app without rebuilding it.
+
 ## Available features
 
 System light/dark themes and a black distraction-free viewer are supported.
