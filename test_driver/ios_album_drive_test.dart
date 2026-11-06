@@ -38,6 +38,9 @@ Future<void> main() async {
         'Real PhotoKit original bytes and repeated-upload receipts verified.') {
       throw StateError('Unexpected album test result: $albumResult');
     }
+    if (await driver.requestData('close') != 'closed') {
+      throw StateError('Could not close the simulator test catalogue.');
+    }
     stdout.writeln(
       'iOS simulator: unique Drive folders/navigation, real PhotoKit originals and upload receipts passed.',
     );

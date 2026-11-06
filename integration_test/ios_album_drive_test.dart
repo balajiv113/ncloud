@@ -6,8 +6,11 @@ import 'package:flutter_driver/driver_extension.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:ncloud/app_controller.dart';
+import 'package:ncloud/file_store.dart';
 import 'package:ncloud/folder_sync.dart';
 import 'package:ncloud/library_screen.dart';
+import 'package:ncloud/local_cache.dart';
+import 'package:ncloud/models.dart';
 import 'package:ncloud/nextcloud_client.dart';
 
 import '../test/app_test.dart' show MemoryStore;
@@ -17,6 +20,8 @@ import '../test/nextcloud_client_test.dart'
 
 Future<void> main() async {
   late AppController controller;
+  late LocalCache cache;
+  late Directory cacheRoot;
   enableFlutterDriverExtension(
     handler: (message) async {
       if (message == 'driveState') {
@@ -27,6 +32,12 @@ Future<void> main() async {
         });
       }
       if (message == 'testAlbum') return _testRealAlbum();
+      if (message == 'close') {
+        controller.dispose();
+        await cache.close();
+        await cacheRoot.delete(recursive: true);
+        return 'closed';
+      }
       throw ArgumentError.value(
         message,
         'message',
@@ -40,7 +51,8 @@ Future<void> main() async {
         '<d:resourcetype/>',
         '<d:resourcetype><d:collection/></d:resourcetype>',
       )
-      .replaceFirst('image/jpeg', 'httpd/unix-directory');
+      .replaceFirst('image/jpeg', 'httpd/unix-directory')
+      .replaceFirst('</d:prop>', '<d:getetag>"folder-v1"</d:getetag></d:prop>');
   final client = NextcloudClient(
     transport: MockClient((request) async {
       if (request.method != 'PROPFIND') return http.Response('', 404);
@@ -63,7 +75,24 @@ Future<void> main() async {
       );
     }),
   );
-  controller = AppController(store: MemoryStore(), client: client)
+  cacheRoot = await Directory.systemTemp.createTemp('ncloud-ios-drive-');
+  cache = LocalCache(() async => cacheRoot);
+  await cache.writeLibrary(
+    'library-v1|${account.server}|${account.userId}',
+    FileStore()..putFolder(
+      ['Trips'],
+      [
+        const CloudFile(
+          path: ['Other', 'Summer'],
+          name: 'Summer',
+          isDirectory: true,
+          id: 'invalid-snapshot',
+        ),
+      ],
+      etag: '"folder-v1"',
+    ),
+  );
+  controller = AppController(store: MemoryStore(), client: client, cache: cache)
     ..account = account
     ..tab = 1;
   await controller.load();
