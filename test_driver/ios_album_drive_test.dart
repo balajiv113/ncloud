@@ -29,6 +29,20 @@ Future<void> main() async {
         'Drive did not open only the requested direct children: $child',
       );
     }
+    stdout.writeln('iOS simulator: unique Drive folders/navigation passed.');
+    final permission = await Process.run('xcrun', [
+      'simctl',
+      'privacy',
+      'booted',
+      'grant',
+      'photos',
+      'app.ncloud.ncloud',
+    ]);
+    if (permission.exitCode != 0) {
+      throw StateError(
+        'Could not grant simulator Photos access: ${permission.stderr}',
+      );
+    }
     final albumResult = await driver.requestData(
       'testAlbum',
       timeout: const Duration(minutes: 3),

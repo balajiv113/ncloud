@@ -81,14 +81,27 @@ void _require(bool condition, String message) {
   if (!condition) throw StateError(message);
 }
 
+Future<T> _stage<T>(String name, Future<T> Function() action) async {
+  debugPrint('iOS album integration: $name');
+  final value = await action().timeout(
+    const Duration(seconds: 30),
+    onTimeout: () => throw StateError('iOS album integration timed out: $name'),
+  );
+  debugPrint('iOS album integration completed: $name');
+  return value;
+}
+
 Future<String> _testRealAlbum() async {
   _require(Platform.isIOS, 'This integration test requires iOS.');
   final access = NativeFolderAccess();
-  final albums = await access.albums();
+  final albums = await _stage('enumerating albums', access.albums);
   DeviceFolder? selected;
   DeviceEntry? original;
   for (final album in albums) {
-    final entries = await access.list(album.token, []);
+    final entries = await _stage(
+      'listing ${album.name}',
+      () => access.list(album.token, []),
+    );
     final probes = entries.where(
       (entry) => entry.name.startsWith('ncloud-probe'),
     );
@@ -110,7 +123,10 @@ Future<String> _testRealAlbum() async {
         source.revision?.isNotEmpty == true,
     'PhotoKit must provide a revisioned album original.',
   );
-  final staged = await access.export(folder.token, [source.name], source);
+  final staged = await _stage(
+    'exporting the seeded original',
+    () => access.export(folder.token, [source.name], source),
+  );
   late List<int> bytes;
   try {
     bytes = await staged.readAsBytes();
@@ -128,17 +144,20 @@ Future<String> _testRealAlbum() async {
     journal: journal,
   );
   try {
-    await sync.load();
-    await sync.add(
-      'Simulator album',
-      folder,
-      ['Backup'],
-      SyncMode.backup,
-      false,
-      wifiOnly: false,
+    await _stage('opening the journal', sync.load);
+    await _stage(
+      'saving the album pair',
+      () => sync.add(
+        'Simulator album',
+        folder,
+        ['Backup'],
+        SyncMode.backup,
+        false,
+        wifiOnly: false,
+      ),
     );
     final pair = sync.pairs.single;
-    await sync.run(pair);
+    await _stage('uploading the album', () => sync.run(pair));
     _require(sync.error == null, 'Real iOS album upload failed: ${sync.error}');
     final uploadedBytes =
         cloud.files[['Backup', folder.name, source.name].join('/')]?.$1;
@@ -148,7 +167,7 @@ Future<String> _testRealAlbum() async {
     );
     final uploaded = cloud.uploads;
     _require(uploaded > 0, 'No album originals were uploaded.');
-    await sync.run(pair);
+    await _stage('checking unchanged receipts', () => sync.run(pair));
     _require(
       sync.error == null && cloud.uploads == uploaded,
       'An unchanged album was uploaded again instead of reusing receipts.',
