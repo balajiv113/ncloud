@@ -267,7 +267,7 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 30
     env:
-      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+      DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
     steps:
       - uses: actions/checkout@v5
       - name: Start simulator while dependencies and app compile
@@ -288,7 +288,7 @@ jobs:
           path: |
             ios/Pods
             ~/Library/Caches/CocoaPods
-          key: pods-${{ runner.os }}-${{ runner.arch }}-xcode-16.4-flutter-${{ env.FLUTTER_VERSION }}-${{ hashFiles('ios/Podfile', 'ios/Podfile.lock', 'pubspec.lock') }}
+          key: pods-${{ runner.os }}-${{ runner.arch }}-xcode-26.2-flutter-${{ env.FLUTTER_VERSION }}-${{ hashFiles('ios/Podfile', 'ios/Podfile.lock', 'pubspec.lock') }}
       - name: Configure simulator fixture and install pods
         run: |
           flutter build ios --simulator --debug --config-only --no-pub \
@@ -388,7 +388,7 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 20
     env:
-      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+      DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
     steps:
       - uses: actions/checkout@v5
       - uses: subosito/flutter-action@v2
@@ -402,7 +402,7 @@ jobs:
           path: |
             ios/Pods
             ~/Library/Caches/CocoaPods
-          key: pods-${{ runner.os }}-${{ runner.arch }}-xcode-16.4-flutter-${{ env.FLUTTER_VERSION }}-${{ hashFiles('ios/Podfile', 'ios/Podfile.lock', 'pubspec.lock') }}
+          key: pods-${{ runner.os }}-${{ runner.arch }}-xcode-26.2-flutter-${{ env.FLUTTER_VERSION }}-${{ hashFiles('ios/Podfile', 'ios/Podfile.lock', 'pubspec.lock') }}
       - run: flutter build ios --release --no-codesign --no-pub
       - uses: actions/upload-artifact@v4
         with:
