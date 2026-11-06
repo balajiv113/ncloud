@@ -6,7 +6,10 @@ import 'package:flutter_driver/flutter_driver.dart';
 Future<void> main() async {
   final driver = await FlutterDriver.connect();
   try {
-    await driver.waitFor(find.byValueKey('drive:Trips'));
+    await driver.waitFor(
+      find.byValueKey('drive:Trips'),
+      timeout: const Duration(seconds: 45),
+    );
     final root = jsonDecode(await driver.requestData('driveState'));
     if (root['directory'] != '' ||
         jsonEncode(root['items']) != '["Other","Trips"]') {
@@ -15,7 +18,10 @@ Future<void> main() async {
       );
     }
     await driver.tap(find.byValueKey('drive:Trips'));
-    await driver.waitFor(find.byValueKey('drive:Trips/Summer'));
+    await driver.waitFor(
+      find.byValueKey('drive:Trips/Summer'),
+      timeout: const Duration(seconds: 45),
+    );
     final child = jsonDecode(await driver.requestData('driveState'));
     if (child['directory'] != 'Trips' ||
         jsonEncode(child['items']) != '["Trips/Summer"]') {

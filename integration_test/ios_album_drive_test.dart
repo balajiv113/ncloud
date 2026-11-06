@@ -16,7 +16,24 @@ import '../test/nextcloud_client_test.dart'
     show account, multistatus, responseEntry;
 
 Future<void> main() async {
-  WidgetsFlutterBinding.ensureInitialized();
+  late AppController controller;
+  enableFlutterDriverExtension(
+    handler: (message) async {
+      if (message == 'driveState') {
+        return jsonEncode({
+          'directory': controller.directory.join('/'),
+          'items': controller.items.map((f) => f.path.join('/')).toList()
+            ..sort(),
+        });
+      }
+      if (message == 'testAlbum') return _testRealAlbum();
+      throw ArgumentError.value(
+        message,
+        'message',
+        'Unknown iOS test operation',
+      );
+    },
+  );
   const root = '/nextcloud/remote.php/dav/files/alice';
   String folder(String path) => responseEntry(href: '$root/$path/')
       .replaceFirst(
@@ -46,26 +63,9 @@ Future<void> main() async {
       );
     }),
   );
-  final controller = AppController(store: MemoryStore(), client: client)
+  controller = AppController(store: MemoryStore(), client: client)
     ..account = account
     ..tab = 1;
-  enableFlutterDriverExtension(
-    handler: (message) async {
-      if (message == 'driveState') {
-        return jsonEncode({
-          'directory': controller.directory.join('/'),
-          'items': controller.items.map((f) => f.path.join('/')).toList()
-            ..sort(),
-        });
-      }
-      if (message == 'testAlbum') return _testRealAlbum();
-      throw ArgumentError.value(
-        message,
-        'message',
-        'Unknown iOS test operation',
-      );
-    },
-  );
   await controller.load();
   runApp(
     MaterialApp(
