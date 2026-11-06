@@ -567,9 +567,20 @@ class NextcloudClient implements CloudBackend {
     );
     _expect(response, {207});
     final entries = parseFiles(response.body, account);
+    final children = <String, CloudFile>{};
+    for (final file in entries) {
+      if (file.path.length == path.length + 1 &&
+          pathStartsWith(file.path, path)) {
+        children.putIfAbsent(file.key, () => file);
+      }
+    }
     return (
-      self: entries.where((f) => f.path.length == path.length).firstOrNull,
-      children: entries.where((file) => file.path.length > path.length).toList()
+      self: entries
+          .where(
+            (f) => f.path.length == path.length && pathStartsWith(f.path, path),
+          )
+          .firstOrNull,
+      children: children.values.toList()
         ..sort((a, b) {
           if (a.isDirectory != b.isDirectory) {
             return a.isDirectory ? -1 : 1;

@@ -153,6 +153,40 @@ void main() {
   });
 
   test(
+    'folder listing is scoped, direct and deduplicated by actual path',
+    () async {
+      final root = '/nextcloud/remote.php/dav/files/alice';
+      final client = NextcloudClient(
+        transport: MockClient(
+          (_) async => http.Response(
+            multistatus(
+              [
+                responseEntry(href: '$root/Other/'),
+                responseEntry(href: '$root/Photos/'),
+                responseEntry(
+                  href: '$root/Photos/Trip/',
+                  properties:
+                      '<d:resourcetype><d:collection/></d:resourcetype>',
+                ),
+                responseEntry(href: '$root/Photos/Trip/'),
+                responseEntry(href: '$root/Photos/Trip/Trip/'),
+                responseEntry(href: '$root/Other/Trip/'),
+              ].join(),
+            ),
+            207,
+          ),
+        ),
+      );
+      addTearDown(client.close);
+      final result = await client.listFolder(account, ['Photos']);
+      expect(result.self?.path, ['Photos']);
+      expect(result.children.map((f) => f.path), [
+        ['Photos', 'Trip'],
+      ]);
+    },
+  );
+
+  test(
     'scoped SEARCH uses literal XML-escaped paths and SearchDAV offsets',
     () async {
       final client = NextcloudClient(

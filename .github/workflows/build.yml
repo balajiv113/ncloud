@@ -44,7 +44,7 @@ jobs:
       - name: Restore Android SDK and NDK
         uses: ./.github/actions/android-toolchain
       - run: flutter pub get
-      - run: dart format --output=none --set-exit-if-changed lib test
+      - run: dart format --output=none --set-exit-if-changed lib test integration_test
       - run: flutter analyze
       - run: flutter test
       - run: flutter test test/ui_capture_test.dart --dart-define=CAPTURE_UI=true
@@ -247,7 +247,7 @@ jobs:
           gh release create "v0.5.5-preview.${{ github.run_number }}" ncloud-android.apk \
             --target "${{ github.sha }}" --prerelease \
             --title "ncloud Android preview #${{ github.run_number }}" \
-            --notes "ncloud 0.5.5: Photo sync removed on Android and iPhone, including native media-library access. Folder sync uses manually selected folders only, with no automatic pairs or camera presets. Adds included/excluded subfolders, file-type filters, exact Nextcloud destination previews, editable/removable settings and up to three parallel create-only uploads. Optional Android Continue in background uses a data-sync foreground service with an ongoing Pause notification. Completed files remain checkpointed; process death or force-stop requires restarting the interrupted original. Exclusions and removal of settings never delete device or cloud files. Source folders and subfolders are preserved. Updates reuse the cached development signer."
+            --notes "ncloud 0.5.5 preview: Drive lists unique direct children of the selected folder. Android selected-folder backup supports opt-in best-effort interval/daily/weekly schedules, notification controls, retryable settings loading, subfolder/type filters and up to three create-only upload lanes. No device or cloud originals are deleted or overwritten. Per-file receipts preserve confirmed progress; interrupted originals restart in full. Source folders and subfolders are preserved. Updates reuse the cached development signer. The accompanying iOS source includes scene lifecycle support and explicitly selected whole-Photos-album backup with best-effort background processing; this Android APK is not an iOS installer."
 
   ios:
     if: github.event_name == 'workflow_dispatch' && inputs.build_ios
@@ -270,6 +270,15 @@ jobs:
           xcodebuild -workspace ios/Runner.xcworkspace -scheme Runner \
             -configuration Debug -destination "id=$device" \
             CODE_SIGNING_ALLOWED=NO test -quiet
+      - name: Verify iOS Drive navigation and real PhotoKit album exports
+        timeout-minutes: 15
+        run: |
+          device=$(xcrun simctl list devices available --json | jq -r '[.devices[][] | select(.name | startswith("iPhone"))][0].udid')
+          printf '%s' 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGOQqMgGAAGnAPzLMdOkAAAAAElFTkSuQmCC' \
+            | base64 --decode > "$RUNNER_TEMP/ncloud-probe.png"
+          xcrun simctl addmedia "$device" "$RUNNER_TEMP/ncloud-probe.png"
+          xcrun simctl privacy "$device" grant photos app.ncloud.ncloud
+          flutter test integration_test/ios_album_drive_test.dart -d "$device"
       - uses: actions/upload-artifact@v4
         with:
           name: ios-dependency-lock

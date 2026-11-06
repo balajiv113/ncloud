@@ -252,7 +252,7 @@ void main() {
       scheduler.fail = true;
       final restored = controller();
       await restored.load();
-      expect(restored.error, contains('register Android backup schedules'));
+      expect(restored.error, contains('register backup schedules'));
       expect(restored.error, contains('schedule_denied'));
       expect(restored.pairs.single.id, pair.id);
       expect(await journal.receipt(pair.id, 'local', ['photo.jpg']), isNotNull);

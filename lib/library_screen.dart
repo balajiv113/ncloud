@@ -2200,6 +2200,7 @@ class _LibraryScreenState extends State<LibraryScreen>
         final file = files[index];
         final colors = Theme.of(context).colorScheme;
         return ListTile(
+          key: ValueKey('drive:${file.key}'),
           contentPadding: const EdgeInsets.symmetric(horizontal: 4),
           selected: _selected.containsKey(file.key),
           selectedTileColor: colors.primaryContainer,

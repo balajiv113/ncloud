@@ -139,7 +139,15 @@ class FileStore {
     if (index == null) return null;
     if (fresh && !_folderFresh(key, index)) return null;
     final files = resolve(index.children);
-    return files.length == index.children.length ? files : null;
+    if (files.length != index.children.length ||
+        files.map((f) => f.key).toSet().length != files.length ||
+        files.any(
+          (f) =>
+              f.path.length != path.length + 1 || !pathStartsWith(f.path, path),
+        )) {
+      return null;
+    }
+    return files;
   }
 
   bool _folderFresh(String key, _FolderIndex index) {

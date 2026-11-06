@@ -18,6 +18,7 @@ import 'cloud_backend.dart';
 import 'workmanager_backup.dart';
 import 'sync_schedule.dart';
 import 'session_store.dart';
+import 'ios_album_backup.dart';
 export 'session_store.dart';
 
 /// A fetched page; [scanned] counts server results before filtering.
@@ -33,6 +34,18 @@ String errorMessage(Object error) {
     FileSystemException() =>
       'Cannot access this file. Check free space and permissions.',
     TimeoutException() => 'The operation timed out. Please try again.',
+    PlatformException()
+        when const {
+          'photos_permission',
+          'photos_changed',
+          'photos_album',
+          'photos_timeout',
+          'photos_cancelled',
+          'photos_unavailable',
+          'photos_export',
+          'backup_schedule',
+        }.contains(error.code) =>
+      error.message ?? 'Album backup needs attention (${error.code}).',
     PlatformException() =>
       'A device service failed. Please retry or restart the app.',
     _ =>
@@ -66,13 +79,25 @@ class AppController extends ChangeNotifier {
   /// Optional persistent cache; tests run purely in memory without it.
   final LocalCache? cache;
   FolderSyncController? _folderSync;
-  FolderSyncController get folderSync => _folderSync ??= FolderSyncController(
-    client: client,
-    account: () => demo ? null : account,
-    scheduler: Platform.isAndroid
-        ? AndroidBackupScheduler()
-        : UnsupportedBackupScheduler(),
-  );
+  FolderSyncController get folderSync => _folderSync ??= _createFolderSync();
+
+  FolderSyncController _createFolderSync() {
+    final journal = SyncJournal();
+    return FolderSyncController(
+      client: client,
+      account: () => demo ? null : account,
+      journal: journal,
+      scheduler: Platform.isAndroid
+          ? AndroidBackupScheduler()
+          : Platform.isIOS
+          ? IosAlbumScheduler(
+              journal: journal,
+              readAccount: () async => demo ? null : account,
+              initialize: initializeBackupDispatcher,
+            )
+          : UnsupportedBackupScheduler(),
+    );
+  }
 
   void setSyncForeground(bool active) {
     _folderSync?.setForeground(active);
@@ -863,6 +888,18 @@ class AppController extends ChangeNotifier {
         if (document != null) previous = MediaListing.fromJson(document);
       }
       var known = previous == null ? null : fileStore.resolve(previous.keys);
+      if (currentTab == 1 &&
+          known != null &&
+          (known.map((f) => f.key).toSet().length != known.length ||
+              known.any(
+                (f) =>
+                    f.path.length != path.length + 1 ||
+                    !pathStartsWith(f.path, path),
+              ))) {
+        previous = null;
+        known = null;
+        items = [];
+      }
       if (previous?.days != null) timelineIndexAvailable ??= true;
       if (previous != null &&
           known!.length != previous.keys.length &&
@@ -890,7 +927,14 @@ class AppController extends ChangeNotifier {
         final cached = await cache?.readListing(listingKey);
         if (version != _loadVersion) return;
         if (cached != null) fileStore.putAll(cached);
-        final seed = cached ?? _seed(currentTab, path, native);
+        final seed = currentTab == 1 && cached != null
+            ? {
+                for (final file in cached)
+                  if (file.path.length == path.length + 1 &&
+                      pathStartsWith(file.path, path))
+                    file.key: file,
+              }.values.toList()
+            : cached ?? _seed(currentTab, path, native);
         if (seed.isNotEmpty && !keepItems) {
           items = seed;
           refreshing = true;

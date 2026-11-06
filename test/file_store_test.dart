@@ -15,6 +15,28 @@ CloudFile file(List<String> path, {bool directory = false, String? etag}) =>
 
 void main() {
   test(
+    'invalid cached folder scope and duplicate members force revalidation',
+    () {
+      final store = FileStore();
+      final direct = file(['Photos', 'Trip'], directory: true);
+      for (final children in [
+        [direct, direct],
+        [
+          direct,
+          file(['Photos', 'Trip', 'Trip'], directory: true),
+        ],
+        [
+          file(['Other', 'Trip'], directory: true),
+        ],
+      ]) {
+        store.putFolder(['Photos'], children);
+        expect(store.folder(['Photos']), isNull);
+        expect(store.folder(['Photos'], fresh: false), isNull);
+      }
+    },
+  );
+
+  test(
     'folder indexes resolve shared entries and patches reach every view',
     () {
       final store = FileStore();

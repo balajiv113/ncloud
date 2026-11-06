@@ -1091,7 +1091,7 @@ void main() {
         sync.add(
           'Nested',
           const DeviceFolder('different', 'other', 'other'),
-          ['Backup', 'Child'],
+          ['Backup', 'Selected', 'Child'],
           SyncMode.backup,
           false,
         ),

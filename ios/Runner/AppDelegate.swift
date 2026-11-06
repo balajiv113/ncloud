@@ -2,42 +2,124 @@ import Flutter
 import UIKit
 import UniformTypeIdentifiers
 import Network
+import workmanager_apple
 
 @main
 @objc class AppDelegate: FlutterAppDelegate {
   let flutterEngine = FlutterEngine(name: "ncloud")
+  private(set) var folders: FolderSyncBridge?
   override func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
+    WorkmanagerPlugin.setPluginRegistrantCallback { registry in
+      GeneratedPluginRegistrant.register(with: registry)
+      guard let registrar = registry.registrar(forPlugin: FolderSyncBridge.pluginKey) else {
+        preconditionFailure("Could not register the background folder sync bridge.")
+      }
+      FolderSyncBridge.register(with: registrar)
+    }
+    WorkmanagerPlugin.registerBGProcessingTask(withIdentifier: AlbumBackupScheduling.identifier)
     guard flutterEngine.run() else {
       preconditionFailure("Could not start the ncloud Flutter engine.")
     }
+    // Flutter requires a running shell to install handlers. Do this synchronously
+    // at launch, before the main thread can dispatch Dart's first channel call.
+    guard let registrar = flutterEngine.registrar(forPlugin: FolderSyncBridge.pluginKey) else {
+      preconditionFailure("Could not register the folder sync bridge.")
+    }
+    folders = FolderSyncBridge.install(with: registrar)
     GeneratedPluginRegistrant.register(with: flutterEngine)
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 
-  final class FolderSyncBridge: NSObject, UIDocumentPickerDelegate {
+  final class FolderSyncBridge: NSObject, FlutterPlugin, UIDocumentPickerDelegate {
+    static let pluginKey = "NcloudFolderSyncBridge"
     private weak var controller: UIViewController?
     private let channel: FlutterMethodChannel
-    private let queue = DispatchQueue(label: "app.ncloud.folder-sync")
+    private let queue: DispatchQueue
     private var pickerResult: FlutterResult?
     private let manager = FileManager.default
+    private let albums = AlbumBackupService()
+    private let scheduling = AlbumBackupScheduling()
+    private let runLock = AccountSyncRunLock()
+    private let stagingDirectory: URL?
     private var staging: URL {
-      manager.temporaryDirectory.appendingPathComponent("ncloud-sync-staging", isDirectory: true)
+      stagingDirectory ?? manager.temporaryDirectory.appendingPathComponent("ncloud-sync-staging", isDirectory: true)
     }
 
-    init(controller: FlutterViewController) {
-      self.controller = controller
+    private init(messenger: FlutterBinaryMessenger, queue: DispatchQueue, stagingDirectory: URL?) {
+      self.queue = queue
+      self.stagingDirectory = stagingDirectory
       channel = FlutterMethodChannel(name: "app.ncloud/folder_sync",
-                                     binaryMessenger: controller.binaryMessenger)
+                                     binaryMessenger: messenger)
       super.init()
-      channel.setMethodCallHandler { [weak self] call, result in
-        self?.handle(call, result)
-      }
     }
 
-    private func handle(_ call: FlutterMethodCall, _ result: @escaping FlutterResult) {
+    static func register(with registrar: FlutterPluginRegistrar) {
+      _ = install(with: registrar)
+    }
+
+    static func install(with registrar: FlutterPluginRegistrar,
+                        messenger: FlutterBinaryMessenger? = nil,
+                        stagingDirectory: URL? = nil,
+                        queue: DispatchQueue = DispatchQueue(label: "app.ncloud.folder-sync")) -> FolderSyncBridge {
+      let bridge = FolderSyncBridge(messenger: messenger ?? registrar.messenger(), queue: queue,
+                                    stagingDirectory: stagingDirectory)
+      registrar.addMethodCallDelegate(bridge, channel: bridge.channel)
+      registrar.publish(bridge)
+      return bridge
+    }
+
+    func attach(presenter: UIViewController) { controller = presenter }
+
+    func detachFromEngine(for registrar: FlutterPluginRegistrar) {
+      channel.setMethodCallHandler(nil)
+      controller = nil
+      pickerResult?(FlutterError(code: "cancelled", message: "The Flutter engine stopped.", details: nil))
+      pickerResult = nil
+      albums.cancelExports()
+      // Retain the bridge until queued native transfers have settled. A new
+      // engine must not acquire its account while a Files write is still active.
+      queue.async { self.runLock.releaseAll() }
+    }
+
+    func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+      let arguments = call.arguments as? [String: Any] ?? [:]
+      if call.method == "albums" {
+        guard controller != nil else {
+          result(FlutterError(code: "photos_permission",
+            message: "Open ncloud to grant Full Access and choose a Photos album.", details: nil))
+          return
+        }
+        albums.requestAlbums { outcome in
+          DispatchQueue.main.async {
+            switch outcome {
+            case .success(let value): result(value)
+            case .failure(let error): result(Self.flutterError(error))
+            }
+          }
+        }
+        return
+      }
+      if ["acquire", "release", "scheduleAlbums", "cancelAlbums"].contains(call.method) {
+        do {
+          switch call.method {
+          case "acquire", "release":
+            guard let account = arguments["account"] as? String, !account.isEmpty else {
+              throw AlbumBackupError(code: "sync_lock", message: "An account is required for the backup lock.")
+            }
+            if call.method == "acquire" { result(try runLock.acquire(account: account)) }
+            else { runLock.release(account: account); result(nil) }
+          case "scheduleAlbums":
+            try scheduling.schedule(earliestSeconds: (arguments["earliestSeconds"] as? NSNumber)?.doubleValue ?? 900,
+                                    requiresCharging: arguments["requiresCharging"] as? Bool ?? false)
+            result(nil)
+          default: scheduling.cancel(); result(nil)
+          }
+        } catch { result(Self.flutterError(error)) }
+        return
+      }
       if call.method == "pick" {
         guard pickerResult == nil, let controller = controller else {
           result(FlutterError(code: "busy", message: "Folder picker unavailable.", details: nil))
@@ -89,6 +171,22 @@ import Network
             let file = try self.stageFile(args["staged"] as? String)
             if self.manager.fileExists(atPath: file.path) { try self.manager.removeItem(at: file) }
             value = nil
+          } else if let token = args["token"] as? String, token.hasPrefix("photos:") {
+            guard let path = args["path"] as? [String] else { throw self.failure() }
+            try self.validate(path)
+            switch call.method {
+            case "list": value = try self.albums.list(token: token, path: path)
+            case "export":
+              guard let version = args["version"] as? String else {
+                throw AlbumBackupError(code: "photos_changed", message: "Refresh the album before exporting its originals.")
+              }
+              // PhotoKit requires a nonexistent destination and owns only this unique partial.
+              let destination = try self.newStage(create: false)
+              value = try self.albums.export(token: token, path: path, version: version,
+                                             destination: destination)
+            default:
+              throw AlbumBackupError(code: "photos_read_only", message: "Photos albums are read-only backup sources.")
+            }
           } else {
             guard let token = args["token"] as? String,
                   let data = Data(base64Encoded: token),
@@ -168,13 +266,19 @@ import Network
           DispatchQueue.main.async { result(value) }
         } catch {
           DispatchQueue.main.async {
-            result(FlutterError(code: "folder_access",
-                                message: "Folder access or transfer failed. Check permission and free space; reselect the folder if needed.",
-                                details: nil))
+            result(Self.flutterError(error))
           }
-
         }
       }
+    }
+
+    private static func flutterError(_ error: Error) -> FlutterError {
+      if let error = error as? AlbumBackupError {
+        return FlutterError(code: error.code, message: error.message, details: nil)
+      }
+      return FlutterError(code: "folder_access",
+        message: "Folder access or transfer failed. Check permission and free space; reselect the folder if needed.",
+        details: nil)
     }
 
     private func failure() -> NSError {
@@ -210,7 +314,7 @@ import Network
               "modified": Int64((values.contentModificationDate?.timeIntervalSince1970 ?? 0) * 1000)]
     }
 
-    private func newStage() throws -> URL {
+    func newStage(create: Bool = true) throws -> URL {
       let cutoff = Date().addingTimeInterval(-24 * 60 * 60)
       for file in try manager.contentsOfDirectory(
         at: staging, includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey]) {
@@ -221,7 +325,9 @@ import Network
         }
       }
       let file = staging.appendingPathComponent(UUID().uuidString + ".part")
-      guard manager.createFile(atPath: file.path, contents: nil) else { throw failure() }
+      if create {
+        guard manager.createFile(atPath: file.path, contents: nil) else { throw failure() }
+      }
       return file
     }
 
@@ -282,8 +388,6 @@ import Network
 }
 
 @objc class SceneDelegate: FlutterSceneDelegate {
-  private var folders: AppDelegate.FolderSyncBridge?
-
   override func scene(
     _ scene: UIScene,
     willConnectTo session: UISceneSession,
@@ -299,7 +403,7 @@ import Network
     let sceneWindow = UIWindow(windowScene: windowScene)
     sceneWindow.rootViewController = controller
     window = sceneWindow
-    folders = AppDelegate.FolderSyncBridge(controller: controller)
+    app.folders?.attach(presenter: controller)
     sceneWindow.makeKeyAndVisible()
     super.scene(scene, willConnectTo: session, options: connectionOptions)
   }

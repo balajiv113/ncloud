@@ -120,7 +120,7 @@ class ScheduledBackupRunner implements HeadlessBackupRunner {
       // current operations settle; engine teardown also releases native locks.
       deadline = Timer(budget, () {
         pendingStop = stop(
-          'Android backup time budget reached; retry will resume from receipts.',
+          'Backup time budget reached; retry will resume from receipts.',
         ).catchError(rememberFailure);
       });
       var checking = false;

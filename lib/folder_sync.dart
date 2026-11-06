@@ -43,11 +43,19 @@ void checkSyncPath(List<String> path) {
   }
 }
 
+enum DeviceSourceKind { folder, photoAlbum }
+
 class DeviceFolder {
-  const DeviceFolder(this.token, this.name, this.identity);
+  const DeviceFolder(
+    this.token,
+    this.name,
+    this.identity, {
+    this.kind = DeviceSourceKind.folder,
+  });
   final String token;
   final String name;
   final String identity;
+  final DeviceSourceKind kind;
 }
 
 class DeviceEntry {
@@ -57,13 +65,15 @@ class DeviceEntry {
     this.size,
     this.modified, {
     this.contentType = '',
+    this.revision,
   });
   final String name;
   final bool directory;
   final int size;
   final int modified;
   final String contentType;
-  String get version => '$size|$modified';
+  final String? revision;
+  String get version => revision ?? '$size|$modified';
 }
 
 class SyncConditions {
@@ -82,8 +92,27 @@ abstract interface class FolderAccess {
   Future<SyncConditions> conditions();
 }
 
-class NativeFolderAccess implements FolderAccess {
+abstract interface class PhotoAlbumAccess {
+  Future<List<DeviceFolder>> albums();
+}
+
+class NativeFolderAccess implements FolderAccess, PhotoAlbumAccess {
   static const channel = MethodChannel('app.ncloud/folder_sync');
+
+  @override
+  Future<List<DeviceFolder>> albums() async {
+    final values = await channel.invokeListMethod<dynamic>('albums');
+    if (values == null) throw StateError('Photos returned no album listing.');
+    return [
+      for (final value in values)
+        DeviceFolder(
+          value['token'] as String,
+          value['name'] as String,
+          value['identity'] as String,
+          kind: DeviceSourceKind.photoAlbum,
+        ),
+    ];
+  }
 
   Future<void> requireWorkerNotification(int id) async {
     for (var attempt = 0; attempt < 20; attempt++) {
@@ -126,6 +155,7 @@ class NativeFolderAccess implements FolderAccess {
     value['size'] as int,
     value['modified'] as int,
     contentType: value['contentType'] as String? ?? '',
+    revision: value['revision'] as String?,
   );
 
   @override
@@ -153,6 +183,7 @@ class NativeFolderAccess implements FolderAccess {
       'path': path,
       'size': expected.size,
       'modified': expected.modified,
+      'version': expected.version,
     });
     if (file == null) throw StateError('Could not prepare the source file.');
     return File(file);
@@ -234,6 +265,7 @@ class FolderPair {
     'token': folder.token,
     'folderName': folder.name,
     'identity': folder.identity,
+    'sourceKind': folder.kind.name,
     'remote': remote,
     'mode': mode.name,
     'repeat': repeat,
@@ -255,6 +287,9 @@ class FolderPair {
       value['token'] as String,
       value['folderName'] as String,
       value['identity'] as String,
+      kind: DeviceSourceKind.values.byName(
+        value['sourceKind'] as String? ?? DeviceSourceKind.folder.name,
+      ),
     ),
     remote: (value['remote'] as List).cast<String>(),
     mode: SyncMode.values.byName(value['mode'] as String),
@@ -275,6 +310,7 @@ class FolderPair {
 }
 
 class SyncJournal {
+  static const iosAlbumService = 'ios-album-service';
   SyncJournal({this.path, this.factory});
   final String? path;
   final DatabaseFactory? factory;
@@ -490,6 +526,7 @@ class FolderSyncController extends ChangeNotifier {
     FolderAccess? access,
     SyncJournal? journal,
     bool? android,
+    bool? ios,
     SyncBackground? backgroundService,
     BackupScheduler? scheduler,
     SyncRunLock? runLock,
@@ -500,14 +537,18 @@ class FolderSyncController extends ChangeNotifier {
        scheduler = scheduler ?? UnsupportedBackupScheduler(),
        runLock =
            runLock ??
-           (Platform.isAndroid ? NativeSyncRunLock() : InProcessSyncRunLock()),
-       android = android ?? Platform.isAndroid;
+           (Platform.isAndroid || Platform.isIOS
+               ? NativeSyncRunLock()
+               : InProcessSyncRunLock()),
+       android = android ?? Platform.isAndroid,
+       ios = ios ?? Platform.isIOS;
 
   final CloudBackend client;
   final Account? Function() account;
   final FolderAccess access;
   final SyncJournal journal;
   final bool android;
+  final bool ios;
   final SyncBackground backgroundService;
   final BackupScheduler scheduler;
   final SyncRunLock runLock;
@@ -522,6 +563,7 @@ class FolderSyncController extends ChangeNotifier {
   int conflicts = 0;
   bool _foreground = true;
   bool _backgroundActive = false;
+  bool _headlessActive = false;
   bool _backgroundRequested = false;
   bool _stop = false;
   bool _disposed = false;
@@ -529,6 +571,13 @@ class FolderSyncController extends ChangeNotifier {
   Future<void>? _loading;
   String? _owner;
   int _sessionGeneration = 0;
+  Timer? _albumTimer;
+  Future<void>? _automaticTask;
+
+  Future<List<DeviceFolder>> photoAlbums() => switch (access) {
+    PhotoAlbumAccess source when ios => source.albums(),
+    _ => throw UnsupportedError('Apple Photos albums are available on iOS.'),
+  };
 
   void _notify() {
     if (!_disposed) notifyListeners();
@@ -565,18 +614,29 @@ class FolderSyncController extends ChangeNotifier {
       for (final pair in pairs) {
         operation = 'read saved backup results';
         results[pair.id] = await journal.state(pair.id);
-        operation = 'register Android backup schedules';
+        operation = 'register backup schedules';
         await _register(pair);
       }
-      error = null;
+      error = ios
+          ? (await journal.state(SyncJournal.iosAlbumService))['error']
+                as String?
+          : null;
+      if (ios && _foreground) {
+        _albumTimer ??= Timer.periodic(const Duration(minutes: 1), (_) {
+          unawaited(checkAutomaticAlbums());
+        });
+        unawaited(checkAutomaticAlbums(force: true));
+      }
     } on Object catch (e) {
       _owner = null;
       final detail = switch (e) {
         DatabaseException() =>
           'Database error ${e.getResultCode() ?? 'unknown'}. Saved folders and receipts have not been reset.',
         MissingPluginException() =>
-          'The native backup service is unavailable. Fully close ncloud and install the latest APK.',
-        PlatformException() => 'Android service error (${e.code}).',
+          'The native backup service is unavailable. Fully close ncloud and install the latest build.',
+        PlatformException() when e.code == 'backup_schedule' =>
+          e.message ?? 'iOS could not register background backup.',
+        PlatformException() => 'Device service error (${e.code}).',
         FormatException() => 'The saved folder settings contain invalid data.',
         _ => 'Operation failed (${e.runtimeType}).',
       };
@@ -631,33 +691,45 @@ class FolderSyncController extends ChangeNotifier {
       throw StateError('This folder configuration is no longer available.');
     }
     _validateRules(rules, uploadConcurrency);
+    if (folder.kind == DeviceSourceKind.photoAlbum &&
+        (!ios || mode != SyncMode.backup)) {
+      throw const FormatException(
+        'Apple Photos albums support upload-only backup on iOS.',
+      );
+    }
     if (schedule != null && (!scheduler.supported || mode != SyncMode.backup)) {
       throw const FormatException(
-        'Schedules currently support Android upload-only backups.',
+        'Scheduled backups require a supported upload-only source.',
+      );
+    }
+    if (schedule != null && ios && folder.kind != DeviceSourceKind.photoAlbum) {
+      throw const FormatException(
+        'iOS background backups currently support Apple Photos albums only.',
       );
     }
     bool overlaps(List<String> a, List<String> b) =>
         a.length <= b.length &&
         List.generate(a.length, (i) => a[i] == b[i]).every((v) => v);
+    final cloudRoot = [...remote, if (mode != SyncMode.download) folder.name];
     if (pairs.any(
       (pair) =>
           pair.id != replacing?.id &&
           (pair.folder.identity == folder.identity ||
-              overlaps(pair.remote, remote) ||
-              overlaps(remote, pair.remote)),
+              overlaps(pair.cloudRoot, cloudRoot) ||
+              overlaps(cloudRoot, pair.cloudRoot)),
     )) {
       throw const FormatException(
         'Choose a different device folder and a non-overlapping cloud folder.',
       );
     }
+    final samePair =
+        replacing != null &&
+        replacing.folder.identity == folder.identity &&
+        replacing.folder.name == folder.name &&
+        _key(replacing.remote) == _key(remote) &&
+        replacing.mode == mode;
     final pair = FolderPair(
-      id:
-          replacing != null &&
-              replacing.folder.identity == folder.identity &&
-              _key(replacing.remote) == _key(remote) &&
-              replacing.mode == mode
-          ? replacing.id
-          : _id(),
+      id: samePair ? replacing.id : _id(),
       account: owner,
       name: name.trim().isEmpty ? folder.name : name.trim(),
       folder: folder,
@@ -671,6 +743,7 @@ class FolderSyncController extends ChangeNotifier {
       background: android && background,
       schedule: schedule,
       revision: _id(),
+      lastRun: samePair ? replacing.lastRun : null,
     );
     if (!await runLock.acquire(owner)) {
       throw StateError('A backup is running. Pause it and retry editing.');
@@ -692,6 +765,9 @@ class FolderSyncController extends ChangeNotifier {
       await runLock.release(owner);
     }
     _notify();
+    if (ios && pair.folder.kind == DeviceSourceKind.photoAlbum) {
+      unawaited(checkAutomaticAlbums(force: true));
+    }
   }
 
   Future<void> forget(FolderPair pair) async {
@@ -709,11 +785,17 @@ class FolderSyncController extends ChangeNotifier {
       await runLock.release(pair.account);
     }
     pairs.removeWhere((value) => value.id == pair.id);
+    if (ios) await scheduler.cancel(pair.id);
     _notify();
   }
 
   Future<void> reconnect(FolderPair pair) async {
     if (_running != null || _accountKey != pair.account) return;
+    if (pair.folder.kind == DeviceSourceKind.photoAlbum) {
+      throw const FormatException(
+        'Allow full Photos access in iOS Settings. To change the album, edit this pair.',
+      );
+    }
     final folder = await access.pick();
     if (folder == null) return;
     if (_accountKey != pair.account) return;
@@ -760,9 +842,83 @@ class FolderSyncController extends ChangeNotifier {
   void setForeground(bool value) {
     _foreground = value;
     if (!value) {
+      _albumTimer?.cancel();
+      _albumTimer = null;
       if (!_backgroundRequested) _stop = true;
     } else {
       unawaited(refreshResults());
+      if (ios) {
+        _albumTimer ??= Timer.periodic(const Duration(minutes: 1), (_) {
+          unawaited(checkAutomaticAlbums());
+        });
+        unawaited(checkAutomaticAlbums(force: true));
+      }
+    }
+  }
+
+  Future<void> checkAutomaticAlbums({bool force = false}) =>
+      _automaticTask ??= _checkAutomaticAlbums(
+        force: force,
+      ).whenComplete(() => _automaticTask = null);
+
+  Future<void> _checkAutomaticAlbums({required bool force}) async {
+    if (!ios ||
+        _disposed ||
+        !_foreground ||
+        _running != null ||
+        _owner == null ||
+        _owner != _accountKey) {
+      return;
+    }
+    final generation = _sessionGeneration;
+    try {
+      for (final pair in List.of(pairs)) {
+        if (_disposed || !_foreground || generation != _sessionGeneration) {
+          break;
+        }
+        if (pair.folder.kind != DeviceSourceKind.photoAlbum ||
+            pair.schedule == null ||
+            pair.mode != SyncMode.backup) {
+          continue;
+        }
+        final slot = pair.schedule!.dueSlot(DateTime.now());
+        final state = await journal.state(pair.id);
+        if (_disposed ||
+            !_foreground ||
+            generation != _sessionGeneration ||
+            !pairs.any((p) => p.id == pair.id && p.revision == pair.revision)) {
+          break;
+        }
+        if (!force &&
+            (slot == null ||
+                (state['revision'] == pair.revision &&
+                    pair.schedule!.handled(slot, state['slot'] as String?)))) {
+          continue;
+        }
+        await run(pair);
+        if (_disposed || generation != _sessionGeneration) break;
+        if (error == null &&
+            !_stop &&
+            results[pair.id]?['status'] == 'success' &&
+            slot != null) {
+          await journal.writeState(pair.id, {
+            'revision': pair.revision,
+            'slot': slot,
+          });
+        }
+        if (error == null &&
+            !_stop &&
+            results[pair.id]?['status'] == 'success') {
+          await journal.writeState(SyncJournal.iosAlbumService, {
+            'error': null,
+          });
+        }
+      }
+    } on Object catch (e) {
+      if (!_disposed && generation == _sessionGeneration) {
+        error = 'Could not check automatic album backups (${e.runtimeType}).';
+        _notify();
+      }
     }
   }
 
@@ -830,11 +986,14 @@ class FolderSyncController extends ChangeNotifier {
   Future<void> disconnect() async {
     if (_disposed) return;
     _foreground = false;
+    _albumTimer?.cancel();
+    _albumTimer = null;
     _sessionGeneration++;
     await _loading;
     final owner = _owner ?? _accountKey;
     if (owner != null) await journal.enableAccount(owner, false);
     await pause();
+    await _automaticTask;
     for (final pair
         in owner == null ? <FolderPair>[] : await journal.pairs(owner)) {
       await journal.writeState(pair.id, {'cancel': true});
@@ -853,6 +1012,7 @@ class FolderSyncController extends ChangeNotifier {
     final session = account();
     if (session == null || syncAccount(session) != pair.account) return;
     _stop = false;
+    _headlessActive = headless;
     _backgroundRequested = !headless && android && pair.background;
     activeId = pair.id;
     statusPairId = pair.id;
@@ -902,6 +1062,15 @@ class FolderSyncController extends ChangeNotifier {
           'The native folder-sync service is unavailable. Install the latest ncloud build '
               'and fully restart the app. Reconnecting the folder will not fix this.',
         PlatformException() => switch (e.code) {
+          'photos_permission' ||
+          'photos_changed' ||
+          'photos_album' ||
+          'photos_timeout' ||
+          'photos_cancelled' ||
+          'photos_unavailable' ||
+          'photos_export' ||
+          'backup_schedule' =>
+            e.message ?? 'Photos album backup needs attention (${e.code}).',
           'folder_permission' =>
             'Access to the selected folder was denied. Use Reconnect device folder '
                 'to select the same folder again.',
@@ -951,6 +1120,7 @@ class FolderSyncController extends ChangeNotifier {
         }
       }
       _backgroundActive = _backgroundRequested = false;
+      _headlessActive = false;
       try {
         if (locked) {
           try {
@@ -981,7 +1151,7 @@ class FolderSyncController extends ChangeNotifier {
   void _check(FolderPair pair) {
     if (_stop ||
         _disposed ||
-        (!_foreground && !_backgroundActive) ||
+        (!_foreground && !_backgroundActive && !_headlessActive) ||
         _accountKey != pair.account) {
       throw SyncStopped();
     }
@@ -1024,6 +1194,12 @@ class FolderSyncController extends ChangeNotifier {
   Future<void> _sync(Account session, FolderPair pair) async {
     final source = access;
     _check(pair);
+    final album = pair.folder.kind == DeviceSourceKind.photoAlbum;
+    if (album && pair.mode != SyncMode.backup) {
+      throw const FormatException(
+        'Photos albums are read-only upload sources.',
+      );
+    }
     checkSyncPath(pair.cloudRoot);
     _validateRules(pair.rules, pair.uploadConcurrency);
     phase = 'Checking Wi-Fi and charging conditions';
@@ -1061,7 +1237,11 @@ class FolderSyncController extends ChangeNotifier {
           if (!pair.rules.allows(child, contentType: item.contentType)) {
             continue;
           }
-          if (item.modified <= 0 || item.size < 0) {
+          if (item.modified <= 0 ||
+              (item.size < 0 &&
+                  !(album &&
+                      item.size == -1 &&
+                      item.revision?.isNotEmpty == true))) {
             throw const FormatException(
               'The folder provider supplies no file modification date.',
             );
@@ -1325,9 +1505,11 @@ class FolderSyncController extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _stop = true;
+    _albumTimer?.cancel();
     unawaited(
       (_running ?? Future<void>.value()).then((_) async {
         await _loading;
+        await _automaticTask;
         await journal.close();
       }, onError: (Object _, StackTrace _) => journal.close()),
     );

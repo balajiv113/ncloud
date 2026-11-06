@@ -6,6 +6,7 @@ import 'package:workmanager/workmanager.dart';
 import 'session_store.dart';
 import 'folder_sync.dart';
 import 'headless_backup.dart';
+import 'ios_album_backup.dart';
 import 'models.dart';
 import 'nextcloud_client.dart';
 import 'sync_run_lock.dart';
@@ -17,8 +18,41 @@ const backupTask = 'ncloud.folder-backup';
 void backupDispatcher() {
   WidgetsFlutterBinding.ensureInitialized();
   ScheduledBackupRunner? runner;
+  IosAlbumBackupBatch? albumBatch;
   Workmanager().executeTask(
     (task, data) async {
+      if (task == iosAlbumTask) {
+        final journal = SyncJournal();
+        final client = NextcloudClient();
+        Future<Account?> readAccount() async {
+          final value = await SecureSessionStore().read();
+          return value == null ? null : Account.decode(value);
+        }
+
+        final scheduler = IosAlbumScheduler(
+          journal: journal,
+          readAccount: readAccount,
+          initialize: () async {},
+        );
+        albumBatch = IosAlbumBackupBatch(
+          scheduler: scheduler,
+          createRunner: (_) => ScheduledBackupRunner(
+            journal: journal,
+            client: client,
+            closeClient: client.close,
+            lock: NativeSyncRunLock(),
+            readAccount: readAccount,
+            budget: const Duration(minutes: 2),
+          ),
+        );
+        try {
+          return await albumBatch!.run();
+        } finally {
+          albumBatch = null;
+          client.close();
+          await journal.close();
+        }
+      }
       if (task != backupTask ||
           data?['pairId'] is! String ||
           data?['revision'] is! String) {
@@ -51,12 +85,18 @@ void backupDispatcher() {
       }
     },
     onTaskStopped: (task, reason) async {
+      await albumBatch?.stop(
+        'iOS stopped album backup: ${reason.name}. Completed transfers are saved.',
+      );
       await runner?.stop(
         'Android stopped backup: ${reason.name}. Completed transfers are saved.',
       );
     },
   );
 }
+
+Future<void> initializeBackupDispatcher() =>
+    AndroidBackupScheduler.initialize();
 
 class AndroidBackupScheduler implements BackupScheduler {
   AndroidBackupScheduler({bool? android})
