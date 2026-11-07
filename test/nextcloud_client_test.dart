@@ -147,7 +147,10 @@ void main() {
         }),
       );
       addTearDown(client.close);
-      expect(await client.listFiles(account, ['Photos']), hasLength(1));
+      expect(
+        (await client.listFolder(account, ['Photos'])).children,
+        hasLength(1),
+      );
     },
   );
 
@@ -163,7 +166,7 @@ void main() {
       }),
     );
     addTearDown(client.close);
-    expect(await client.search(account), hasLength(1));
+    expect((await client.searchPage(account)).files, hasLength(1));
   });
 
   test(
@@ -221,7 +224,11 @@ void main() {
         }),
       );
       addTearDown(client.close);
-      await client.search(account, path: ['Album & family #1'], offset: 200);
+      await client.searchPage(
+        account,
+        path: ['Album & family #1'],
+        offset: 200,
+      );
     },
   );
 
@@ -361,7 +368,7 @@ void main() {
     );
     addTearDown(client.close);
     await expectLater(
-      client.listFiles(account, []),
+      client.listFolder(account, []),
       throwsA(
         isA<CloudException>().having(
           (e) => e.message,

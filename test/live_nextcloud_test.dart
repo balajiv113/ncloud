@@ -35,10 +35,12 @@ void main() {
       );
       expect(days, isNotEmpty);
       expect(days!.fold<int>(0, (sum, day) => sum + day.count), 201);
-      final allFiles = await client.listFiles(session, ['ncloud-index']);
+      final allFiles = (await client.listFolder(session, [
+        'ncloud-index',
+      ])).children;
       // Reproduce the server's operator-limit failure independently of paging.
       await expectLater(
-        client.search(
+        client.searchPage(
           session,
           fileIds: allFiles.take(101).map((f) => f.id!).toList(),
         ),
@@ -216,7 +218,7 @@ void main() {
         isNull,
         reason: 'the fixture has no optional Client Push app',
       );
-      final files = await client.listFiles(account, folder);
+      final files = (await client.listFolder(account, folder)).children;
       expect(files, hasLength(1));
       final photo = files.single;
       expect(photo.path, path);
@@ -252,9 +254,12 @@ void main() {
         throwsA(isA<CloudException>()),
       );
       await client.setFavorite(account, photo, true);
-      final favorites = await client.search(account, favorites: true);
+      final favorites = (await client.searchPage(
+        account,
+        favorites: true,
+      )).files;
       expect(favorites.any((f) => f.key == photo.key), isTrue);
-      final photos = await client.search(account);
+      final photos = (await client.searchPage(account)).files;
       expect(photos.any((f) => f.key == photo.key), isTrue);
       final nativeName =
           'ncloud album ${DateTime.now().microsecondsSinceEpoch}';
@@ -306,24 +311,36 @@ void main() {
       expect(await download.stream.expand((chunk) => chunk).toList(), bytes);
       await client.setFavorite(account, photo, false);
       expect(
-        (await client.listFiles(account, folder)).single.favorite,
+        (await client.listFolder(account, folder)).children.single.favorite,
         isFalse,
       );
-      final page1 = await client.search(account, path: folder, limit: 1);
+      final page1 = (await client.searchPage(
+        account,
+        path: folder,
+        limit: 1,
+      )).files;
       expect(page1.single.key, photo.key);
       expect(
-        await client.search(account, path: folder, offset: 1, limit: 1),
+        (await client.searchPage(
+          account,
+          path: folder,
+          offset: 1,
+          limit: 1,
+        )).files,
         isEmpty,
       );
 
       final renamedPath = [...folder, 'Renamed #photo.png'];
       await client.move(account, photo, renamedPath);
-      final renamed = (await client.listFiles(account, folder)).single;
+      final renamed = (await client.listFolder(
+        account,
+        folder,
+      )).children.single;
       expect(renamed.path, renamedPath);
       final album = [...folder, 'Album & family'];
       await client.createFolder(account, album);
       await client.copy(account, renamed, [...album, renamed.name]);
-      final copied = (await client.listFiles(account, album)).single;
+      final copied = (await client.listFolder(account, album)).children.single;
       expect(copied.name, renamed.name);
       final share = await client.createShare(
         account,
@@ -339,7 +356,7 @@ void main() {
       await client.revokeShare(account, share);
       expect(await client.shares(account, copied), isEmpty);
       await client.delete(account, copied);
-      expect(await client.listFiles(account, album), isEmpty);
+      expect((await client.listFolder(account, album)).children, isEmpty);
       final trashed = (await client.trash(account))
           .where(
             (e) =>
@@ -347,10 +364,13 @@ void main() {
           )
           .single;
       await client.restore(account, trashed);
-      expect((await client.listFiles(account, album)).single.name, copied.name);
+      expect(
+        (await client.listFolder(account, album)).children.single.name,
+        copied.name,
+      );
       await client.delete(
         account,
-        (await client.listFiles(account, album)).single,
+        (await client.listFolder(account, album)).children.single,
       );
       final conflictTrash = (await client.trash(account))
           .where(
@@ -366,7 +386,7 @@ void main() {
         replacement.length,
       );
       await client.restore(account, conflictTrash);
-      final recovered = await client.listFiles(account, album);
+      final recovered = (await client.listFolder(account, album)).children;
       expect(recovered, hasLength(2));
       final existing = recovered.singleWhere((f) => f.name == copied.name);
       final restored = recovered.singleWhere((f) => f.name != copied.name);

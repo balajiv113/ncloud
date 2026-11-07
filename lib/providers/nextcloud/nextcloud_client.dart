@@ -473,9 +473,6 @@ class NextcloudClient implements CloudBackend {
     return result;
   }
 
-  Future<List<CloudFile>> listFiles(Account account, List<String> path) async =>
-      (await listFolder(account, path)).children;
-
   @override
   Future<String?> folderEtag(
     Account account,
@@ -601,26 +598,7 @@ class NextcloudClient implements CloudBackend {
     );
   }
 
-  Future<List<CloudFile>> search(
-    Account account, {
-    bool favorites = false,
-    List<String> path = const [],
-    int offset = 0,
-    int limit = photoLimit,
-    List<String>? fileIds,
-    bool recursive = true,
-  }) async => (await searchPage(
-    account,
-    favorites: favorites,
-    path: path,
-    offset: offset,
-    limit: limit,
-    fileIds: fileIds,
-    recursive: recursive,
-  )).files;
-
-  /// Like [search], but also reports how many results the server returned
-  /// before client-side filtering, which is what paging offsets must use.
+  /// Reports server results before filtering so paging advances correctly.
   @override
   Future<({List<CloudFile> files, int scanned})> searchPage(
     Account account, {
@@ -1066,11 +1044,11 @@ class NextcloudClient implements CloudBackend {
     Future<void> worker() async {
       while (next < batches.length) {
         final batch = batches[next++];
-        for (final file in await search(
+        for (final file in (await searchPage(
           account,
           fileIds: batch,
           limit: batch.length,
-        )) {
+        )).files) {
           if (file.id case final id?) found[id] = file;
         }
       }
