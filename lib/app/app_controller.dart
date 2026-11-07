@@ -2507,7 +2507,7 @@ class AppController extends ChangeNotifier {
         if (demo) {
           throw const CloudException('Connect a server to upload files.');
         }
-        await client.upload(account!, [...directory, name], bytes, size);
+        await client.uploadNew(account!, [...directory, name], bytes, size);
         fileStore.invalidateFolder(directory);
       }, 'Upload complete');
 

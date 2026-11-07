@@ -890,7 +890,7 @@ class FolderSyncController extends ChangeNotifier {
           await prepare(target);
           _check(pair);
           await _conditions(pair);
-          await client.upload(
+          await client.uploadNew(
             session,
             [...pair.cloudRoot, ...target],
             staged.openRead(),

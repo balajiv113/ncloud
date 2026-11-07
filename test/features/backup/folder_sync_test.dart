@@ -208,7 +208,7 @@ class CloudFolders implements CloudBackend {
   }
 
   @override
-  Future<void> upload(
+  Future<void> uploadNew(
     Account account,
     List<String> path,
     Stream<List<int>> bytes,
@@ -997,7 +997,7 @@ void main() {
         throwsA(isA<CloudException>()),
       );
       await expectLater(
-        client.upload(
+        client.uploadNew(
           account,
           file.path,
           Stream.value(utf8.encode('source')),

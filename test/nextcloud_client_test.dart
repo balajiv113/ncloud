@@ -350,7 +350,7 @@ void main() {
     );
     addTearDown(client.close);
     await expectLater(
-      client.upload(
+      client.uploadNew(
         account,
         ['hello.txt'],
         Stream.value(utf8.encode('hello')),

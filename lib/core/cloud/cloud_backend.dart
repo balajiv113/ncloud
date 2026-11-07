@@ -138,7 +138,9 @@ abstract interface class CloudBackend {
   Future<void> delete(Account account, CloudFile file);
   Future<void> createFolder(Account account, List<String> path);
   Future<void> setFavorite(Account account, CloudFile file, bool value);
-  Future<void> upload(
+
+  /// Atomically creates a new file and fails if the destination exists.
+  Future<void> uploadNew(
     Account account,
     List<String> path,
     Stream<List<int>> bytes,

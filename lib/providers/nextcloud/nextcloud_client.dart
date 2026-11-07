@@ -1523,7 +1523,7 @@ class NextcloudClient implements CloudBackend {
   }
 
   @override
-  Future<void> upload(
+  Future<void> uploadNew(
     Account account,
     List<String> path,
     Stream<List<int>> bytes,

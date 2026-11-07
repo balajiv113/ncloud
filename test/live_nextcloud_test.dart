@@ -204,7 +204,7 @@ void main() {
       expect(beforeRoot, isNotEmpty);
       expect(beforeFolder, isNotEmpty);
       final path = [...folder, 'Photo & sunshine #1.png'];
-      await client.upload(account, path, Stream.value(bytes), bytes.length);
+      await client.uploadNew(account, path, Stream.value(bytes), bytes.length);
       expect(await client.folderEtag(account, folder), isNot(beforeFolder));
       final afterRoot = await client.folderEtag(account, []);
       expect(
@@ -228,7 +228,7 @@ void main() {
       expect(photo.modified, isNotNull);
 
       await expectLater(
-        client.upload(account, path, Stream.value([1, 2, 3]), 3),
+        client.uploadNew(account, path, Stream.value([1, 2, 3]), 3),
         throwsA(isA<CloudException>()),
       );
       final revisionDownload = await client.download(
@@ -379,7 +379,7 @@ void main() {
           )
           .single;
       final replacement = utf8.encode('Existing content must survive restore');
-      await client.upload(
+      await client.uploadNew(
         account,
         copied.path,
         Stream.value(replacement),
