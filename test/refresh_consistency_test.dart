@@ -34,20 +34,22 @@ class _Backend implements CloudBackend {
   ];
 
   @override
-  Future<({CloudFile? self, List<CloudFile> children})> listFolder(
+  Future<FolderListing> listFolder(
     Account account,
-    List<String> path,
-  ) async {
+    List<String> path, {
+    bool metadataOnly = false,
+    bool optional = false,
+  }) async {
     if (fail) throw const CloudException('Refresh failed');
     if (path.length == 1) {
       rootCalls++;
       if (delayedRoot case final pending?) {
         delayedRoot = null;
-        return (self: null, children: await pending.future);
+        return FolderListing(children: await pending.future);
       }
-      return (self: null, children: root(folder));
+      return FolderListing(children: root(folder));
     }
-    return (self: null, children: [_photo(path.last)]);
+    return FolderListing(children: [_photo(path.last)]);
   }
 
   @override

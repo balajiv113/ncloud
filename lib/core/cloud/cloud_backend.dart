@@ -25,6 +25,14 @@ class CloudDownload {
   final Stream<List<int>> stream;
 }
 
+class FolderListing {
+  const FolderListing({this.self, this.children = const [], this.revision});
+
+  final CloudFile? self;
+  final List<CloudFile> children;
+  final String? revision;
+}
+
 /// A timeline request. A null [dayIds] requests the day index; otherwise only
 /// the specified days are loaded. Use [TimelineQuery.page] for unindexed
 /// browsing. [optional] applies to index requests; [resolvePaths] applies to
@@ -108,13 +116,13 @@ abstract interface class CloudBackend {
   );
 
   PlaybackSource playbackSource(Account account, CloudFile file);
-  Future<({CloudFile? self, List<CloudFile> children})> listFolder(
-    Account account,
-    List<String> path,
-  );
-  Future<String?> folderEtag(
+
+  /// Metadata-only inspection need not enumerate children. With [optional],
+  /// an unsupported inspection returns a null revision; failures still throw.
+  Future<FolderListing> listFolder(
     Account account,
     List<String> path, {
+    bool metadataOnly = false,
     bool optional = false,
   });
 

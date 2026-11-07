@@ -485,8 +485,7 @@ class NextcloudClient implements CloudBackend {
     return result;
   }
 
-  @override
-  Future<String?> folderEtag(
+  Future<String?> _folderEtag(
     Account account,
     List<String> path, {
     bool optional = false,
@@ -569,10 +568,17 @@ class NextcloudClient implements CloudBackend {
   /// Lists direct children plus the folder's own entry, whose recursive etag
   /// lets cached listings be reused while nothing below it changed.
   @override
-  Future<({CloudFile? self, List<CloudFile> children})> listFolder(
+  Future<FolderListing> listFolder(
     Account account,
-    List<String> path,
-  ) async {
+    List<String> path, {
+    bool metadataOnly = false,
+    bool optional = false,
+  }) async {
+    if (metadataOnly) {
+      return FolderListing(
+        revision: await _folderEtag(account, path, optional: optional),
+      );
+    }
     final response = await _request(
       'PROPFIND',
       davUri(account, path),
@@ -594,12 +600,14 @@ class NextcloudClient implements CloudBackend {
         children.putIfAbsent(file.key, () => file);
       }
     }
-    return (
-      self: entries
-          .where(
-            (f) => f.path.length == path.length && pathStartsWith(f.path, path),
-          )
-          .firstOrNull,
+    final self = entries
+        .where(
+          (f) => f.path.length == path.length && pathStartsWith(f.path, path),
+        )
+        .firstOrNull;
+    return FolderListing(
+      self: self,
+      revision: self?.etag,
       children: children.values.toList()
         ..sort((a, b) {
           if (a.isDirectory != b.isDirectory) {

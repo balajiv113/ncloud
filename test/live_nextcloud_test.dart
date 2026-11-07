@@ -203,20 +203,22 @@ void main() {
       final bytes = base64Decode(
         'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGOQqMgGAAGnAPzLMdOkAAAAAElFTkSuQmCC',
       );
-      final beforeRoot = await client.folderEtag(account, []);
-      final beforeFolder = await client.folderEtag(account, folder);
+      Future<String?> revision(List<String> path) async =>
+          (await client.listFolder(account, path, metadataOnly: true)).revision;
+      final beforeRoot = await revision([]);
+      final beforeFolder = await revision(folder);
       expect(beforeRoot, isNotEmpty);
       expect(beforeFolder, isNotEmpty);
       final path = [...folder, 'Photo & sunshine #1.png'];
       await client.uploadNew(account, path, Stream.value(bytes), bytes.length);
-      expect(await client.folderEtag(account, folder), isNot(beforeFolder));
-      final afterRoot = await client.folderEtag(account, []);
+      expect(await revision(folder), isNot(beforeFolder));
+      final afterRoot = await revision([]);
       expect(
         afterRoot,
         isNot(beforeRoot),
         reason: 'descendant changes must propagate to the account root',
       );
-      expect(await client.folderEtag(account, []), afterRoot);
+      expect(await revision([]), afterRoot);
       expect(
         await client.pushEndpoint(account),
         isNull,

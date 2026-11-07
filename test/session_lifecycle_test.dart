@@ -19,8 +19,7 @@ class _DelayedStore implements SessionStore {
 
 class _Backend implements CloudBackend {
   final folderRequested = Completer<void>();
-  final folderResult =
-      Completer<({CloudFile? self, List<CloudFile> children})>();
+  final folderResult = Completer<FolderListing>();
   final dayRequested = Completer<void>();
   final dayResult = Completer<List<CloudFile>>();
   final nextDayRequested = Completer<void>();
@@ -29,10 +28,12 @@ class _Backend implements CloudBackend {
   void close() {}
 
   @override
-  Future<({CloudFile? self, List<CloudFile> children})> listFolder(
+  Future<FolderListing> listFolder(
     Account account,
-    List<String> path,
-  ) {
+    List<String> path, {
+    bool metadataOnly = false,
+    bool optional = false,
+  }) {
     folderRequested.complete();
     return folderResult.future;
   }
@@ -96,16 +97,17 @@ void main() {
     final pending = controller.selectTab(1);
     await backend.folderRequested.future;
     await controller.clearCache();
-    backend.folderResult.complete((
-      self: null,
-      children: [
-        const CloudFile(
-          path: ['private.jpg'],
-          name: 'private.jpg',
-          isDirectory: false,
-        ),
-      ],
-    ));
+    backend.folderResult.complete(
+      FolderListing(
+        children: [
+          const CloudFile(
+            path: ['private.jpg'],
+            name: 'private.jpg',
+            isDirectory: false,
+          ),
+        ],
+      ),
+    );
     await pending;
     expect(controller.fileStore.length, 0);
     expect(controller.items, isEmpty);

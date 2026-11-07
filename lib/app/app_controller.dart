@@ -942,7 +942,12 @@ class AppController extends ChangeNotifier {
           native == null &&
           person == null &&
           mapBounds == null) {
-        scopeEtag = await client.folderEtag(session, path, optional: true);
+        scopeEtag = (await client.listFolder(
+          session,
+          path,
+          metadataOnly: true,
+          optional: true,
+        )).revision;
         if (version != _loadVersion || _disposed) return;
         if (!refresh &&
             previous != null &&
@@ -1147,7 +1152,11 @@ class AppController extends ChangeNotifier {
       if (known != null) return known;
       final saved = await cache?.readFolderSnapshot(_storeKey(session), path);
       if (saved != null && current()) {
-        final etag = await client.folderEtag(session, path);
+        final etag = (await client.listFolder(
+          session,
+          path,
+          metadataOnly: true,
+        )).revision;
         if (!current()) return [];
         if (etag != null && etag == saved.etag) {
           fileStore.putFolder(path, saved.files, etag: etag);
@@ -1176,7 +1185,7 @@ class AppController extends ChangeNotifier {
     if (result.self case final self?) {
       if (path.isNotEmpty) fileStore.putAll([self]);
     }
-    fileStore.putFolder(path, result.children, etag: result.self?.etag);
+    fileStore.putFolder(path, result.children, etag: result.revision);
     _persistStore();
     return result.children;
   }
@@ -1455,7 +1464,11 @@ class AppController extends ChangeNotifier {
         _changeEtag = (await cache?.readDocument(owner))?['etag'] as String?;
         _lastIndexCheck = null;
       }
-      final etag = await client.folderEtag(session, const []);
+      final etag = (await client.listFolder(
+        session,
+        const [],
+        metadataOnly: true,
+      )).revision;
       if (_disposed || account != session) return false;
       if (loadVersion != _loadVersion ||
           loading ||
@@ -2105,7 +2118,12 @@ class AppController extends ChangeNotifier {
     }
     final etag = cache == null
         ? null
-        : await client.folderEtag(session, root, optional: true);
+        : (await client.listFolder(
+            session,
+            root,
+            metadataOnly: true,
+            optional: true,
+          )).revision;
     if (generation != _catalogueVersion || account != session || _disposed) {
       return;
     }

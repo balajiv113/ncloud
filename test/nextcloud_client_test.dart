@@ -83,6 +83,53 @@ void main() {
     expect(file.etag, '"revision-1"');
   });
 
+  test(
+    'folder inspection retrieves revision without listing children',
+    () async {
+      final requests = <http.Request>[];
+      final client = NextcloudClient(
+        transport: MockClient((request) async {
+          requests.add(request);
+          return http.Response(
+            multistatus(
+              responseEntry(properties: '<d:getetag>"folder-rev"</d:getetag>'),
+            ),
+            207,
+          );
+        }),
+      );
+      addTearDown(client.close);
+      final result = await client.listFolder(account, [], metadataOnly: true);
+      expect(result.revision, '"folder-rev"');
+      expect(result.children, isEmpty);
+      expect(requests.single.headers['Depth'], '0');
+      expect(requests.single.body, contains('<d:getetag/>'));
+    },
+  );
+
+  test(
+    'optional folder inspection distinguishes unsupported from failures',
+    () async {
+      for (final status in [404, 405, 501, 401, 500]) {
+        final client = NextcloudClient(
+          transport: MockClient((_) async => http.Response('', status)),
+        );
+        addTearDown(client.close);
+        final response = client.listFolder(
+          account,
+          [],
+          metadataOnly: true,
+          optional: true,
+        );
+        if ({404, 405, 501}.contains(status)) {
+          expect((await response).revision, isNull);
+        } else {
+          await expectLater(response, throwsA(isA<CloudException>()));
+        }
+      }
+    },
+  );
+
   test('ignores failed properties and hrefs outside the account root', () {
     final xml = multistatus(
       [
