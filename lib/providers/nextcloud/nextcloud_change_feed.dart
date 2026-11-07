@@ -4,6 +4,7 @@ import 'dart:io';
 
 import '../../core/cloud/cloud_backend.dart';
 import '../../models.dart';
+import 'nextcloud_account.dart';
 
 /// Nextcloud notify_push wire protocol; consumers only see invalidation hints.
 Stream<Set<String>?> nextcloudChanges(

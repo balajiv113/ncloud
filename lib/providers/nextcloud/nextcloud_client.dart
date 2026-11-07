@@ -10,6 +10,7 @@ import 'package:xml/xml.dart';
 import '../../models.dart';
 import '../../discovery_models.dart';
 import '../../core/cloud/cloud_backend.dart';
+import 'nextcloud_account.dart';
 import 'nextcloud_change_feed.dart';
 import 'nextcloud_discovery.dart';
 
@@ -40,9 +41,9 @@ class _NextcloudLoginFlow implements LoginFlow {
   final String token;
   final Uri server;
   final NextcloudClient owner;
-  Account? exchanged;
-  Account? verified;
-  Future<Account?>? polling;
+  NextcloudAccount? exchanged;
+  NextcloudAccount? verified;
+  Future<NextcloudAccount?>? polling;
 }
 
 extension NextcloudAuthorization on Account {
@@ -169,7 +170,7 @@ class NextcloudClient implements CloudBackend {
   }
 
   @override
-  Future<Account?> pollLogin(Uri server, LoginFlow flow) async {
+  Future<NextcloudAccount?> pollLogin(Uri server, LoginFlow flow) async {
     if (flow is! _NextcloudLoginFlow ||
         !identical(flow.owner, this) ||
         flow.server != server) {
@@ -184,7 +185,10 @@ class NextcloudClient implements CloudBackend {
     ).whenComplete(() => flow.polling = null);
   }
 
-  Future<Account?> _pollLogin(Uri server, _NextcloudLoginFlow flow) async {
+  Future<NextcloudAccount?> _pollLogin(
+    Uri server,
+    _NextcloudLoginFlow flow,
+  ) async {
     if (flow.exchanged == null) {
       final response = await _request(
         'POST',
@@ -195,7 +199,7 @@ class NextcloudClient implements CloudBackend {
       if (response.statusCode == 404) return null;
       _expect(response, {200});
       final data = jsonDecode(response.body) as Map<String, dynamic>;
-      flow.exchanged = Account(
+      flow.exchanged = NextcloudAccount(
         server: _trustedUri(server, data['server'] as String),
         loginName: data['loginName'] as String,
         appPassword: data['appPassword'] as String,
@@ -223,7 +227,7 @@ class NextcloudClient implements CloudBackend {
   }
 
   @override
-  Future<Account> authenticate(
+  Future<NextcloudAccount> authenticate(
     Uri server,
     String loginName,
     String appPassword,
@@ -233,7 +237,7 @@ class NextcloudClient implements CloudBackend {
         loginName.contains(':')) {
       throw const CloudException('Enter your username and an app password.');
     }
-    final pending = Account(
+    final pending = NextcloudAccount(
       server: server,
       loginName: loginName.trim(),
       appPassword: appPassword,
@@ -266,7 +270,7 @@ class NextcloudClient implements CloudBackend {
     if (id.isEmpty) {
       throw const CloudException('The server returned an empty user ID.');
     }
-    return Account(
+    return NextcloudAccount(
       server: server,
       loginName: pending.loginName,
       appPassword: appPassword,

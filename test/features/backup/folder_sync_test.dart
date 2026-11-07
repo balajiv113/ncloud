@@ -8,6 +8,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:ncloud/features/backup/folder_sync.dart';
 import 'package:ncloud/models.dart';
+import 'package:ncloud/providers/nextcloud/nextcloud_account.dart';
 import 'package:ncloud/providers/nextcloud/nextcloud_client.dart';
 import 'package:ncloud/core/cloud/cloud_backend.dart';
 import 'package:ncloud/features/backup/sync_rules.dart';
@@ -887,7 +888,7 @@ void main() {
     () async {
       await device.put('file.txt', 'source');
       final value = await pair();
-      session = Account(
+      session = NextcloudAccount(
         server: Uri(scheme: 'https', host: 'different.example'),
         loginName: 'other',
         appPassword: 'test',

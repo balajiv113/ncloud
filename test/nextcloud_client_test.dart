@@ -6,8 +6,9 @@ import 'package:http/testing.dart';
 import 'package:ncloud/models.dart';
 import 'package:ncloud/providers/nextcloud/nextcloud_client.dart';
 import 'package:ncloud/core/cloud/cloud_backend.dart';
+import 'package:ncloud/providers/nextcloud/nextcloud_account.dart';
 
-final account = Account(
+final account = NextcloudAccount(
   server: normalizeServer('https://cloud.example/nextcloud'),
   loginName: 'email@example.com',
   appPassword: 'test-app-password',

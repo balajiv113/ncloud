@@ -17,6 +17,23 @@ class _SessionStore implements SessionStore {
   Future<void> clear() async {}
 }
 
+class _PortableAccount extends Account {
+  const _PortableAccount(this.storageKey, {this.photoRoot});
+  @override
+  final String storageKey;
+  @override
+  final List<String>? photoRoot;
+  @override
+  String get displayName => 'Portable user';
+  @override
+  String get serverLabel => 'Portable storage';
+  @override
+  String encode() => storageKey;
+  @override
+  _PortableAccount withPhotoRoot(List<String> path) =>
+      _PortableAccount(storageKey, photoRoot: List.unmodifiable(path));
+}
+
 class _PortableBackend implements CloudBackend {
   final hints = StreamController<Set<String>?>.broadcast();
   final requestedLimits = <int>[];
@@ -95,13 +112,7 @@ class _PortableBackend implements CloudBackend {
 }
 
 void main() {
-  final account = Account(
-    server: Uri.parse('https://storage.example'),
-    loginName: 'portable-user',
-    appPassword: 'opaque-credential',
-    userId: 'user:opaque',
-    displayName: 'Portable user',
-  );
+  const account = _PortableAccount('portable:account');
 
   test('listing persists opaque continuation tokens unchanged', () {
     final listing = MediaListing()
@@ -121,13 +132,7 @@ void main() {
     addTearDown(controller.dispose);
     final pending = controller.load();
     await backend.pageRequested.future;
-    controller.account = Account(
-      server: account.server,
-      loginName: 'another-user',
-      appPassword: 'another-password',
-      userId: 'another-user',
-      displayName: 'Another user',
-    );
+    controller.account = const _PortableAccount('portable:other');
     backend.delayedPage!.complete(
       const TimelineResult.page([
         CloudFile(

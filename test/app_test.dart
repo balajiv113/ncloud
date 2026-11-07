@@ -7,6 +7,7 @@ import 'package:http/testing.dart';
 import 'package:ncloud/app/app_controller.dart';
 import 'package:ncloud/main.dart';
 import 'package:ncloud/providers/nextcloud/nextcloud_client.dart';
+import 'package:ncloud/providers/nextcloud/nextcloud_account.dart';
 
 class MemoryStore implements SessionStore {
   String? value;
@@ -88,15 +89,18 @@ void main() {
         'app-password',
       );
       expect(controller.connected, isTrue);
-      expect(controller.account!.userId, 'alice');
+      expect((controller.account! as NextcloudAccount).userId, 'alice');
       expect(controller.signingIn, isFalse);
       expect(controller.error, isNull);
       expect(store.value, isNotNull);
       final restored = AppController(store: store, client: client());
       addTearDown(restored.dispose);
       await restored.initialize();
-      expect(restored.account!.loginName, 'alice@example.com');
-      expect(restored.account!.userId, 'alice');
+      expect(
+        (restored.account! as NextcloudAccount).loginName,
+        'alice@example.com',
+      );
+      expect((restored.account! as NextcloudAccount).userId, 'alice');
       expect(restored.error, isNull);
     },
   );

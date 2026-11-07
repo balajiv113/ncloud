@@ -1,5 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ncloud/models.dart';
+import 'package:ncloud/app/provider_factory.dart';
+import 'package:ncloud/providers/nextcloud/nextcloud_account.dart';
 
 void main() {
   test(
@@ -50,14 +52,14 @@ void main() {
   });
 
   test('round trips accounts with a separate login name and account id', () {
-    final account = Account(
+    final account = NextcloudAccount(
       server: normalizeServer('https://example.com'),
       loginName: 'user@example.com',
       appPassword: 'a:b',
       userId: 'internal-id',
       displayName: 'Example',
     );
-    final result = Account.decode(account.encode());
+    final result = restoreCloudAccount(account.encode()) as NextcloudAccount;
     expect(result.userId, 'internal-id');
     expect(result.loginName, 'user@example.com');
     expect(result.appPassword, 'a:b');
@@ -148,20 +150,22 @@ void main() {
   test(
     'photo source survives account persistence without changing credentials',
     () {
-      final original = Account(
+      final original = NextcloudAccount(
         server: Uri.parse('https://cloud.example.com'),
         loginName: 'user',
         appPassword: 'app-password',
         userId: 'uid',
         displayName: 'User',
       );
-      final updated = Account.decode(
-        original.withPhotoRoot(['Photos', 'Family']).encode(),
-      );
+      final updated =
+          restoreCloudAccount(
+                original.withPhotoRoot(['Photos', 'Family']).encode(),
+              )
+              as NextcloudAccount;
       expect(updated.photoRoot, ['Photos', 'Family']);
       expect(updated.loginName, original.loginName);
       expect(updated.appPassword, original.appPassword);
-      expect(Account.decode(original.encode()).photoRoot, isNull);
+      expect(restoreCloudAccount(original.encode()).photoRoot, isNull);
     },
   );
 }

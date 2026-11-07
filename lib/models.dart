@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 Uri normalizeServer(String input) {
   if (RegExp(
     r'/(?:\.|%2e){1,2}(?:/|$)',
@@ -25,58 +23,18 @@ Uri normalizeServer(String input) {
   return uri.replace(pathSegments: segments);
 }
 
-class Account {
-  const Account({
-    required this.server,
-    required this.loginName,
-    required this.appPassword,
-    required this.userId,
-    required this.displayName,
-    this.photoRoot,
-  });
+abstract class Account {
+  const Account();
 
-  final Uri server;
-  final String loginName;
-  final String appPassword;
-  final String userId;
-  final String displayName;
-  final List<String>? photoRoot;
+  /// Stable provider-owned namespace; must not contain credentials.
+  String get storageKey;
+  String get displayName;
+  String get serverLabel;
+  List<String>? get photoRoot;
+  Account withPhotoRoot(List<String> path);
+  String encode();
 
-  /// Stable account namespace shared by caches and background backups.
-  String get storageKey => '$server|$userId';
-
-  bool sameOwner(Account other) =>
-      server == other.server && userId == other.userId;
-
-  Account withPhotoRoot(List<String> path) => Account(
-    server: server,
-    loginName: loginName,
-    appPassword: appPassword,
-    userId: userId,
-    displayName: displayName,
-    photoRoot: List.unmodifiable(path),
-  );
-
-  String encode() => jsonEncode({
-    'server': server.toString(),
-    'loginName': loginName,
-    'appPassword': appPassword,
-    'userId': userId,
-    'displayName': displayName,
-    'photoRoot': photoRoot,
-  });
-
-  factory Account.decode(String value) {
-    final json = jsonDecode(value) as Map<String, dynamic>;
-    return Account(
-      server: normalizeServer(json['server'] as String),
-      loginName: json['loginName'] as String,
-      appPassword: json['appPassword'] as String,
-      userId: json['userId'] as String,
-      displayName: json['displayName'] as String,
-      photoRoot: (json['photoRoot'] as List<dynamic>?)?.cast<String>(),
-    );
-  }
+  bool sameOwner(Account other) => storageKey == other.storageKey;
 }
 
 class CloudFile {

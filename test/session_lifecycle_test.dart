@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ncloud/app/app_controller.dart';
 import 'package:ncloud/core/cloud/cloud_backend.dart';
 import 'package:ncloud/models.dart';
+import 'package:ncloud/providers/nextcloud/nextcloud_account.dart';
 
 class _DelayedStore implements SessionStore {
   final readResult = Completer<String?>();
@@ -69,7 +70,7 @@ class _Backend implements CloudBackend {
 }
 
 void main() {
-  final account = Account(
+  final account = NextcloudAccount(
     server: Uri.parse('https://cloud.example'),
     loginName: 'alice',
     appPassword: 'test-password',

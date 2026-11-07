@@ -517,7 +517,7 @@ class SettingsScreen extends StatelessWidget {
                   Text(
                     controller.demo
                         ? 'Demo changes reset when you disconnect.'
-                        : controller.account?.server.toString() ?? '',
+                        : controller.account?.serverLabel ?? '',
                   ),
                 ],
               ),

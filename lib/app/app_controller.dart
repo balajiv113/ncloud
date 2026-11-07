@@ -19,6 +19,7 @@ import '../features/backup/workmanager_backup.dart';
 import '../features/backup/sync_schedule.dart';
 import '../features/account/session_store.dart';
 import '../features/backup/ios_album_backup.dart';
+import 'provider_factory.dart';
 export '../features/account/session_store.dart';
 
 /// A fetched index batch or page with its opaque continuation.
@@ -261,7 +262,7 @@ class AppController extends ChangeNotifier {
     try {
       final saved = await store.read();
       if (_disposed || version != _loginVersion) return;
-      if (saved != null) account = Account.decode(saved);
+      if (saved != null) account = restoreCloudAccount(saved);
     } catch (e) {
       if (!_disposed && version == _loginVersion) {
         error = 'Could not restore the saved account. ${errorMessage(e)}';

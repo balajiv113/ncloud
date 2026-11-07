@@ -10,6 +10,7 @@ import 'package:ncloud/app/app_controller.dart';
 import 'package:ncloud/features/backup/folder_sync.dart';
 import 'package:ncloud/features/backup/headless_backup.dart';
 import 'package:ncloud/models.dart';
+import 'package:ncloud/providers/nextcloud/nextcloud_account.dart';
 import 'package:ncloud/features/backup/sync_run_lock.dart';
 import 'package:ncloud/features/backup/sync_schedule.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -259,7 +260,7 @@ void main() {
       final pair = await add();
       await device.put('photo.jpg', 'original');
       await runner(loggedOut: true).run(pair.id, pair.revision);
-      final other = Account(
+      final other = NextcloudAccount(
         server: account.server,
         userId: 'other',
         loginName: 'other',
