@@ -18,6 +18,8 @@ Preview requests use one batch-friendly backend operation with positional partia
 
 Async file resolution and previews are scoped to their initiating session. Clearing the preview cache invalidates in-flight results as well as stored entries; late responses cannot refill it. Resuming browsing starts a current change check instead of publishing a failure from the previous inactive session.
 
+On-demand file resolution is owned by `features/library/file_resolver.dart`, which shares concurrent requests and invalidates them on cache or session changes. The cloud contract still exposes ID-based resolution; moving location handling fully inside provider operations remains future work.
+
 Initial and subsequent listing pages are checked against the initiating account and view generation before merging. Original downloads must match the listed byte count; offline saves additionally request the inventoried server revision. Failed transfers are not published as saved originals, and the transfer lock remains held through offline-file and membership publication.
 
 Clearing browsing metadata also invalidates in-flight folder, index and path-resolution work. Late Timeline failures from a previous destination do not replace the current view's error state or discard its queued date requests. Disposed controllers cannot restore a saved login.

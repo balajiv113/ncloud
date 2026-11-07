@@ -92,9 +92,8 @@ class _PortableBackend implements CloudBackend {
   @override
   Future<Map<String, CloudFile>> resolveFileIds(
     Account account,
-    List<String> ids, {
-    int concurrency = 4,
-  }) {
+    List<String> ids,
+  ) {
     resolutionCalls++;
     return resolution.future;
   }
@@ -150,9 +149,8 @@ class _QueuedResolutionBackend extends _PortableBackend {
   @override
   Future<Map<String, CloudFile>> resolveFileIds(
     Account account,
-    List<String> ids, {
-    int concurrency = 4,
-  }) {
+    List<String> ids,
+  ) {
     resolutionCalls++;
     final request = Completer<Map<String, CloudFile>>();
     requests.add(request);

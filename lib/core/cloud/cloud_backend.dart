@@ -128,9 +128,8 @@ abstract interface class CloudBackend {
 
   Future<Map<String, CloudFile>> resolveFileIds(
     Account account,
-    List<String> ids, {
-    int concurrency = 4,
-  });
+    List<String> ids,
+  );
 
   Future<List<CloudAlbum>> albums(Account account, {bool shared = false});
   Future<List<CloudFile>> albumFiles(

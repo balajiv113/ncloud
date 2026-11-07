@@ -77,6 +77,7 @@ class NextcloudClient implements CloudBackend {
   static const photoLimit = 200;
   // Nextcloud's DAV FileSearchBackend rejects more than 100 comparisons.
   static const fileIdLimit = 100;
+  static const _fileIdConcurrency = 4;
   static const _properties = '''
     <d:displayname/><d:resourcetype/><d:getcontenttype/>
     <d:getcontentlength/><d:getlastmodified/><d:getetag/><oc:fileid/><oc:favorite/>
@@ -1118,9 +1119,8 @@ class NextcloudClient implements CloudBackend {
   @override
   Future<Map<String, CloudFile>> resolveFileIds(
     Account account,
-    List<String> ids, {
-    int concurrency = 4,
-  }) async {
+    List<String> ids,
+  ) async {
     final batches = [
       for (var start = 0; start < ids.length; start += fileIdLimit)
         ids.skip(start).take(fileIdLimit).toList(),
@@ -1141,7 +1141,8 @@ class NextcloudClient implements CloudBackend {
     }
 
     await Future.wait([
-      for (var i = 0; i < concurrency && i < batches.length; i++) worker(),
+      for (var i = 0; i < _fileIdConcurrency && i < batches.length; i++)
+        worker(),
     ]);
     return found;
   }
