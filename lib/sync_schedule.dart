@@ -54,6 +54,7 @@ class BackupSchedule {
 
 abstract interface class BackupScheduler {
   bool get supported;
+  String? get notice;
   Future<void> put(
     String pairId,
     String revision,
@@ -66,6 +67,8 @@ abstract interface class BackupScheduler {
 class UnsupportedBackupScheduler implements BackupScheduler {
   @override
   bool get supported => false;
+  @override
+  String? get notice => null;
   @override
   Future<void> put(
     String pairId,

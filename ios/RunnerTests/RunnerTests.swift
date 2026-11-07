@@ -344,6 +344,9 @@ class RunnerTests: XCTestCase {
   }
 
   func testSchedulerEnforcesDelayPowerAndSurfacesSubmissionFailure() throws {
+    #if targetEnvironment(simulator)
+    XCTAssertFalse(SystemAlbumTaskScheduler.backgroundSupported)
+    #endif
     let scheduler = FakeAlbumScheduler()
     let scheduling = AlbumBackupScheduling(scheduler: scheduler)
     let before = Date()

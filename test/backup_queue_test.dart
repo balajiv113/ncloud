@@ -15,6 +15,8 @@ class UnavailableScheduler implements BackupScheduler {
   @override
   bool get supported => true;
   @override
+  String? get notice => null;
+  @override
   Future<void> cancel(String id) async {
     calls++;
     throw StateError('Scheduler unavailable');

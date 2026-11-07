@@ -112,6 +112,8 @@ class AndroidBackupScheduler implements BackupScheduler {
 
   @override
   bool get supported => _android;
+  @override
+  String? get notice => null;
   static String job(String id) => 'ncloud.backup.$id';
   static int notificationId(String id) =>
       10000 +

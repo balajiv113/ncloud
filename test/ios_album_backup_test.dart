@@ -89,6 +89,7 @@ void main() {
   late Account? session;
   final methods = <MethodCall>[];
   bool scheduleDenied = false;
+  bool backgroundSupported = true;
   int initialized = 0;
   final messenger =
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
@@ -123,10 +124,12 @@ void main() {
     methods.clear();
     initialized = 0;
     scheduleDenied = false;
+    backgroundSupported = true;
     messenger.setMockMethodCallHandler(NativeFolderAccess.channel, (
       call,
     ) async {
       methods.add(call);
+      if (call.method == 'albumBackgroundSupported') return backgroundSupported;
       if (call.method == 'scheduleAlbums' && scheduleDenied) {
         throw PlatformException(
           code: 'backup_schedule',
@@ -336,7 +339,7 @@ void main() {
       final batch = IosAlbumBackupBatch(
         scheduler: scheduler,
         createRunner: (_) {
-          expect(methods.first.method, 'scheduleAlbums');
+          expect(methods.last.method, 'scheduleAlbums');
           return ScheduledBackupRunner(
             journal: journal,
             lock: InProcessSyncRunLock(),
@@ -380,7 +383,10 @@ void main() {
         ).run(),
         throwsA(isA<PlatformException>()),
       );
-      expect(methods.single.method, 'scheduleAlbums');
+      expect(methods.map((call) => call.method), [
+        'albumBackgroundSupported',
+        'scheduleAlbums',
+      ]);
       expect(
         (await journal.state(SyncJournal.iosAlbumService))['error'],
         contains('needs attention'),
@@ -494,6 +500,7 @@ void main() {
         client: cloud,
         folderSyncController: ui,
       );
+
       await tester.pumpWidget(
         MaterialApp(home: FolderSyncScreen(controller: controller)),
       );
@@ -510,6 +517,58 @@ void main() {
       expect(device.picks, 0);
       expect(cloud.uploads, 0);
       await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
+  testWidgets(
+    'simulator daily schedules save without background initialization',
+    (tester) async {
+      await tester.runAsync(() async {
+        backgroundSupported = false;
+        ui.setForeground(true);
+        final pair = await add(scheduling: schedule());
+        expect(pair.schedule, isNotNull);
+        expect(scheduler.notice, 'App open only');
+        expect(initialized, 0);
+        expect(
+          methods.where((call) => call.method == 'scheduleAlbums'),
+          isEmpty,
+        );
+        await device.put('photo.HEIC', 'original');
+        await ui.run(pair);
+        expect(ui.error, isNull);
+        expect(cloud.uploads, 1);
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          home: FolderSyncScreen(
+            controller: AppController(
+              store: MemoryStore(),
+              client: cloud,
+              folderSyncController: ui,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.textContaining('App open only'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
+  test(
+    'missing native availability fails explicitly without losing settings',
+    () async {
+      messenger.setMockMethodCallHandler(
+        NativeFolderAccess.channel,
+        (_) async => null,
+      );
+      await expectLater(
+        add(scheduling: schedule()),
+        throwsA(isA<BackupScheduleFailure>()),
+      );
+      expect(ui.pairs.single.schedule, isNotNull);
+      expect(initialized, 0);
     },
   );
 }

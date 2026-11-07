@@ -19,7 +19,9 @@ import workmanager_apple
       }
       FolderSyncBridge.register(with: registrar)
     }
-    WorkmanagerPlugin.registerBGProcessingTask(withIdentifier: AlbumBackupScheduling.identifier)
+    if SystemAlbumTaskScheduler.backgroundSupported {
+      WorkmanagerPlugin.registerBGProcessingTask(withIdentifier: AlbumBackupScheduling.identifier)
+    }
     guard flutterEngine.run() else {
       preconditionFailure("Could not start the ncloud Flutter engine.")
     }
@@ -102,9 +104,11 @@ import workmanager_apple
         }
         return
       }
-      if ["acquire", "release", "scheduleAlbums", "cancelAlbums"].contains(call.method) {
+      if ["acquire", "release", "albumBackgroundSupported", "scheduleAlbums", "cancelAlbums"].contains(call.method) {
         do {
           switch call.method {
+          case "albumBackgroundSupported":
+            result(SystemAlbumTaskScheduler.backgroundSupported)
           case "acquire", "release":
             guard let account = arguments["account"] as? String, !account.isEmpty else {
               throw AlbumBackupError(code: "sync_lock", message: "An account is required for the backup lock.")

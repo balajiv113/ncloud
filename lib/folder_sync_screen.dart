@@ -172,7 +172,8 @@ class _FolderSyncScreenState extends State<FolderSyncScreen> {
               children: [
                 Expanded(
                   child: Text(
-                    '$scheduleLabel · ${_status(pair)}',
+                    '$scheduleLabel · ${_status(pair)}'
+                    '${schedule != null && sync.scheduler.notice != null ? ' · ${sync.scheduler.notice}' : ''}',
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ),
@@ -405,9 +406,9 @@ class _BackupSetupScreenState extends State<BackupSetupScreen> {
           const SizedBox(height: 20),
           DropdownButtonFormField<bool>(
             initialValue: _daily,
-            decoration: const InputDecoration(
+            decoration: InputDecoration(
               labelText: 'Schedule',
-              suffixText: 'Best effort',
+              suffixText: sync.scheduler.notice ?? 'Best effort',
             ),
             items: const [
               DropdownMenuItem(value: false, child: Text('Manual')),

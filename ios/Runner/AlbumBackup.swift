@@ -376,6 +376,14 @@ protocol AlbumTaskScheduler {
 }
 
 struct SystemAlbumTaskScheduler: AlbumTaskScheduler {
+  static var backgroundSupported: Bool {
+    #if targetEnvironment(simulator) || targetEnvironment(macCatalyst)
+    return false
+    #else
+    return !ProcessInfo.processInfo.isiOSAppOnMac
+    #endif
+  }
+
   func submit(_ request: BGProcessingTaskRequest) throws { try BGTaskScheduler.shared.submit(request) }
   func cancel(identifier: String) { BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: identifier) }
 }
@@ -394,7 +402,7 @@ struct AlbumBackupScheduling {
     request.earliestBeginDate = Date().addingTimeInterval(max(900, earliestSeconds))
     do { try scheduler.submit(request) } catch {
       throw AlbumBackupError(code: "backup_schedule",
-        message: "iOS could not schedule album backup. Enable Background App Refresh, disable Low Power Mode, and retry on a device. \(error.localizedDescription)")
+        message: "iOS background scheduling is unavailable. On a physical device, allow Background App Refresh and turn off Low Power Mode. Manual backups remain available. \(error.localizedDescription)")
     }
   }
 

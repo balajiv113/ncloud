@@ -8,11 +8,14 @@ import 'package:http/testing.dart';
 import 'package:ncloud/app_controller.dart';
 import 'package:ncloud/file_store.dart';
 import 'package:ncloud/folder_sync.dart';
+import 'package:ncloud/ios_album_backup.dart';
 import 'package:ncloud/library_screen.dart';
 import 'package:ncloud/local_cache.dart';
 import 'package:ncloud/models.dart';
 import 'package:ncloud/nextcloud_client.dart';
 import 'package:ncloud/sync_run_lock.dart';
+import 'package:ncloud/sync_schedule.dart';
+import 'package:ncloud/workmanager_backup.dart';
 
 import '../test/app_test.dart' show MemoryStore;
 import '../test/folder_sync_test.dart' show CloudFolders;
@@ -181,6 +184,15 @@ NextcloudClient createClient(VoidCallback onListing) {
 
 Future<String> _testNativeContract() async {
   final access = NativeFolderAccess();
+  if (Platform.isIOS) {
+    _require(
+      await NativeFolderAccess.channel.invokeMethod<bool>(
+            'albumBackgroundSupported',
+          ) !=
+          null,
+      'iOS did not report background scheduling availability.',
+    );
+  }
   final conditions = await NativeFolderAccess.channel
       .invokeMapMethod<String, dynamic>('conditions');
   _require(
@@ -313,17 +325,29 @@ Future<String> _testRealAlbum() async {
   final temp = await Directory.systemTemp.createTemp('ncloud-ios-integration-');
   final journal = SyncJournal(path: '${temp.path}/journal.sqlite3');
   final cloud = CloudFolders();
+  final scheduler = IosAlbumScheduler(
+    journal: journal,
+    readAccount: () async => account,
+    initialize: initializeBackupDispatcher,
+  );
   final sync = FolderSyncController(
     client: cloud,
     account: () => account,
     access: access,
     journal: journal,
+    scheduler: scheduler,
   );
   try {
     await _stage('opening the journal', sync.load);
     await _stage(
       'saving the album pair',
-      () => sync.add('Simulator album', folder, ['Backup'], wifiOnly: false),
+      () => sync.add(
+        'Simulator album',
+        folder,
+        ['Backup'],
+        wifiOnly: false,
+        schedule: BackupSchedule(created: DateTime.now(), hour: 14),
+      ),
     );
     final pair = sync.pairs.single;
     await _stage('uploading the album', () => sync.run(pair));

@@ -19,9 +19,12 @@ class IosAlbumScheduler implements BackupScheduler {
   final Future<Account?> Function() readAccount;
   final Future<void> Function() initialize;
   final bool _ios;
+  bool? _backgroundSupported;
 
   @override
   bool get supported => _ios;
+  @override
+  String? get notice => _backgroundSupported == false ? 'App open only' : null;
 
   Future<List<FolderPair>> configuredAlbums() async {
     final session = await readAccount();
@@ -51,6 +54,14 @@ class IosAlbumScheduler implements BackupScheduler {
 
   Future<void> armNextOpportunity({bool requiresCharging = false}) async {
     if (!supported) return;
+    final available = await NativeFolderAccess.channel.invokeMethod<bool>(
+      'albumBackgroundSupported',
+    );
+    if (available == null) {
+      throw StateError('iOS returned no background scheduling availability.');
+    }
+    _backgroundSupported = available;
+    if (!available) return;
     await initialize();
     await NativeFolderAccess.channel.invokeMethod<void>('scheduleAlbums', {
       'earliestSeconds': 900,

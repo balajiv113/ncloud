@@ -26,6 +26,8 @@ class RecordingScheduler implements BackupScheduler {
   @override
   bool get supported => true;
   @override
+  String? get notice => null;
+  @override
   Future<void> put(
     String pairId,
     String revision,
