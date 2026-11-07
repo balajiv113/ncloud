@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ncloud/app/app_controller.dart';
 import 'package:ncloud/features/library/change_monitor.dart';
+import 'package:ncloud/features/library/file_resolver.dart';
 import 'package:ncloud/features/library/media_listing.dart';
 import 'package:ncloud/core/cloud/cloud_backend.dart';
 import 'package:ncloud/core/storage/local_cache.dart';
@@ -40,6 +41,7 @@ class _PortableBackend implements CloudBackend {
   final hints = StreamController<Set<String>?>.broadcast();
   final requestedLimits = <int>[];
   bool closed = false;
+  int resolutionCalls = 0;
   int folderListings = 0;
   int folderInspections = 0;
   final resolution = Completer<Map<String, CloudFile>>();
@@ -92,7 +94,10 @@ class _PortableBackend implements CloudBackend {
     Account account,
     List<String> ids, {
     int concurrency = 4,
-  }) => resolution.future;
+  }) {
+    resolutionCalls++;
+    return resolution.future;
+  }
 
   @override
   dynamic noSuchMethod(Invocation invocation) =>
@@ -136,6 +141,22 @@ class _PortableBackend implements CloudBackend {
     }
     if (query.cursor != 'opaque:next') throw StateError('Unexpected cursor.');
     return TimelineResult.page(files.skip(2).toList(), null);
+  }
+}
+
+class _QueuedResolutionBackend extends _PortableBackend {
+  final requests = <Completer<Map<String, CloudFile>>>[];
+
+  @override
+  Future<Map<String, CloudFile>> resolveFileIds(
+    Account account,
+    List<String> ids, {
+    int concurrency = 4,
+  }) {
+    resolutionCalls++;
+    final request = Completer<Map<String, CloudFile>>();
+    requests.add(request);
+    return request.future;
   }
 }
 
@@ -358,6 +379,113 @@ void main() {
       });
       await failed;
       expect(controller.fileStore.length, 0);
+    },
+  );
+
+  test('resolved file locations are not reused across accounts', () async {
+    final backend = _PortableBackend();
+    final controller = AppController(store: _SessionStore(), client: backend)
+      ..account = account;
+    addTearDown(controller.dispose);
+    const file = CloudFile(
+      path: [CloudFile.pendingRoot, 'opaque:1'],
+      name: 'photo.jpg',
+      isDirectory: false,
+      id: 'opaque:1',
+    );
+    backend.resolution.complete({
+      'opaque:1': file.atPath(['Pictures', 'photo.jpg']),
+    });
+    await controller.resolve(file);
+    controller.account = const _PortableAccount('portable|other');
+    await controller.resolve(file);
+    expect(backend.resolutionCalls, 2);
+  });
+
+  test('concurrent resolution shares one provider request', () async {
+    final backend = _PortableBackend();
+    final controller = AppController(store: _SessionStore(), client: backend)
+      ..account = account;
+    addTearDown(controller.dispose);
+    const file = CloudFile(
+      path: [CloudFile.pendingRoot, 'opaque:1'],
+      name: 'photo.jpg',
+      isDirectory: false,
+      id: 'opaque:1',
+    );
+    final first = controller.resolve(file);
+    final second = controller.resolve(file);
+    expect(backend.resolutionCalls, 1);
+    backend.resolution.complete({
+      'opaque:1': file.atPath(['Pictures', 'photo.jpg']),
+    });
+    expect((await first).path, ['Pictures', 'photo.jpg']);
+    expect((await second).path, ['Pictures', 'photo.jpg']);
+  });
+
+  test(
+    'resolution cannot refill a cache cleared during reconciliation',
+    () async {
+      final backend = _PortableBackend();
+      addTearDown(backend.close);
+      const file = CloudFile(
+        path: [CloudFile.pendingRoot, 'opaque:1'],
+        name: 'photo.jpg',
+        isDirectory: false,
+        id: 'opaque:1',
+      );
+      late final FileResolver resolver;
+      resolver = FileResolver(
+        client: backend,
+        account: () => account,
+        active: () => true,
+        apply: (id, result) {
+          resolver.clear();
+          return result;
+        },
+      );
+      final pending = resolver.resolve(file);
+      final failed = expectLater(pending, throwsA(isA<CloudException>()));
+      backend.resolution.complete({
+        'opaque:1': file.atPath(['Pictures', 'photo.jpg']),
+      });
+      await failed;
+      expect(resolver.cached(file), isNull);
+    },
+  );
+
+  test(
+    'an old resolution cannot displace a new request after clearing',
+    () async {
+      final backend = _QueuedResolutionBackend();
+      addTearDown(backend.close);
+      const file = CloudFile(
+        path: [CloudFile.pendingRoot, 'opaque:1'],
+        name: 'photo.jpg',
+        isDirectory: false,
+        id: 'opaque:1',
+      );
+      final resolver = FileResolver(
+        client: backend,
+        account: () => account,
+        active: () => true,
+        apply: (id, result) => result,
+      );
+      final old = resolver.resolve(file);
+      final oldFailure = expectLater(old, throwsA(isA<CloudException>()));
+      resolver.clear();
+      final current = resolver.resolve(file);
+      backend.requests.first.complete({
+        'opaque:1': file.atPath(['Old', 'photo.jpg']),
+      });
+      await oldFailure;
+      final joined = resolver.resolve(file);
+      expect(backend.resolutionCalls, 2);
+      backend.requests.last.complete({
+        'opaque:1': file.atPath(['New', 'photo.jpg']),
+      });
+      expect((await current).path, ['New', 'photo.jpg']);
+      expect((await joined).path, ['New', 'photo.jpg']);
     },
   );
 

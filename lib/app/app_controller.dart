@@ -14,6 +14,7 @@ import '../features/backup/folder_sync.dart';
 import '../core/storage/local_cache.dart';
 import '../models.dart';
 import '../features/library/media_listing.dart';
+import '../features/library/file_resolver.dart';
 import '../features/library/preview_batcher.dart';
 import '../core/cloud/cloud_backend.dart';
 import '../features/backup/workmanager_backup.dart';
@@ -216,6 +217,12 @@ class AppController extends ChangeNotifier {
     session: () => account,
     active: () => _browsingActive && !_disposed,
     interested: (key) => (_previewInterest[key] ?? 0) > 0,
+  );
+  late final FileResolver _fileResolver = FileResolver(
+    client: client,
+    account: () => account,
+    active: () => !_disposed,
+    apply: _applyResolved,
   );
   Timer? _thumbnailWarmupTimer;
   final List<CloudFile> _thumbnailWarmupQueue = [];
@@ -1495,7 +1502,7 @@ class AppController extends ChangeNotifier {
         return false;
       }
       if (treeChanged) {
-        _resolvedIds.clear();
+        _fileResolver.clear();
         await cache?.invalidateListings(_storeKey(session));
         await _invalidateBrowse();
         final ids = changedFileIds;
@@ -2525,7 +2532,7 @@ class AppController extends ChangeNotifier {
     _thumbnailWarmupTimer?.cancel();
     _thumbnailWarmupQueue.clear();
     _thumbnailWarmupKnown.clear();
-    _resolvedIds.clear();
+    _fileResolver.clear();
     _thumbs.clear();
     _facePreviewGenerations.clear();
     _thumbBytes = 0;
@@ -2533,8 +2540,6 @@ class AppController extends ChangeNotifier {
     _previewInterest.clear();
     _previewBatcher.clear();
   }
-
-  final Map<String, CloudFile> _resolvedIds = {};
 
   /// Prime disk-backed thumbnails beyond the viewport in small batches.
   /// Visible tiles share these requests and still take priority in the queue.
@@ -2606,76 +2611,42 @@ class AppController extends ChangeNotifier {
     }
   }
 
-  void _applyResolved(List<String> ids, Map<String, CloudFile> found) {
-    final renamed = <String, String>{};
-    final gone = <String>{};
-    final resolved = <CloudFile>[];
-    for (final id in ids) {
-      final key = CloudFile(
-        path: [CloudFile.pendingRoot, id],
-        name: id,
-        isDirectory: false,
-      ).key;
-      final placeholder = fileStore[key];
-      final real = found[id];
-      if (real == null) {
-        gone.add(key);
-        continue;
-      }
-      if (placeholder == null) {
-        // Already swapped by an on-demand [resolve]; keep its timeline date.
-        _resolvedIds[id] ??= real;
-        continue;
-      }
-      final day = placeholder.captureDay;
-      final file = day != null
-          ? real.withCaptureDate(
-              placeholder.taken ?? real.modified ?? DateTime.now(),
-              placeholder.etag ?? real.etag,
-              day: day,
-            )
-          : real;
-      _resolvedIds[id] = file;
-      resolved.add(file);
-      renamed[key] = file.key;
-    }
-    fileStore.putAll(resolved);
+  CloudFile? _applyResolved(String id, CloudFile? real) {
+    final key = CloudFile(
+      path: [CloudFile.pendingRoot, id],
+      name: id,
+      isDirectory: false,
+    ).key;
+    final placeholder = fileStore[key];
+    if (placeholder == null && real != null) return real;
+    final day = placeholder?.captureDay;
+    final file = real != null && day != null
+        ? real.withCaptureDate(
+            placeholder!.taken ?? real.modified ?? DateTime.now(),
+            placeholder.etag ?? real.etag,
+            day: day,
+          )
+        : real;
+    final renamed = file == null ? <String, String>{} : {key: file.key};
+    final gone = file == null ? {key} : <String>{};
+    if (file != null) fileStore.putAll([file]);
     var changed = false;
     for (final listing in {..._listings.values, ?_activeListing}) {
       if (listing.replace(renamed, gone)) changed = true;
     }
     fileStore.removeKeys({...renamed.keys, ...gone});
-    if (!changed) return;
+    if (!changed) return file;
     if (_activeListing case final listing?) {
       items = fileStore.resolve(listing.keys);
       if (tab == 0) _libraryFiles = items;
     }
     _persistStore();
     notifyListeners();
+    return file;
   }
 
   /// Resolved location of [file]; actions call this before touching paths.
-  Future<CloudFile> resolve(CloudFile file) async {
-    if (!file.pending) return file;
-    final id = file.id!;
-    if (_resolvedIds[id] case final known?) return known;
-    final session = account;
-    if (session == null) {
-      throw const CloudException('Sign in again to open this item.');
-    }
-    final generation = _cacheGeneration;
-    final found = await client.resolveFileIds(session, [id]);
-    if (_disposed ||
-        !identical(account, session) ||
-        generation != _cacheGeneration) {
-      throw const CloudException(
-        'The account or cache changed. Open this item again.',
-      );
-    }
-    _applyResolved([id], found);
-    return _resolvedIds[id] ??
-        (throw const CloudException('This item is no longer available.'));
-  }
+  Future<CloudFile> resolve(CloudFile file) => _fileResolver.resolve(file);
 
   Future<List<CloudFile>> _resolveAll(List<CloudFile> files) async {
     if (!files.any((f) => f.pending)) return files;
@@ -2814,7 +2785,7 @@ class AppController extends ChangeNotifier {
     if (cache == null || session == null) return null;
     if (file.pending) {
       // Never block a tile on a path lookup; unresolved items have no copy.
-      final known = _resolvedIds[file.id];
+      final known = _fileResolver.cached(file);
       if (known == null) return null;
       file = known;
     }
