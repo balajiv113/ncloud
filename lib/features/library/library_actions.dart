@@ -5,11 +5,13 @@ import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../app/app_controller.dart';
+import '../../core/cloud/cloud_backend.dart';
 import '../../diagnostics.dart';
 import '../backup/folder_sync_screen.dart';
 import '../../models.dart';
 import '../../screens.dart';
 import 'folder_picker.dart';
+import 'share_session.dart';
 
 Future<bool> confirmDelete(BuildContext context, List<CloudFile> files) async =>
     await showDialog<bool>(
@@ -187,10 +189,19 @@ class _SharePanelState extends State<SharePanel> {
   List<PublicShare> _links = [];
   bool _busy = false;
   String? _error;
+  ShareSession? _session;
 
   @override
   void initState() {
     super.initState();
+    if (!widget.controller.demo) {
+      try {
+        _session = widget.controller.shareSession(widget.file);
+      } catch (e) {
+        _error = errorMessage(e);
+        return;
+      }
+    }
     _load();
   }
 
@@ -219,12 +230,13 @@ class _SharePanelState extends State<SharePanel> {
       if (mounted) setState(() => _links = []);
       return;
     }
-    final links = await widget.controller.client.shares(
-      widget.controller.account!,
-      widget.file,
-    );
+    final links = await _shareSession.list();
     if (mounted) setState(() => _links = links);
   });
+
+  ShareSession get _shareSession =>
+      _session ??
+      (throw const CloudException('Sign in to manage share links.'));
 
   @override
   Widget build(BuildContext context) => SafeArea(
@@ -318,10 +330,7 @@ class _SharePanelState extends State<SharePanel> {
                           onPressed: _busy
                               ? null
                               : () => _run(() async {
-                                  await widget.controller.client.revokeShare(
-                                    widget.controller.account!,
-                                    link,
-                                  );
+                                  await _shareSession.revoke(link);
                                   if (mounted) {
                                     setState(
                                       () => _links.removeWhere(
@@ -379,9 +388,7 @@ class _SharePanelState extends State<SharePanel> {
             onPressed: _busy || widget.controller.demo
                 ? null
                 : () => _run(() async {
-                    final result = await widget.controller.client.createShare(
-                      widget.controller.account!,
-                      widget.file,
+                    final result = await _shareSession.create(
                       password: _password.text,
                       expires: _expires,
                     );

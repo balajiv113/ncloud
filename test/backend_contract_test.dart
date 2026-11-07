@@ -158,8 +158,73 @@ class _QueuedResolutionBackend extends _PortableBackend {
   }
 }
 
+class _ShareBackend extends _PortableBackend {
+  final pendingShares = Completer<List<PublicShare>>();
+  int listCalls = 0;
+  int createCalls = 0;
+  int revokeCalls = 0;
+  Account? requestedAccount;
+
+  @override
+  Future<List<PublicShare>> shares(Account account, CloudFile file) {
+    requestedAccount = account;
+    listCalls++;
+    return pendingShares.future;
+  }
+
+  @override
+  Future<PublicShare> createShare(
+    Account account,
+    CloudFile file, {
+    String? password,
+    DateTime? expires,
+  }) async {
+    requestedAccount = account;
+    createCalls++;
+    return PublicShare(id: '1', url: Uri.parse('https://example.test/share'));
+  }
+
+  @override
+  Future<void> revokeShare(Account account, PublicShare share) async {
+    requestedAccount = account;
+    revokeCalls++;
+  }
+}
+
 void main() {
   const account = _PortableAccount('portable|account');
+
+  test(
+    'share panel operations are bound to their initiating account',
+    () async {
+      final backend = _ShareBackend();
+      final controller = AppController(store: _SessionStore(), client: backend)
+        ..account = account;
+      addTearDown(controller.dispose);
+      const file = CloudFile(
+        path: ['photo.jpg'],
+        name: 'photo.jpg',
+        isDirectory: false,
+      );
+      final session = controller.shareSession(file);
+      final created = await session.create(password: 'password');
+      expect(backend.requestedAccount, same(account));
+      await session.revoke(created);
+      final pending = session.list();
+      final failed = expectLater(pending, throwsA(isA<CloudException>()));
+      controller.account = const _PortableAccount('portable|other');
+      backend.pendingShares.complete([created]);
+      await failed;
+      await expectLater(session.create(), throwsA(isA<CloudException>()));
+      await expectLater(
+        session.revoke(created),
+        throwsA(isA<CloudException>()),
+      );
+      expect(backend.createCalls, 1);
+      expect(backend.revokeCalls, 1);
+      expect(backend.listCalls, 1);
+    },
+  );
 
   test('listing persists opaque continuation tokens unchanged', () {
     final listing = MediaListing()

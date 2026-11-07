@@ -15,6 +15,7 @@ import '../core/storage/local_cache.dart';
 import '../models.dart';
 import '../features/library/media_listing.dart';
 import '../features/library/file_resolver.dart';
+import '../features/library/share_session.dart';
 import '../features/library/preview_batcher.dart';
 import '../core/cloud/cloud_backend.dart';
 import '../features/backup/workmanager_backup.dart';
@@ -2647,6 +2648,19 @@ class AppController extends ChangeNotifier {
 
   /// Resolved location of [file]; actions call this before touching paths.
   Future<CloudFile> resolve(CloudFile file) => _fileResolver.resolve(file);
+
+  ShareSession shareSession(CloudFile file) {
+    final session = account;
+    if (session == null || demo || _disposed) {
+      throw const CloudException('Sign in to manage share links.');
+    }
+    return ShareSession(
+      client: client,
+      account: session,
+      file: file,
+      isCurrent: () => !_disposed && !demo && identical(account, session),
+    );
+  }
 
   Future<List<CloudFile>> _resolveAll(List<CloudFile> files) async {
     if (!files.any((f) => f.pending)) return files;

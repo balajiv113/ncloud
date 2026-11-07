@@ -20,6 +20,8 @@ Async file resolution and previews are scoped to their initiating session. Clear
 
 On-demand file resolution is owned by `features/library/file_resolver.dart`, which shares concurrent requests and invalidates them on cache or session changes. The cloud contract still exposes ID-based resolution; moving location handling fully inside provider operations remains future work.
 
+Share panels use a library-owned session bound to the account that opened them, rather than calling the provider from the widget. Account changes prevent stale share results or actions from crossing sessions.
+
 Initial and subsequent listing pages are checked against the initiating account and view generation before merging. Original downloads must match the listed byte count; offline saves additionally request the inventoried server revision. Failed transfers are not published as saved originals, and the transfer lock remains held through offline-file and membership publication.
 
 Clearing browsing metadata also invalidates in-flight folder, index and path-resolution work. Late Timeline failures from a previous destination do not replace the current view's error state or discard its queued date requests. Disposed controllers cannot restore a saved login.
