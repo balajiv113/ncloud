@@ -8,6 +8,8 @@ A single Flutter app for Android and iOS, bringing Nextcloud photos and files in
 
 UI widgets consume application/domain models and controller operations, not Nextcloud endpoints, DAV paths or authentication headers. `core/cloud/cloud_backend.dart` defines server operations; `NextcloudClient` implements the current adapter, selected for foreground and background execution by `app/provider_factory.dart`. Folder transfers and change monitoring use the same backend contract. The account model and discovery operations are still being refactored before the contract can be considered provider-neutral.
 
+Indexed timeline and map browsing share a timeline query for date counts or selected days. The provider handles geographic bounds and reports unsupported indexing separately from an empty result or a server failure. Non-indexed browsing still uses paginated search; its paging and account contract are not yet provider-neutral.
+
 Async file resolution and previews are scoped to their initiating session. Clearing the preview cache invalidates in-flight results as well as stored entries; late responses cannot refill it. Resuming browsing starts a current change check instead of publishing a failure from the previous inactive session.
 
 Initial and subsequent listing pages are checked against the initiating account and view generation before merging. Original downloads must match the listed byte count; offline saves additionally request the inventoried server revision. Failed transfers are not published as saved originals, and the transfer lock remains held through offline-file and membership publication.

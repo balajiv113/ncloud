@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:ncloud/app/app_controller.dart';
+import 'package:ncloud/core/cloud/cloud_backend.dart';
 import 'package:ncloud/discovery_models.dart';
 import 'package:ncloud/providers/nextcloud/nextcloud_client.dart';
 
@@ -55,13 +56,19 @@ void main() {
       expect(clusters, isNotEmpty);
       expect(clusters.fold<int>(0, (n, c) => n + c.count), 202);
       expect(clusters.any((c) => c.previewId != null), isTrue);
-      final days = await client.mapDays(account, [bounds]);
-      expect(days.fold<int>(0, (n, day) => n + day.count), 202);
-      final files = await client.mapDayFiles(
+      final days = (await client.timeline(
         account,
-        days.map((d) => d.id).toList(),
-        [bounds],
-      );
+        TimelineQuery(mapBounds: [bounds]),
+      ))!.days!;
+      expect(days.fold<int>(0, (n, day) => n + day.count), 202);
+      final files = (await client.timeline(
+        account,
+        TimelineQuery(
+          dayIds: days.map((d) => d.id).toList(),
+          mapBounds: [bounds],
+          resolvePaths: false,
+        ),
+      ))!.items!;
       expect(files, hasLength(202));
       expect(files.every((f) => f.pending), isTrue);
       expect(await client.preview(account, files.first), isNotEmpty);
@@ -70,7 +77,13 @@ void main() {
         await client.mapClusters(account, bounds: outside, zoom: 5),
         isEmpty,
       );
-      expect(await client.mapDays(account, [outside]), isEmpty);
+      expect(
+        (await client.timeline(
+          account,
+          TimelineQuery(mapBounds: [outside]),
+        ))!.days,
+        isEmpty,
+      );
       final controller = AppController(store: MemoryStore(), client: client)
         ..account = account;
       addTearDown(controller.dispose);

@@ -19,6 +19,29 @@ void main() {
   final bounds = PhotoMapBounds(south: 40, north: 50, west: 5, east: 15);
 
   test(
+    'optional timeline distinguishes unsupported, empty and failures',
+    () async {
+      for (final status in [200, 404, 405, 401, 500]) {
+        final client = NextcloudClient(
+          transport: MockClient((_) async => jsonResponse([], status)),
+        );
+        addTearDown(client.close);
+        final response = client.timeline(
+          account,
+          const TimelineQuery(optional: true),
+        );
+        if (status == 200) {
+          expect((await response)!.days, isEmpty);
+        } else if (status == 404 || status == 405) {
+          expect(await response, isNull);
+        } else {
+          await expectLater(response, throwsA(isA<CloudException>()));
+        }
+      }
+    },
+  );
+
+  test(
     'people are ordered by photo count, including unnamed groups, with stable ties',
     () async {
       final client = NextcloudClient(
@@ -178,20 +201,20 @@ void main() {
         }),
       );
       addTearDown(client.close);
-      await client.timelineDays(
+      await client.timeline(
         account,
-        path: ['Photos'],
-        person: person,
-        mapBounds: bounds,
+        TimelineQuery(path: ['Photos'], person: person, mapBounds: [bounds]),
       );
-      final files = await client.timelineDayFiles(
+      final files = (await client.timeline(
         account,
-        [21000],
-        path: ['Photos'],
-        person: person,
-        mapBounds: bounds,
-        resolvePaths: false,
-      );
+        TimelineQuery(
+          dayIds: [21000],
+          path: ['Photos'],
+          person: person,
+          mapBounds: [bounds],
+          resolvePaths: false,
+        ),
+      ))!.items!;
       expect(queries, hasLength(2));
       expect(queries.first, queries.last);
       expect(queries.first['recognize'], '${account.userId}/12');

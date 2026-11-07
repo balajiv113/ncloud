@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:ncloud/app/app_controller.dart';
+import 'package:ncloud/core/cloud/cloud_backend.dart';
 import 'package:ncloud/discovery_models.dart';
 import 'package:ncloud/library_screen.dart';
 import 'package:ncloud/providers/nextcloud/nextcloud_client.dart';
@@ -159,12 +160,22 @@ void main() {
         west: 170,
         east: 190,
       );
-      final days = await client.mapDays(account, bounds);
+      final days = (await client.timeline(
+        account,
+        TimelineQuery(mapBounds: bounds),
+      ))!.days!;
       expect(days.map((d) => d.id), [21000, 20999]);
       expect(days.map((d) => d.count), [2, 2]);
-      expect(await client.mapDayFiles(account, [21000], bounds), hasLength(1));
+      final items = await client.timeline(
+        account,
+        TimelineQuery(dayIds: [21000], mapBounds: bounds, resolvePaths: false),
+      );
+      expect(items!.items, hasLength(1));
       expect(requests, hasLength(4));
-      await expectLater(client.mapDays(account, []), throwsFormatException);
+      await expectLater(
+        client.timeline(account, const TimelineQuery(mapBounds: [])),
+        throwsFormatException,
+      );
     },
   );
 

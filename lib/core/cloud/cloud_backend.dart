@@ -25,6 +25,44 @@ class CloudDownload {
   final Stream<List<int>> stream;
 }
 
+/// An indexed timeline request. A null [dayIds] requests the day index;
+/// otherwise only the specified days are loaded. [optional] and
+/// [existenceOnly] apply to index requests; [resolvePaths] applies to items.
+class TimelineQuery {
+  const TimelineQuery({
+    this.dayIds,
+    this.path = const [],
+    this.recursive = true,
+    this.favorites = false,
+    this.optional = false,
+    this.existenceOnly = false,
+    this.resolvePaths = true,
+    this.person,
+    this.mapBounds,
+  });
+
+  final List<int>? dayIds;
+  final List<String> path;
+  final bool recursive;
+  final bool favorites;
+  final bool optional;
+  final bool existenceOnly;
+  final bool resolvePaths;
+  final RecognizedPerson? person;
+
+  /// Null means no geographic filter; an empty list is invalid.
+  final List<PhotoMapBounds>? mapBounds;
+}
+
+class TimelineResult {
+  const TimelineResult.index(this.days) : items = null;
+  const TimelineResult.items(this.items) : days = null;
+
+  /// Only the field corresponding to the request is populated.
+  final List<TimelineDay>? days;
+  final List<CloudFile>? items;
+}
+
 /// Server operations used by browsing, discovery, transfers and folder sync.
 ///
 /// Paths are account-relative names; album references are opaque to consumers.
@@ -88,35 +126,10 @@ abstract interface class CloudBackend {
     required int zoom,
     List<String> path = const [],
   });
-  Future<List<TimelineDay>> mapDays(
-    Account account,
-    List<PhotoMapBounds> bounds,
-  );
-  Future<List<CloudFile>> mapDayFiles(
-    Account account,
-    List<int> dayIds,
-    List<PhotoMapBounds> bounds,
-  );
-  Future<List<TimelineDay>?> timelineDays(
-    Account account, {
-    List<String> path = const [],
-    bool recursive = true,
-    bool favorites = false,
-    bool optional = false,
-    bool existenceOnly = false,
-    RecognizedPerson? person,
-    PhotoMapBounds? mapBounds,
-  });
-  Future<List<CloudFile>> timelineDayFiles(
-    Account account,
-    List<int> dayIds, {
-    List<String> path = const [],
-    bool favorites = false,
-    bool recursive = true,
-    bool resolvePaths = true,
-    RecognizedPerson? person,
-    PhotoMapBounds? mapBounds,
-  });
+
+  /// Null means the optional indexed timeline is unsupported. Empty results
+  /// are successful responses; other failures must be surfaced.
+  Future<TimelineResult?> timeline(Account account, TimelineQuery query);
   Future<List<TimelineFolder>> timelineFolders(
     Account account,
     List<String> path,

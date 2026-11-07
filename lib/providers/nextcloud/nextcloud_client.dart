@@ -802,47 +802,59 @@ class NextcloudClient implements CloudBackend {
   }
 
   @override
-  Future<List<TimelineDay>> mapDays(
-    Account account,
-    List<PhotoMapBounds> bounds,
-  ) async {
-    if (bounds.isEmpty) throw const FormatException('Choose a map area.');
-    final counts = <int, int>{};
-    for (final area in bounds) {
-      final days = await timelineDays(account, mapBounds: area);
-      for (final day in days!) {
-        counts.update(
-          day.id,
-          (count) => count + day.count,
-          ifAbsent: () => day.count,
-        );
-      }
+  Future<TimelineResult?> timeline(Account account, TimelineQuery query) async {
+    final bounds = query.mapBounds;
+    if (bounds != null && bounds.isEmpty) {
+      throw const FormatException('Choose a map area.');
     }
-    return [
-      for (final id in counts.keys.toList()..sort((a, b) => b.compareTo(a)))
-        TimelineDay(id, counts[id]!),
-    ];
-  }
-
-  @override
-  Future<List<CloudFile>> mapDayFiles(
-    Account account,
-    List<int> dayIds,
-    List<PhotoMapBounds> bounds,
-  ) async {
-    if (bounds.isEmpty) throw const FormatException('Choose a map area.');
+    final areas = bounds ?? <PhotoMapBounds?>[null];
+    final ids = query.dayIds;
+    if (ids == null) {
+      final counts = <int, int>{};
+      for (final area in areas) {
+        final days = await timelineDays(
+          account,
+          path: query.path,
+          recursive: query.recursive,
+          favorites: query.favorites,
+          optional: query.optional,
+          existenceOnly: query.existenceOnly,
+          person: query.person,
+          mapBounds: area,
+        );
+        if (days == null) return null;
+        if (bounds == null) return TimelineResult.index(days);
+        for (final day in days) {
+          counts.update(
+            day.id,
+            (count) => count + day.count,
+            ifAbsent: () => day.count,
+          );
+        }
+      }
+      return TimelineResult.index([
+        for (final id in counts.keys.toList()..sort((a, b) => b.compareTo(a)))
+          TimelineDay(id, counts[id]!),
+      ]);
+    }
     final files = <String, CloudFile>{};
-    for (final area in bounds) {
-      for (final file in await timelineDayFiles(
+    for (final area in areas) {
+      final result = await timelineDayFiles(
         account,
-        dayIds,
+        ids,
+        path: query.path,
+        favorites: query.favorites,
+        recursive: query.recursive,
+        resolvePaths: query.resolvePaths,
+        person: query.person,
         mapBounds: area,
-        resolvePaths: false,
-      )) {
+      );
+      if (bounds == null) return TimelineResult.items(result);
+      for (final file in result) {
         files[file.key] = file;
       }
     }
-    return files.values.toList();
+    return TimelineResult.items(files.values.toList());
   }
 
   /// Thumbnails for many files in one streamed Memories request. Files whose
@@ -912,7 +924,6 @@ class NextcloudClient implements CloudBackend {
     return previews;
   }
 
-  @override
   Future<List<TimelineDay>?> timelineDays(
     Account account, {
     List<String> path = const [],
@@ -944,7 +955,6 @@ class NextcloudClient implements CloudBackend {
         .toList();
   }
 
-  @override
   Future<List<CloudFile>> timelineDayFiles(
     Account account,
     List<int> dayIds, {

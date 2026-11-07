@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ncloud/app/app_controller.dart';
 import 'package:ncloud/core/cloud/cloud_backend.dart';
-import 'package:ncloud/discovery_models.dart';
 import 'package:ncloud/models.dart';
 
 class _DelayedStore implements SessionStore {
@@ -40,38 +39,21 @@ class _Backend implements CloudBackend {
   }
 
   @override
-  Future<List<TimelineDay>?> timelineDays(
-    Account account, {
-    List<String> path = const [],
-    bool recursive = true,
-    bool favorites = false,
-    bool optional = false,
-    bool existenceOnly = false,
-    RecognizedPerson? person,
-    PhotoMapBounds? mapBounds,
-  }) async => const [
-    TimelineDay(3, 1),
-    TimelineDay(2, 201),
-    TimelineDay(1, 201),
-  ];
-
-  @override
-  Future<List<CloudFile>> timelineDayFiles(
-    Account account,
-    List<int> dayIds, {
-    List<String> path = const [],
-    bool favorites = false,
-    bool recursive = true,
-    bool resolvePaths = true,
-    RecognizedPerson? person,
-    PhotoMapBounds? mapBounds,
-  }) async {
+  Future<TimelineResult?> timeline(Account account, TimelineQuery query) async {
+    final dayIds = query.dayIds;
+    if (dayIds == null) {
+      return const TimelineResult.index([
+        TimelineDay(3, 1),
+        TimelineDay(2, 201),
+        TimelineDay(1, 201),
+      ]);
+    }
     if (dayIds.single == 2) {
       dayRequested.complete();
-      return dayResult.future;
+      return TimelineResult.items(await dayResult.future);
     }
     if (dayIds.single == 1) nextDayRequested.complete();
-    return [
+    return TimelineResult.items([
       for (var i = 0; i < (dayIds.single == 3 ? 1 : 201); i++)
         CloudFile(
           path: ['Photos', '${dayIds.single}-$i.jpg'],
@@ -80,7 +62,7 @@ class _Backend implements CloudBackend {
           contentType: 'image/jpeg',
           captureDay: dayIds.single,
         ),
-    ];
+    ]);
   }
 
   @override

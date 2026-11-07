@@ -996,17 +996,19 @@ class AppController extends ChangeNotifier {
           );
         }
         if (timelineIndexAvailable == true && currentTab != 5) {
-          listing.days = mapBounds != null
-              ? await client.mapDays(session, mapBounds)
-              : currentTab == 0 && _initialDays != null
+          listing.days =
+              mapBounds == null && currentTab == 0 && _initialDays != null
               ? _initialDays
-              : await client.timelineDays(
+              : (await client.timeline(
                   session,
-                  path: path,
-                  favorites: currentTab == 2,
-                  recursive: _recursiveMedia(currentTab, path),
-                  person: person,
-                );
+                  TimelineQuery(
+                    path: path,
+                    favorites: currentTab == 2,
+                    recursive: _recursiveMedia(currentTab, path),
+                    person: person,
+                    mapBounds: mapBounds,
+                  ),
+                ))?.days;
           if (version != _loadVersion || account != session || _disposed) {
             return;
           }
@@ -1188,7 +1190,10 @@ class AppController extends ChangeNotifier {
     if (pending != null) return pending;
     final generation = _cacheGeneration;
     final detection = () async {
-      final days = await client.timelineDays(session, optional: true);
+      final days = (await client.timeline(
+        session,
+        const TimelineQuery(optional: true),
+      ))?.days;
       if (account != session || _disposed || generation != _cacheGeneration) {
         return;
       }
@@ -1239,17 +1244,18 @@ class AppController extends ChangeNotifier {
       );
       final files =
           cached ??
-          (mapBounds != null
-              ? await client.mapDayFiles(session, ids, mapBounds)
-              : await client.timelineDayFiles(
-                  session,
-                  ids,
-                  path: path,
-                  favorites: currentTab == 2,
-                  recursive: recursive,
-                  resolvePaths: !_pathless(currentTab),
-                  person: person,
-                ));
+          (await client.timeline(
+            session,
+            TimelineQuery(
+              dayIds: ids,
+              path: path,
+              favorites: currentTab == 2,
+              recursive: recursive,
+              resolvePaths: mapBounds == null && !_pathless(currentTab),
+              person: person,
+              mapBounds: mapBounds,
+            ),
+          ))!.items!;
       return (files: files, days: ids, scanned: files.length);
     }
     final page = await client.searchPage(
@@ -1503,11 +1509,10 @@ class AppController extends ChangeNotifier {
         return treeChanged || metadataSweep;
       }
       final path = [...directory];
-      final days = await client.timelineDays(
+      final days = (await client.timeline(
         session,
-        path: path,
-        recursive: _recursiveMedia(0, path),
-      );
+        TimelineQuery(path: path, recursive: _recursiveMedia(0, path)),
+      ))?.days;
       if (days == null ||
           _disposed ||
           account != session ||
@@ -1661,17 +1666,18 @@ class AppController extends ChangeNotifier {
         );
         final files =
             cached ??
-            (mapBounds != null
-                ? await client.mapDayFiles(session, batch, mapBounds)
-                : await client.timelineDayFiles(
-                    session,
-                    batch,
-                    path: path,
-                    favorites: currentTab == 2,
-                    recursive: _recursiveMedia(currentTab, path),
-                    resolvePaths: !_pathless(currentTab),
-                    person: person,
-                  ));
+            (await client.timeline(
+              session,
+              TimelineQuery(
+                dayIds: batch,
+                path: path,
+                favorites: currentTab == 2,
+                recursive: _recursiveMedia(currentTab, path),
+                resolvePaths: mapBounds == null && !_pathless(currentTab),
+                person: person,
+                mapBounds: mapBounds,
+              ),
+            ))!.items!;
         if (version != _loadVersion ||
             account != session ||
             _disposed ||
@@ -2138,12 +2144,14 @@ class AppController extends ChangeNotifier {
         List<TimelineFolder> children;
         List<CloudFile> covers;
         if (timelineIndexAvailable == true) {
-          final direct = await client.timelineDays(
+          final direct = (await client.timeline(
             session,
-            path: folder.path,
-            recursive: false,
-            existenceOnly: true,
-          );
+            TimelineQuery(
+              path: folder.path,
+              recursive: false,
+              existenceOnly: true,
+            ),
+          ))?.days;
           covers = direct!.isEmpty
               ? []
               : folder.previews.isNotEmpty
