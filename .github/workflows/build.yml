@@ -307,7 +307,19 @@ jobs:
         timeout-minutes: 15
         run: |
           start=$SECONDS
-          test -s "$RUNNER_TEMP/ncloud-simulator-device"
+          for attempt in $(seq 1 300); do
+            if [ -f "$RUNNER_TEMP/ncloud-simulator-failed" ]; then
+              cat "$RUNNER_TEMP/ncloud-simulator-boot.log"
+              exit 1
+            fi
+            if [ -s "$RUNNER_TEMP/ncloud-simulator-device" ]; then break; fi
+            sleep 1
+          done
+          if [ ! -s "$RUNNER_TEMP/ncloud-simulator-device" ]; then
+            cat "$RUNNER_TEMP/ncloud-simulator-boot.log"
+            echo "Simulator discovery did not finish within 300 seconds." >&2
+            exit 1
+          fi
           device=$(cat "$RUNNER_TEMP/ncloud-simulator-device")
           xcodebuild build-for-testing \
             -workspace ios/Runner.xcworkspace -scheme Runner \
