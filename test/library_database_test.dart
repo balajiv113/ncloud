@@ -4,8 +4,8 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ncloud/file_store.dart';
-import 'package:ncloud/library_database.dart';
-import 'package:ncloud/local_cache.dart';
+import 'package:ncloud/core/storage/library_database.dart';
+import 'package:ncloud/core/storage/local_cache.dart';
 import 'package:ncloud/models.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 

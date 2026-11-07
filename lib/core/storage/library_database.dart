@@ -3,8 +3,8 @@ import 'dart:io';
 
 import 'package:sqflite/sqflite.dart';
 
-import 'file_store.dart';
-import 'models.dart';
+import '../../file_store.dart';
+import '../../models.dart';
 
 /// Disposable, account-scoped metadata. Originals and their manifest never
 /// enter this database. No timer or maintenance runs while the app is idle.

@@ -7,9 +7,9 @@ import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart' show DatabaseFactory, DatabaseException;
 
-import 'file_store.dart';
+import '../../file_store.dart';
 import 'library_database.dart';
-import 'models.dart';
+import '../../models.dart';
 
 String cacheFailureMessage(String operation, Object error) {
   if (error is DatabaseException) {

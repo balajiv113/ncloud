@@ -6,7 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:ncloud/app_controller.dart';
 import 'package:ncloud/file_store.dart';
-import 'package:ncloud/local_cache.dart';
+import 'package:ncloud/core/storage/local_cache.dart';
 import 'package:ncloud/models.dart';
 import 'package:ncloud/providers/nextcloud/nextcloud_client.dart';
 

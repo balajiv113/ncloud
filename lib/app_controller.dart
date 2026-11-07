@@ -11,7 +11,7 @@ import 'diagnostics.dart';
 import 'discovery_models.dart';
 import 'file_store.dart';
 import 'features/backup/folder_sync.dart';
-import 'local_cache.dart';
+import 'core/storage/local_cache.dart';
 import 'models.dart';
 import 'media_listing.dart';
 import 'cloud_backend.dart';

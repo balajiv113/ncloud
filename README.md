@@ -20,6 +20,8 @@ People discovery uses Memories' Recognize clusters directly. The list may includ
 
 `media_listing.dart` owns cached listing membership/paging, and `features/photos/timeline_scrubber.dart` owns scrolling gestures and accessibility. The scrubber remains available to screen readers while visually hidden, with date announcements and increase/decrease actions.
 
+Shared library metadata and offline-file storage live in `lib/core/storage/`; their on-disk locations and schemas are independent of their source-code paths.
+
 ## Release readiness and support
 
 This remains a preview, not a production-certified release. Production acceptance requires device evidence for interrupted/conflicting transfers and offline preservation, first login/reconnect through the actual OIDC deployment, signed builds/upgrades, background lifecycle behavior, and profile-mode startup/frame/memory measurements on supported Android and iOS devices. A static security review and passing tests do not replace these gates.
