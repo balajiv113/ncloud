@@ -326,6 +326,54 @@ void main() {
     },
   );
 
+  test('share lookup resolves lazily and cannot cross accounts', () async {
+    final backend = _ShareBackend();
+    final controller = AppController(store: _SessionStore(), client: backend)
+      ..account = account;
+    addTearDown(controller.dispose);
+    const file = CloudFile(
+      path: [CloudFile.pendingRoot, 'opaque:1'],
+      name: 'photo.jpg',
+      isDirectory: false,
+      id: 'opaque:1',
+    );
+    final session = controller.shareSession(file);
+    final pending = session.create();
+    final failure = expectLater(pending, throwsA(isA<CloudException>()));
+    expect(backend.resolutionCalls, 1);
+    expect(backend.createCalls, 0);
+    controller.account = const _PortableAccount('portable|other');
+    backend.resolution.complete({
+      'opaque:1': file.atPath(['Pictures', 'photo.jpg']),
+    });
+    await failure;
+    expect(backend.createCalls, 0);
+  });
+
+  test(
+    'playback preparation rejects a stale account after resolving',
+    () async {
+      final backend = _PortableBackend();
+      final controller = AppController(store: _SessionStore(), client: backend)
+        ..account = account;
+      addTearDown(controller.dispose);
+      const file = CloudFile(
+        path: [CloudFile.pendingRoot, 'opaque:1'],
+        name: 'video.mp4',
+        isDirectory: false,
+        contentType: 'video/mp4',
+        id: 'opaque:1',
+      );
+      final pending = controller.preparePlayback(file);
+      final failure = expectLater(pending, throwsA(isA<CloudException>()));
+      controller.account = const _PortableAccount('portable|other');
+      backend.resolution.complete({
+        'opaque:1': file.atPath(['Videos', 'video.mp4']),
+      });
+      await failure;
+    },
+  );
+
   test(
     'share panel operations are bound to their initiating account',
     () async {
@@ -344,6 +392,8 @@ void main() {
       await session.revoke(created);
       final pending = session.list();
       final failed = expectLater(pending, throwsA(isA<CloudException>()));
+      await Future<void>.delayed(Duration.zero);
+      expect(backend.listCalls, 1);
       controller.account = const _PortableAccount('portable|other');
       backend.pendingShares.complete([created]);
       await failed;
@@ -781,7 +831,9 @@ void main() {
       expect(controller.items, hasLength(3));
       expect(controller.hasMore, isFalse);
       expect(backend.requestedLimits, [200, 200]);
-      final source = controller.playbackSource(controller.items.first)!;
+      final source = (await controller.preparePlayback(
+        controller.items.first,
+      )).source!;
       expect(source.uri.host, 'media.example');
       expect(source.headers, {'Authorization': 'Bearer media-token'});
       expect(await controller.preview(controller.items.first, size: 64), [

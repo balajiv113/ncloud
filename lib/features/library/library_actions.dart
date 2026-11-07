@@ -89,15 +89,18 @@ Future<void> fileActions(
     ),
   );
   if (!context.mounted || action == null || c.busy) return;
-  try {
-    file = await c.resolve(file);
-  } catch (e) {
-    if (context.mounted) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(errorMessage(e))));
+  if (action == 'details' ||
+      ((action == 'move' || action == 'copy') && file.isDirectory)) {
+    try {
+      file = await c.resolve(file);
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(errorMessage(e))));
+      }
+      return;
     }
-    return;
   }
   if (!context.mounted) return;
   switch (action) {

@@ -2619,6 +2619,7 @@ class AppController extends ChangeNotifier {
       account: session,
       file: file,
       isCurrent: () => !_disposed && !demo && identical(account, session),
+      resolve: resolve,
     );
   }
 
@@ -2778,11 +2779,27 @@ class AppController extends ChangeNotifier {
     return _originalTransfers.offlineCopy(session, file);
   }
 
-  /// Direct authenticated stream for the platform video player.
-  PlaybackSource? playbackSource(CloudFile file) {
+  /// Prepares either a saved original or an authenticated seekable stream.
+  Future<({File? offline, PlaybackSource? source})> preparePlayback(
+    CloudFile file, {
+    bool preferStream = false,
+  }) async {
     final session = account;
-    if (demo || session == null) return null;
-    return client.playbackSource(session, file);
+    if (demo || session == null) {
+      throw const CloudException('Reconnect to stream this video.');
+    }
+    file = await resolve(file);
+    if (_disposed || !identical(account, session) || demo) {
+      throw const CloudException('The account changed. Open this video again.');
+    }
+    final copy = preferStream ? null : await offlineCopy(file);
+    if (_disposed || !identical(account, session) || demo) {
+      throw const CloudException('The account changed. Open this video again.');
+    }
+    return (
+      offline: copy,
+      source: copy == null ? client.playbackSource(session, file) : null,
+    );
   }
 
   /// Explicitly saved original, outside the bounded browsing cache.

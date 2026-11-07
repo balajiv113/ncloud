@@ -753,11 +753,11 @@ void main() {
     expect(second.refreshing, isFalse);
   });
 
-  test('video streams keep credentials in headers, not the URL', () {
+  test('video streams keep credentials in headers, not the URL', () async {
     final c = AppController(store: MemoryStore(), client: NextcloudClient())
       ..account = account;
     addTearDown(c.dispose);
-    final source = c.playbackSource(photo())!;
+    final source = (await c.preparePlayback(photo())).source!;
     expect(source.uri.userInfo, isEmpty);
     expect(source.uri.path, contains('/remote.php/dav/files/alice/Photos/'));
     expect(source.headers['Authorization'], account.authorization);
