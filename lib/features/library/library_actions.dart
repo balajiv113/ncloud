@@ -9,8 +9,9 @@ import '../../core/cloud/cloud_backend.dart';
 import '../../diagnostics.dart';
 import '../backup/folder_sync_screen.dart';
 import '../../models.dart';
-import '../../screens.dart';
+import '../../core/ui/messages.dart';
 import 'folder_picker.dart';
+import 'library_dialogs.dart';
 import 'share_session.dart';
 
 Future<bool> confirmDelete(BuildContext context, List<CloudFile> files) async =>

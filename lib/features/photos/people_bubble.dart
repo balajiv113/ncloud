@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 
 import '../../app/app_controller.dart';
+import '../../diagnostics.dart';
 import '../../discovery_models.dart';
 
 class PeopleBubble extends StatefulWidget {

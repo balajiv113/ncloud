@@ -6,11 +6,12 @@ import 'package:latlong2/latlong.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../app/app_controller.dart';
+import '../../diagnostics.dart';
 import '../../discovery_models.dart';
 import '../library/media_tile.dart';
 import '../../models.dart';
 import '../../core/cloud/cloud_backend.dart';
-import '../../screens.dart';
+import '../../core/ui/messages.dart';
 import 'photo_map_session.dart';
 
 class PhotoMapScreen extends StatefulWidget {

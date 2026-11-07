@@ -3,7 +3,6 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../features/library/demo.dart';
@@ -29,35 +28,6 @@ export '../features/library/preview_batcher.dart' show PreviewCancelled;
 
 /// A fetched index batch or page with its opaque continuation.
 typedef _Page = ({List<CloudFile> files, List<int> days, String? nextCursor});
-
-String errorMessage(Object error) {
-  Diagnostics.session.record(error);
-  return switch (error) {
-    CloudException() => error.message,
-    FormatException() =>
-      'Invalid address, name, or server response. ${error.message}',
-    SocketException() => 'No connection to the server. Check your network.',
-    FileSystemException() =>
-      'Cannot access this file. Check free space and permissions.',
-    TimeoutException() => 'The operation timed out. Please try again.',
-    PlatformException()
-        when const {
-          'photos_permission',
-          'photos_changed',
-          'photos_album',
-          'photos_timeout',
-          'photos_cancelled',
-          'photos_unavailable',
-          'photos_export',
-          'backup_schedule',
-        }.contains(error.code) =>
-      error.message ?? 'Album backup needs attention (${error.code}).',
-    PlatformException() =>
-      'A device service failed. Please retry or restart the app.',
-    _ =>
-      'The operation failed unexpectedly. Please retry and check server compatibility.',
-  };
-}
 
 class AppController extends ChangeNotifier {
   AppController({

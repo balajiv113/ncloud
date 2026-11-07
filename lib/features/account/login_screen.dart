@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-import 'app/app_controller.dart';
-import 'models.dart';
+import '../../app/app_controller.dart';
+import '../../core/ui/messages.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key, required this.controller});
@@ -181,118 +180,4 @@ class _LoginScreenState extends State<LoginScreen> {
       ),
     );
   }
-}
-
-class NameDialog extends StatefulWidget {
-  const NameDialog({super.key, this.title = 'New folder', this.initial = ''});
-  final String title;
-  final String initial;
-  @override
-  State<NameDialog> createState() => _NameDialogState();
-}
-
-class _NameDialogState extends State<NameDialog> {
-  late final _name = TextEditingController(text: widget.initial);
-  final _form = GlobalKey<FormState>();
-  @override
-  void dispose() {
-    _name.dispose();
-    super.dispose();
-  }
-
-  void _submit() {
-    if (_form.currentState!.validate()) {
-      Navigator.pop(context, _name.text.trim());
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) => AlertDialog(
-    title: Text(widget.title),
-    content: Form(
-      key: _form,
-      child: TextFormField(
-        controller: _name,
-        autofocus: true,
-        decoration: const InputDecoration(labelText: 'Name'),
-        onFieldSubmitted: (_) => _submit(),
-        validator: (value) {
-          try {
-            validateName(value?.trim() ?? '');
-            return null;
-          } on FormatException catch (e) {
-            return e.message;
-          }
-        },
-      ),
-    ),
-    actions: [
-      TextButton(
-        onPressed: () => Navigator.pop(context),
-        child: const Text('Cancel'),
-      ),
-      FilledButton(onPressed: _submit, child: const Text('Save')),
-    ],
-  );
-}
-
-Future<void> shareFile(
-  BuildContext context,
-  AppController controller,
-  CloudFile file,
-) async {
-  try {
-    final output = await controller.download(file);
-    if (!context.mounted) return;
-    final box = context.findRenderObject() as RenderBox?;
-    await SharePlus.instance.share(
-      ShareParams(
-        files: [XFile(output.path)],
-        sharePositionOrigin: box == null
-            ? null
-            : box.localToGlobal(Offset.zero) & box.size,
-      ),
-    );
-  } catch (e) {
-    if (context.mounted) showError(context, e);
-  }
-}
-
-void showError(BuildContext context, Object error) => ScaffoldMessenger.of(
-  context,
-).showSnackBar(SnackBar(content: Text(errorMessage(error))));
-
-class MessageCard extends StatelessWidget {
-  const MessageCard({
-    super.key,
-    required this.message,
-    this.isError = false,
-    this.onRetry,
-  });
-  final String message;
-  final bool isError;
-  final VoidCallback? onRetry;
-  @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.all(14),
-    decoration: BoxDecoration(
-      color: isError
-          ? Theme.of(context).colorScheme.errorContainer
-          : Theme.of(context).colorScheme.primaryContainer,
-      borderRadius: BorderRadius.circular(16),
-    ),
-    child: Row(
-      children: [
-        Icon(isError ? Icons.error_outline : Icons.info_outline),
-        const SizedBox(width: 12),
-        Expanded(child: Text(message)),
-        if (onRetry != null)
-          IconButton(
-            tooltip: 'Retry',
-            onPressed: onRetry,
-            icon: const Icon(Icons.refresh),
-          ),
-      ],
-    ),
-  );
 }

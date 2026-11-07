@@ -36,6 +36,8 @@ People discovery uses Memories' Recognize clusters directly. The list may includ
 
 `features/library/` owns the library screens, viewer, cached listing membership, paging and foreground change monitoring; `features/photos/timeline_scrubber.dart` owns scrolling gestures and accessibility. The scrubber remains available to screen readers while visually hidden, with date announcements and increase/decrease actions.
 
+The login screen belongs to `features/account/`; reusable error presentation lives in `core/ui/`, while library-specific dialogs and sharing stay in `features/library/`.
+
 Shared library metadata and offline-file storage live in `lib/core/storage/`; their on-disk locations and schemas are independent of their source-code paths.
 
 Provider accounts supply a stable, non-secret storage key with two `|`-separated components and no additional separators. These components scope cached collections and backup ownership; Nextcloud keeps its existing server/user key so current offline downloads remain accessible.

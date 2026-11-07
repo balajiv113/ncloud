@@ -15,7 +15,8 @@ import 'media_tile.dart';
 import '../../models.dart';
 import '../photos/people_bubble.dart';
 import '../photos/photo_map_screen.dart';
-import '../../screens.dart';
+import '../../core/ui/messages.dart';
+import 'library_dialogs.dart';
 import '../photos/timeline_layout.dart';
 import '../photos/timeline_scrubber.dart';
 

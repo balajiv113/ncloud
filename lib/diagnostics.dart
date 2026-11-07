@@ -6,6 +6,35 @@ import 'package:flutter/services.dart';
 
 import 'core/cloud/cloud_backend.dart';
 
+String errorMessage(Object error) {
+  Diagnostics.session.record(error);
+  return switch (error) {
+    CloudException() => error.message,
+    FormatException() =>
+      'Invalid address, name, or server response. ${error.message}',
+    SocketException() => 'No connection to the server. Check your network.',
+    FileSystemException() =>
+      'Cannot access this file. Check free space and permissions.',
+    TimeoutException() => 'The operation timed out. Please try again.',
+    PlatformException()
+        when const {
+          'photos_permission',
+          'photos_changed',
+          'photos_album',
+          'photos_timeout',
+          'photos_cancelled',
+          'photos_unavailable',
+          'photos_export',
+          'backup_schedule',
+        }.contains(error.code) =>
+      error.message ?? 'Album backup needs attention (${error.code}).',
+    PlatformException() =>
+      'A device service failed. Please retry or restart the app.',
+    _ =>
+      'The operation failed unexpectedly. Please retry and check server compatibility.',
+  };
+}
+
 enum FailureCategory {
   authentication,
   permission,

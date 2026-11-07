@@ -8,7 +8,8 @@ import 'library_actions.dart';
 import 'media_tile.dart';
 import '../../models.dart';
 import '../../core/cloud/cloud_backend.dart';
-import '../../screens.dart';
+import '../../core/ui/messages.dart';
+import 'library_dialogs.dart';
 
 class AssetViewer extends StatefulWidget {
   const AssetViewer({
