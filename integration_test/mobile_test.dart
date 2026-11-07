@@ -243,10 +243,32 @@ Future<String> _testNativeContract() async {
       wifiOnly: false,
     );
     final saved = sync.pairs.single;
+    final worker = SyncJournal(path: journal.path);
+    try {
+      await worker.writeState(saved.id, {
+        'status': 'success',
+        'transferred': 1,
+      });
+    } finally {
+      await worker.close();
+    }
+    await sync.refreshResults();
+    _require(
+      sync.error == null && sync.results[saved.id]?['status'] == 'success',
+      'Worker teardown broke foreground result storage: ${sync.error}',
+    );
+    await sync.add(
+      'Edited folder',
+      saved.folder,
+      saved.remote,
+      wifiOnly: false,
+      replacing: saved,
+    );
     await journal.close();
     final reopened = await journal.pair(saved.id);
     _require(
       reopened?.folder.token == saved.folder.token &&
+          reopened?.name == 'Edited folder' &&
           reopened?.cloudRoot.join('/') == 'Backup/Source',
       'The saved pair did not survive closing and reopening SQLite.',
     );

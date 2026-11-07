@@ -107,6 +107,30 @@ void main() {
   );
 
   test(
+    'closing a worker journal preserves foreground results, saving and backup',
+    () async {
+      final pair = await add('Camera');
+      final worker = SyncJournal(path: journal.path);
+      try {
+        await worker.writeState(pair.id, {
+          'status': 'success',
+          'transferred': 1,
+        });
+      } finally {
+        await worker.close();
+      }
+      await sync.refreshResults();
+      expect(sync.error, isNull);
+      expect(sync.results[pair.id]?['status'], 'success');
+      await add('Second');
+      await device.put('photo.jpg', 'original');
+      await sync.run(pair);
+      expect(sync.error, isNull);
+      expect(cloud.uploads, 1);
+    },
+  );
+
+  test(
     'save failure never reports success or publishes an unsaved pair',
     () async {
       await journal.close();

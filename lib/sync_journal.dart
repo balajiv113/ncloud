@@ -118,6 +118,8 @@ class SyncJournal {
     return _database = await (factory ?? databaseFactory).openDatabase(
       location,
       options: OpenDatabaseOptions(
+        // Each engine must close only its own connection when a worker ends.
+        singleInstance: false,
         version: 2,
         onConfigure: (db) async {
           await db.rawQuery('PRAGMA busy_timeout=5000');
