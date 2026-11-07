@@ -15,6 +15,7 @@ import '../core/storage/local_cache.dart';
 import '../models.dart';
 import '../features/library/media_listing.dart';
 import '../features/library/file_resolver.dart';
+import '../features/library/original_transfers.dart';
 import '../features/library/share_session.dart';
 import '../features/photos/photo_map_session.dart';
 import '../features/library/preview_batcher.dart';
@@ -225,6 +226,10 @@ class AppController extends ChangeNotifier {
     account: () => account,
     active: () => !_disposed,
     apply: _applyResolved,
+  );
+  late final OriginalTransfers _originalTransfers = OriginalTransfers(
+    client: client,
+    cache: cache,
   );
   Timer? _thumbnailWarmupTimer;
   final List<CloudFile> _thumbnailWarmupQueue = [];
@@ -2615,38 +2620,20 @@ class AppController extends ChangeNotifier {
   }
 
   CloudFile? _applyResolved(CloudFile original, CloudFile? real) {
-    final key = CloudFile(
-      path: [CloudFile.pendingRoot, original.id!],
-      name: original.id!,
-      isDirectory: false,
-    ).key;
-    final placeholder = fileStore[key];
-    final metadata = placeholder ?? original;
-    final day = metadata.captureDay;
-    final file = real != null && day != null
-        ? real.withCaptureDate(
-            metadata.taken ?? real.modified ?? DateTime.now(),
-            metadata.etag ?? real.etag,
-            day: day,
-          )
-        : real;
-    if (placeholder == null && real != null) return file;
-    final renamed = file == null ? <String, String>{} : {key: file.key};
-    final gone = file == null ? {key} : <String>{};
-    if (file != null) fileStore.putAll([file]);
-    var changed = false;
-    for (final listing in {..._listings.values, ?_activeListing}) {
-      if (listing.replace(renamed, gone)) changed = true;
-    }
-    fileStore.removeKeys({...renamed.keys, ...gone});
-    if (!changed) return file;
+    final result = reconcileFileLocation(
+      fileStore,
+      {..._listings.values, ?_activeListing},
+      original,
+      real,
+    );
+    if (!result.listingsChanged) return result.file;
     if (_activeListing case final listing?) {
       items = fileStore.resolve(listing.keys);
       if (tab == 0) _libraryFiles = items;
     }
     _persistStore();
     notifyListeners();
-    return file;
+    return result.file;
   }
 
   /// Resolved location of [file]; actions call this before touching paths.
@@ -2818,15 +2805,8 @@ class AppController extends ChangeNotifier {
       if (known == null) return null;
       file = known;
     }
-    final copy = await cache!.original(_originalKey(session, file), file.name);
-    return await copy.exists() && await copy.length() == file.size
-        ? copy
-        : null;
+    return _originalTransfers.offlineCopy(session, file);
   }
-
-  String _originalKey(Account session, CloudFile file) =>
-      'original|${session.storageKey}|${file.id ?? file.key}|'
-      '${file.modified?.microsecondsSinceEpoch}|${file.size}';
 
   /// Direct authenticated stream for the platform video player.
   PlaybackSource? playbackSource(CloudFile file) {
@@ -2890,8 +2870,6 @@ class AppController extends ChangeNotifier {
     total = 0;
     completed = 0;
     notifyListeners();
-    File? output;
-    Directory? transfer;
     try {
       file = await resolve(file);
       void checkSession() {
@@ -2902,87 +2880,15 @@ class AppController extends ChangeNotifier {
         }
       }
 
-      checkSession();
-      final target = offline
-          ? await cache!.original(_originalKey(session, file), file.name)
-          : null;
-      Future<File> publishOffline() async {
-        checkSession();
-        final key = 'offline|${session.storageKey}';
-        final saved = await cache!.readOfflineListing(key);
-        checkSession();
-        await cache!.writeOfflineListing(key, [
-          ...saved.where((f) => f.key != file.key),
-          file,
-        ]);
-        return target!;
-      }
-
-      if (target != null &&
-          await target.exists() &&
-          await target.length() == file.size) {
-        return await publishOffline();
-      }
-      final folder = Directory(
-        '${(await getTemporaryDirectory()).path}/ncloud-downloads',
-      );
-      await folder.create(recursive: true);
-      validateName(file.name);
-      checkSession();
-      if (offline && file.etag?.isNotEmpty != true) {
-        throw const CloudException(
-          'A file revision is required for safe sync.',
-        );
-      }
-      final response = await client.download(
+      return await _originalTransfers.download(
         session,
         file,
-        expectedRevision: offline ? file.etag : null,
+        offline: offline,
+        checkSession: checkSession,
       );
-      // Separate each transfer so identical filenames never collide.
-      transfer = await folder.createTemp('transfer-');
-      output = File('${transfer.path}/${file.name}');
-      final sink = output.openWrite();
-      try {
-        await sink.addStream(
-          response.stream.timeout(const Duration(seconds: 45)),
-        );
-        await sink.flush();
-      } finally {
-        await sink.close();
-      }
-      if (await output.length() != file.size) {
-        throw const CloudException(
-          'Download size did not match the file. Refresh and retry.',
-        );
-      }
-      checkSession();
-      if (target != null) {
-        final partial = File('${target.path}.part');
-        try {
-          await output.copy(partial.path);
-          checkSession();
-          await partial.rename(target.path);
-        } finally {
-          if (await partial.exists()) await partial.delete();
-        }
-        return await publishOffline();
-      }
-      return output;
-    } catch (_) {
-      if (transfer != null && await transfer.exists()) {
-        await transfer.delete(recursive: true);
-      }
-      rethrow;
     } finally {
-      try {
-        if (offline && transfer != null && await transfer.exists()) {
-          await transfer.delete(recursive: true);
-        }
-      } finally {
-        busy = false;
-        notifyListeners();
-      }
+      busy = false;
+      notifyListeners();
     }
   }
 

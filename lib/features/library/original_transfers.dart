@@ -1,0 +1,117 @@
+import 'dart:io';
+
+import 'package:path_provider/path_provider.dart';
+
+import '../../core/cloud/cloud_backend.dart';
+import '../../core/storage/local_cache.dart';
+import '../../models.dart';
+
+/// Downloads originals and publishes offline membership only after validation.
+class OriginalTransfers {
+  OriginalTransfers({required this.client, required this.cache});
+
+  final CloudBackend client;
+  final LocalCache? cache;
+
+  static String _originalKey(Account account, CloudFile file) =>
+      'original|${account.storageKey}|${file.id ?? file.key}|'
+      '${file.modified?.microsecondsSinceEpoch}|${file.size}';
+
+  Future<File?> offlineCopy(Account account, CloudFile file) async {
+    final storage = cache;
+    if (storage == null) return null;
+    final copy = await storage.original(_originalKey(account, file), file.name);
+    return await copy.exists() && await copy.length() == file.size
+        ? copy
+        : null;
+  }
+
+  Future<File> download(
+    Account account,
+    CloudFile file, {
+    required bool offline,
+    required void Function() checkSession,
+  }) async {
+    final storage = cache;
+    if (offline && storage == null) {
+      throw const CloudException('Downloads need a connected server.');
+    }
+    checkSession();
+    final target = offline
+        ? await storage!.original(_originalKey(account, file), file.name)
+        : null;
+
+    Future<File> publishOffline() async {
+      checkSession();
+      final key = 'offline|${account.storageKey}';
+      final saved = await storage!.readOfflineListing(key);
+      checkSession();
+      await storage.writeOfflineListing(key, [
+        ...saved.where((f) => f.key != file.key),
+        file,
+      ]);
+      return target!;
+    }
+
+    if (target != null &&
+        await target.exists() &&
+        await target.length() == file.size) {
+      return publishOffline();
+    }
+    Directory? transfer;
+    try {
+      final folder = Directory(
+        '${(await getTemporaryDirectory()).path}/ncloud-downloads',
+      );
+      await folder.create(recursive: true);
+      validateName(file.name);
+      checkSession();
+      if (offline && file.etag?.isNotEmpty != true) {
+        throw const CloudException(
+          'A file revision is required for safe sync.',
+        );
+      }
+      final response = await client.download(
+        account,
+        file,
+        expectedRevision: offline ? file.etag : null,
+      );
+      transfer = await folder.createTemp('transfer-');
+      final output = File('${transfer.path}/${file.name}');
+      final sink = output.openWrite();
+      try {
+        await sink.addStream(
+          response.stream.timeout(const Duration(seconds: 45)),
+        );
+        await sink.flush();
+      } finally {
+        await sink.close();
+      }
+      if (await output.length() != file.size) {
+        throw const CloudException(
+          'Download size did not match the file. Refresh and retry.',
+        );
+      }
+      checkSession();
+      if (target == null) return output;
+      final partial = File('${target.path}.part');
+      try {
+        await output.copy(partial.path);
+        checkSession();
+        await partial.rename(target.path);
+      } finally {
+        if (await partial.exists()) await partial.delete();
+      }
+      return await publishOffline();
+    } catch (_) {
+      if (transfer != null && await transfer.exists()) {
+        await transfer.delete(recursive: true);
+      }
+      rethrow;
+    } finally {
+      if (offline && transfer != null && await transfer.exists()) {
+        await transfer.delete(recursive: true);
+      }
+    }
+  }
+}

@@ -9,6 +9,7 @@ import 'package:ncloud/features/library/file_resolver.dart';
 import 'package:ncloud/features/library/media_listing.dart';
 import 'package:ncloud/core/cloud/cloud_backend.dart';
 import 'package:ncloud/core/storage/local_cache.dart';
+import 'package:ncloud/core/storage/file_store.dart';
 import 'package:ncloud/discovery_models.dart';
 import 'package:ncloud/models.dart';
 
@@ -217,6 +218,58 @@ class _MapBackend extends _PortableBackend {
 
 void main() {
   const account = _PortableAccount('portable|account');
+
+  test(
+    'resolved locations reconcile every listing and retain timeline data',
+    () {
+      final store = FileStore();
+      final first = MediaListing();
+      final second = MediaListing();
+      final pending = CloudFile(
+        path: const [CloudFile.pendingRoot, 'opaque:1'],
+        name: 'photo.jpg',
+        isDirectory: false,
+        id: 'opaque:1',
+        taken: DateTime.utc(2020, 3, 5),
+        captureDay: 18326,
+        etag: 'timeline-revision',
+      );
+      final real = pending.atPath(['Pictures', 'photo.jpg']);
+      first.add(store, [pending]);
+      second.add(store, [pending, real]);
+      final result = reconcileFileLocation(
+        store,
+        [first, second],
+        pending,
+        real,
+      );
+      expect(result.listingsChanged, isTrue);
+      expect(result.file!.captureDay, pending.captureDay);
+      expect(result.file!.etag, 'timeline-revision');
+      expect(first.keys, [real.key]);
+      expect(second.keys, [real.key]);
+      expect(store[pending.key], isNull);
+      expect(store[real.key]!.taken, pending.taken);
+    },
+  );
+
+  test('missing locations are removed from every listing', () {
+    final store = FileStore();
+    const pending = CloudFile(
+      path: [CloudFile.pendingRoot, 'opaque:1'],
+      name: 'photo.jpg',
+      isDirectory: false,
+      id: 'opaque:1',
+    );
+    final first = MediaListing()..add(store, [pending]);
+    final second = MediaListing()..add(store, [pending]);
+    final result = reconcileFileLocation(store, [first, second], pending, null);
+    expect(result.file, isNull);
+    expect(result.listingsChanged, isTrue);
+    expect(first.keys, isEmpty);
+    expect(second.keys, isEmpty);
+    expect(store[pending.key], isNull);
+  });
 
   test(
     'map session merges wrapped clusters and stops superseded requests',

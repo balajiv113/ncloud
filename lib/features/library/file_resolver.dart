@@ -1,5 +1,39 @@
 import '../../core/cloud/cloud_backend.dart';
+import '../../core/storage/file_store.dart';
 import '../../models.dart';
+import 'media_listing.dart';
+
+/// Replaces a pathless entry in the shared store and every loaded listing.
+({CloudFile? file, bool listingsChanged}) reconcileFileLocation(
+  FileStore store,
+  Iterable<MediaListing> listings,
+  CloudFile original,
+  CloudFile? real,
+) {
+  final key = original.key;
+  final placeholder = store[key];
+  final metadata = placeholder ?? original;
+  final day = metadata.captureDay;
+  final file = real != null && day != null
+      ? real.withCaptureDate(
+          metadata.taken ?? real.modified ?? DateTime.now(),
+          metadata.etag ?? real.etag,
+          day: day,
+        )
+      : real;
+  if (placeholder == null && real != null) {
+    return (file: file, listingsChanged: false);
+  }
+  final renamed = file == null ? <String, String>{} : {key: file.key};
+  final gone = file == null ? {key} : <String>{};
+  if (file != null) store.putAll([file]);
+  var changed = false;
+  for (final listing in listings) {
+    if (listing.replace(renamed, gone)) changed = true;
+  }
+  store.removeKeys({...renamed.keys, ...gone});
+  return (file: file, listingsChanged: changed);
+}
 
 /// Resolves lazy library entries only when an action requires their location.
 class FileResolver {
