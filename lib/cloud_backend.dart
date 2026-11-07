@@ -44,7 +44,6 @@ abstract interface class CloudBackend {
   );
 
   MediaSource streamSource(Account account, CloudFile file);
-  Future<List<CloudFile>> listFiles(Account account, List<String> path);
   Future<({CloudFile? self, List<CloudFile> children})> listFolder(
     Account account,
     List<String> path,

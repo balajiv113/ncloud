@@ -171,27 +171,33 @@ class CloudFolders implements CloudBackend {
   }
 
   @override
-  Future<List<CloudFile>> listFiles(Account account, List<String> path) async {
+  Future<({CloudFile? self, List<CloudFile> children})> listFolder(
+    Account account,
+    List<String> path,
+  ) async {
     if (listingFails) throw const CloudException('Listing failed');
     final prefix = path.isEmpty ? '' : '${path.join('/')}/';
     if (!folders.contains(path.join('/'))) {
       throw const CloudException('Folder missing');
     }
-    return [
-      for (final folder in folders)
-        if (folder.startsWith(prefix) &&
-            folder != path.join('/') &&
-            !folder.substring(prefix.length).contains('/'))
-          CloudFile(
-            path: folder.split('/'),
-            name: folder.split('/').last,
-            isDirectory: true,
-          ),
-      for (final name in files.keys)
-        if (name.startsWith(prefix) &&
-            !name.substring(prefix.length).contains('/'))
-          cloud(name),
-    ];
+    return (
+      self: null,
+      children: [
+        for (final folder in folders)
+          if (folder.startsWith(prefix) &&
+              folder != path.join('/') &&
+              !folder.substring(prefix.length).contains('/'))
+            CloudFile(
+              path: folder.split('/'),
+              name: folder.split('/').last,
+              isDirectory: true,
+            ),
+        for (final name in files.keys)
+          if (name.startsWith(prefix) &&
+              !name.substring(prefix.length).contains('/'))
+            cloud(name),
+      ],
+    );
   }
 
   @override

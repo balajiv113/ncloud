@@ -15,7 +15,7 @@ import 'package:ncloud/nextcloud_client.dart';
 import 'package:ncloud/people_bubble.dart';
 
 import 'app_test.dart' show MemoryStore;
-import 'discovery_test.dart' show jsonResponse, recognizeFacesResponse;
+import 'discovery_test.dart' show jsonResponse;
 import 'nextcloud_client_test.dart' show account, multistatus;
 import 'preview_test.dart' show photo, png;
 
@@ -36,13 +36,7 @@ final samplePersonResponse = {
 
 MockClient peopleTransport(
   Future<http.Response> Function(http.Request) handler,
-) => MockClient((request) async {
-  if (request.method == 'PROPFIND' &&
-      request.url.path.endsWith('/recognize/${account.userId}/faces')) {
-    return recognizeFacesResponse(['Sample']);
-  }
-  return handler(request);
-});
+) => MockClient(handler);
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -233,59 +227,53 @@ void main() {
     },
   );
 
-  test(
-    'Photos removal purges a Memories-only face from memory and disk',
-    () async {
-      final dir = await Directory.systemTemp.createTemp('ncloud-removed-face-');
-      final cache = LocalCache(() async => dir);
-      var removed = false;
-      var davFailed = false;
-      final c = AppController(
-        store: MemoryStore(),
-        cache: cache,
-        client: NextcloudClient(
-          transport: MockClient((request) async {
-            if (request.method == 'PROPFIND') {
-              if (davFailed) return http.Response('', 500);
-              return recognizeFacesResponse(removed ? [] : ['Sample']);
-            }
-            if (request.url.path.endsWith('/preview')) {
-              return http.Response.bytes(png, 200);
-            }
-            return jsonResponse([samplePersonResponse]);
-          }),
-        ),
-      )..account = account;
-      addTearDown(() async {
-        c.dispose();
-        await cache.close();
-        await dir.delete(recursive: true);
-      });
-      await c.loadPeople();
-      await c.personPreview(samplePerson);
-      final key = 'face-v1|${account.server}|${account.userId}|12';
-      expect(c.cachedPersonPreview(samplePerson), png);
-      davFailed = true;
-      await c.loadPeople(refresh: true);
-      expect(c.people.single.id, 12);
-      expect(c.peopleError, isNotNull);
-      expect(c.cachedPersonPreview(samplePerson), png);
-      expect(await cache.readThumbnail(key), isNotNull);
-      davFailed = false;
-      removed = true;
-      await c.loadPeople(refresh: true);
-      expect(c.people, isEmpty);
-      expect(c.peopleError, isNull);
-      expect(c.cachedPersonPreview(samplePerson), isNull);
-      expect(await cache.readThumbnail(key), isNull);
-      expect(
-        (await cache.readDocument(
-          'people-v1|${account.server}|${account.userId}',
-        ))!['people'],
-        isEmpty,
-      );
-    },
-  );
+  test('Memories removal purges a face from memory and disk', () async {
+    final dir = await Directory.systemTemp.createTemp('ncloud-removed-face-');
+    final cache = LocalCache(() async => dir);
+    var removed = false;
+    var discoveryFailed = false;
+    final c = AppController(
+      store: MemoryStore(),
+      cache: cache,
+      client: NextcloudClient(
+        transport: MockClient((request) async {
+          if (request.url.path.endsWith('/preview')) {
+            return http.Response.bytes(png, 200);
+          }
+          if (discoveryFailed) return http.Response('', 500);
+          return jsonResponse(removed ? [] : [samplePersonResponse]);
+        }),
+      ),
+    )..account = account;
+    addTearDown(() async {
+      c.dispose();
+      await cache.close();
+      await dir.delete(recursive: true);
+    });
+    await c.loadPeople();
+    await c.personPreview(samplePerson);
+    final key = 'face-v1|${account.server}|${account.userId}|12';
+    expect(c.cachedPersonPreview(samplePerson), png);
+    discoveryFailed = true;
+    await c.loadPeople(refresh: true);
+    expect(c.people.single.id, 12);
+    expect(c.peopleError, isNotNull);
+    expect(c.cachedPersonPreview(samplePerson), png);
+    expect(await cache.readThumbnail(key), isNotNull);
+    discoveryFailed = false;
+    removed = true;
+    await c.loadPeople(refresh: true);
+    expect(c.people, isEmpty);
+    expect(c.peopleError, isNull);
+    expect(c.cachedPersonPreview(samplePerson), isNull);
+    expect(await cache.readThumbnail(key), isNull);
+    expect(
+      (await cache.readDocument(
+        'people-v1|${account.server}|${account.userId}',
+      ))!['people'],
+      isEmpty,
+    );
+  });
 
   testWidgets('refresh removes a face whose server preview has disappeared', (
     tester,

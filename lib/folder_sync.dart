@@ -791,7 +791,7 @@ class FolderSyncController extends ChangeNotifier {
     phase = 'Reading cloud destination';
     _notify();
     {
-      final children = await client.listFiles(session, pair.remote);
+      final children = (await client.listFolder(session, pair.remote)).children;
       _check(pair);
       final folder = children
           .where((file) => file.name == pair.folder.name)
@@ -812,10 +812,10 @@ class FolderSyncController extends ChangeNotifier {
         );
       }
       final path = directories.removeLast();
-      for (final item in await client.listFiles(session, [
+      for (final item in (await client.listFolder(session, [
         ...pair.cloudRoot,
         ...path,
-      ])) {
+      ])).children) {
         // Never follow a server listing outside the requested direct children.
         final expected = [...pair.cloudRoot, ...path, item.name];
         checkSyncPath(expected);
@@ -897,10 +897,10 @@ class FolderSyncController extends ChangeNotifier {
             stagedSize,
           );
           final confirmed =
-              (await client.listFiles(session, [
+              (await client.listFolder(session, [
                     ...pair.cloudRoot,
                     ...target.take(target.length - 1),
-                  ]))
+                  ])).children
                   .where(
                     (item) => item.name == target.last && !item.isDirectory,
                   )
@@ -964,7 +964,7 @@ class FolderSyncController extends ChangeNotifier {
     var parent = List.of(pair.cloudRoot);
     for (final segment in target.take(target.length - 1)) {
       _check(pair);
-      final children = await client.listFiles(session, parent);
+      final children = (await client.listFolder(session, parent)).children;
       _check(pair);
       final match = children.where((file) => file.name == segment).singleOrNull;
       parent = [...parent, segment];

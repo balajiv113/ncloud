@@ -16,7 +16,7 @@ Clearing browsing metadata also invalidates in-flight folder, index and path-res
 
 Pull-to-refresh keeps cached albums, folders, photos and the Timeline date index visible and usable until their replacements arrive. An explicit refresh bypasses folder-list freshness shortcuts and supersedes older discovery requests; successful responses reconcile removals as well as additions. Refresh errors keep existing content with an error notice. People previews are revision-checked and revalidated after catalogue refresh; removed people and missing face previews are purged from memory and disk rather than displayed indefinitely.
 
-People discovery verifies Memories clusters against the Recognize DAV collection used by Photos → People. A cluster absent from Photos is not shown just because Memories still returns it. DAV verification failures surface as refresh errors, not an unverified replacement list; servers requiring a Recognize API key are authenticated through Memories' API-key endpoint.
+People discovery uses Memories' Recognize clusters directly. The list may include clusters that the Photos app does not show.
 
 `media_listing.dart` owns cached listing membership/paging, and `timeline_scrubber.dart` owns scrolling gestures and accessibility. The scrubber remains available to screen readers while visually hidden, with date announcements and increase/decrease actions.
 

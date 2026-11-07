@@ -461,7 +461,6 @@ class NextcloudClient implements CloudBackend {
     return result;
   }
 
-  @override
   Future<List<CloudFile>> listFiles(Account account, List<String> path) async =>
       (await listFolder(account, path)).children;
 
@@ -719,117 +718,8 @@ class NextcloudClient implements CloudBackend {
         else
           throw const FormatException('Unsupported Recognize person record.'),
     ];
-    if (people.isNotEmpty) {
-      final visible = await _visiblePeople(account);
-      people.removeWhere(
-        (person) => !visible.contains(
-          person.name.isEmpty ? '${person.id}' : person.name,
-        ),
-      );
-    }
     people.sort(RecognizedPerson.compareByCount);
     return people;
-  }
-
-  Future<Set<String>> _visiblePeople(Account account) async {
-    final uri = serverEndpoint(account.server, [
-      'remote.php',
-      'dav',
-      'recognize',
-      account.userId,
-      'faces',
-    ]);
-    const body = '''<d:propfind xmlns:d="DAV:"><d:prop>
-      <d:resourcetype/></d:prop></d:propfind>''';
-    const headers = {
-      'Depth': '1',
-      'Content-Type': 'application/xml; charset=utf-8',
-      'Cache-Control': 'no-cache',
-    };
-    var response = await _request(
-      'PROPFIND',
-      uri,
-      account: account,
-      headers: headers,
-      body: body,
-    );
-    if (response.statusCode == 403) {
-      final credentials = await _request(
-        'GET',
-        serverEndpoint(account.server, [
-          'index.php',
-          'apps',
-          'memories',
-          'api',
-          'recognize',
-          'api-key',
-        ]),
-        account: account,
-        headers: {'Accept': 'application/json', 'OCS-APIRequest': 'true'},
-      );
-      _expect(credentials, {200});
-      final json = jsonDecode(credentials.body);
-      final key = json is Map<String, dynamic> ? json['apiKey'] : null;
-      if (key is! String || key.isEmpty) {
-        throw const FormatException('Invalid Recognize API credentials.');
-      }
-      response = await _request(
-        'PROPFIND',
-        uri,
-        account: account,
-        headers: {...headers, 'X-Recognize-Api-Key': key},
-        body: body,
-      );
-    }
-    _expect(response, {207});
-    final document = XmlDocument.parse(response.body);
-    if (document.rootElement.name.local != 'multistatus' ||
-        document.rootElement.namespaceUri != 'DAV:') {
-      throw const FormatException('Invalid Recognize people listing.');
-    }
-    final root = uri.pathSegments.where((part) => part.isNotEmpty).toList();
-    final names = <String>{};
-    for (final entry in document.rootElement.findElements(
-      'response',
-      namespace: 'DAV:',
-    )) {
-      final href = entry.getElement('href', namespace: 'DAV:')?.innerText;
-      if (href == null) {
-        throw const FormatException('Invalid Recognize person location.');
-      }
-      final location = Uri.parse(href);
-      if (location.hasAuthority && location.origin != account.server.origin) {
-        continue;
-      }
-      final segments = location.pathSegments
-          .where((part) => part.isNotEmpty)
-          .toList();
-      if (!pathStartsWith(segments, root) ||
-          segments.length < root.length ||
-          segments.length > root.length + 1) {
-        continue;
-      }
-      final properties = _successfulProps(entry);
-      if (properties.isEmpty) {
-        throw const CloudException(
-          'Cannot verify the current Recognize people list.',
-        );
-      }
-      if (segments.length == root.length + 1 &&
-          segments.last != '.' &&
-          segments.last != '..' &&
-          !segments.last.contains('/') &&
-          properties.any(
-            (props) =>
-                props
-                    .getElement('resourcetype', namespace: 'DAV:')
-                    ?.getElement('collection', namespace: 'DAV:') !=
-                null,
-          )) {
-        names.add(segments.last);
-      }
-    }
-    return names;
   }
 
   @override

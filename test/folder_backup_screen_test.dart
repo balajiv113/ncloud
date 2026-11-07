@@ -3,7 +3,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ncloud/app_controller.dart';
 import 'package:ncloud/folder_sync.dart';
 import 'package:ncloud/folder_sync_screen.dart';
-import 'package:ncloud/models.dart';
 import 'package:ncloud/sync_rules.dart';
 import 'package:ncloud/sync_schedule.dart';
 
@@ -36,13 +35,7 @@ class PickerAccess implements FolderAccess, PhotoAlbumAccess {
   }
 }
 
-class BrowsingCloud extends CloudFolders {
-  @override
-  Future<({CloudFile? self, List<CloudFile> children})> listFolder(
-    Account account,
-    List<String> path,
-  ) async => (self: null, children: await listFiles(account, path));
-}
+class BrowsingCloud extends CloudFolders {}
 
 class MemoryBackupController extends FolderSyncController {
   MemoryBackupController({required PickerAccess picker, bool ios = false})
