@@ -2273,6 +2273,7 @@ class AppController extends ChangeNotifier {
   /// After a change, every view keeps showing its (already patched) files
   /// from the shared store and quietly revalidates when next shown.
   Future<void> _invalidateBrowse() async {
+    _fileResolver.clear();
     fileStore.markStale();
     if (_activeListing case final listing?) {
       items = fileStore.resolve(listing.keys);

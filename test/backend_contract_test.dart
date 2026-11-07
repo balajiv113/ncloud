@@ -156,6 +156,13 @@ class _QueuedResolutionBackend extends _PortableBackend {
     requests.add(request);
     return request.future;
   }
+
+  @override
+  Future<void> move(
+    Account account,
+    CloudFile file,
+    List<String> destination,
+  ) async {}
 }
 
 class _ShareBackend extends _PortableBackend {
@@ -233,6 +240,35 @@ void main() {
     final restored = MediaListing.fromJson(listing.toJson());
     expect(restored.cursor, 'provider:continuation/opaque==');
     expect(restored.more, isTrue);
+  });
+
+  test('moving a file invalidates its cached lazy location', () async {
+    final backend = _QueuedResolutionBackend();
+    final controller = AppController(store: _SessionStore(), client: backend)
+      ..account = account
+      ..tab = 1;
+    addTearDown(controller.dispose);
+    const file = CloudFile(
+      path: [CloudFile.pendingRoot, 'opaque:1'],
+      name: 'photo.jpg',
+      isDirectory: false,
+      id: 'opaque:1',
+    );
+    final first = controller.resolve(file);
+    backend.requests.first.complete({
+      'opaque:1': file.atPath(['Old', 'photo.jpg']),
+    });
+    final resolved = await first;
+    expect(
+      await controller.organize([resolved], 'move', destination: ['New']),
+      isTrue,
+    );
+    final refreshed = controller.resolve(file);
+    expect(backend.resolutionCalls, 2);
+    backend.requests.last.complete({
+      'opaque:1': file.atPath(['New', 'photo.jpg']),
+    });
+    expect((await refreshed).path, ['New', 'photo.jpg']);
   });
 
   test(
