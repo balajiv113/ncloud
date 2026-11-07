@@ -13,7 +13,7 @@ import 'package:ncloud/cloud_backend.dart';
 import 'package:ncloud/features/backup/sync_rules.dart';
 import 'package:ncloud/features/backup/sync_background.dart';
 
-import 'nextcloud_client_test.dart' show account;
+import '../../nextcloud_client_test.dart' show account;
 
 class DeviceFolders implements FolderAccess {
   DeviceFolders(this.root, this.staging);
@@ -225,9 +225,13 @@ class CloudFolders implements CloudBackend {
   }
 
   @override
-  Future<CloudDownload> downloadVersion(Account account, CloudFile file) async {
+  Future<CloudDownload> download(
+    Account account,
+    CloudFile file, {
+    String? expectedRevision,
+  }) async {
     final value = files[file.path.join('/')]!;
-    if (file.etag != '"${value.$2}"') {
+    if (expectedRevision != null && expectedRevision != '"${value.$2}"') {
       throw const CloudException('Revision changed');
     }
     downloads++;
@@ -981,7 +985,15 @@ void main() {
         etag: 'revision',
       );
       await expectLater(
-        client.downloadVersion(account, file),
+        client.download(account, file, expectedRevision: file.etag),
+        throwsA(isA<CloudException>()),
+      );
+      await expectLater(
+        client.download(account, file, expectedRevision: ''),
+        throwsA(isA<CloudException>()),
+      );
+      await expectLater(
+        client.download(account, file, expectedRevision: 'W/"weak"'),
         throwsA(isA<CloudException>()),
       );
       await expectLater(

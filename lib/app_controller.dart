@@ -1967,7 +1967,11 @@ class AppController extends ChangeNotifier {
               _disposed) {
             return;
           }
-          final covers = await client.search(session, path: path, limit: 1);
+          final covers = (await client.searchPage(
+            session,
+            path: path,
+            limit: 1,
+          )).files;
           if (covers.isNotEmpty) {
             found.add(SmartAlbum(path: path, files: covers));
           }
@@ -2288,22 +2292,24 @@ class AppController extends ChangeNotifier {
     return _listFolder(account!, path);
   }
 
-  Future<CloudFile?> albumCover(CloudFile folder) => _covers.putIfAbsent(
-    folder.key,
-    () async {
-      if (demo) {
-        return _demo
+  Future<CloudFile?> albumCover(CloudFile folder) =>
+      _covers.putIfAbsent(folder.key, () async {
+        if (demo) {
+          return _demo
+              .where((f) => f.isMedia && pathStartsWith(f.path, folder.path))
+              .firstOrNull;
+        }
+        final known = fileStore
             .where((f) => f.isMedia && pathStartsWith(f.path, folder.path))
             .firstOrNull;
-      }
-      final known = fileStore
-          .where((f) => f.isMedia && pathStartsWith(f.path, folder.path))
-          .firstOrNull;
-      if (known != null) return known;
-      final found = await client.search(account!, path: folder.path, limit: 1);
-      return found.firstOrNull;
-    },
-  );
+        if (known != null) return known;
+        final found = (await client.searchPage(
+          account!,
+          path: folder.path,
+          limit: 1,
+        )).files;
+        return found.firstOrNull;
+      });
 
   Future<bool> organize(
     List<CloudFile> files,
@@ -2362,12 +2368,11 @@ class AppController extends ChangeNotifier {
             }
             _demo.addAll(moved);
           } else {
-            await client.transfer(
-              account!,
-              file,
-              target,
-              copy: operation == 'copy',
-            );
+            if (operation == 'copy') {
+              await client.copy(account!, file, target);
+            } else {
+              await client.move(account!, file, target);
+            }
             fileStore.moveTree(file.path, target, copy: operation == 'copy');
           }
         } else if (operation == 'delete') {
@@ -3031,9 +3036,16 @@ class AppController extends ChangeNotifier {
       await folder.create(recursive: true);
       validateName(file.name);
       checkSession();
-      final response = offline
-          ? await client.downloadVersion(session, file)
-          : await client.download(session, file);
+      if (offline && file.etag?.isNotEmpty != true) {
+        throw const CloudException(
+          'A file revision is required for safe sync.',
+        );
+      }
+      final response = await client.download(
+        session,
+        file,
+        expectedRevision: offline ? file.etag : null,
+      );
       // Separate each transfer so identical filenames never collide.
       transfer = await folder.createTemp('transfer-');
       output = File('${transfer.path}/${file.name}');

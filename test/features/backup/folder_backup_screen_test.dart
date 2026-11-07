@@ -6,9 +6,9 @@ import 'package:ncloud/features/backup/folder_sync_screen.dart';
 import 'package:ncloud/features/backup/sync_rules.dart';
 import 'package:ncloud/features/backup/sync_schedule.dart';
 
-import 'app_test.dart' show MemoryStore;
+import '../../app_test.dart' show MemoryStore;
 import 'folder_sync_test.dart' show CloudFolders;
-import 'nextcloud_client_test.dart' as fixtures;
+import '../../nextcloud_client_test.dart' as fixtures;
 
 class PickerAccess implements FolderAccess, PhotoAlbumAccess {
   int folderPicks = 0, albumLists = 0;

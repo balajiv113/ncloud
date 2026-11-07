@@ -53,15 +53,6 @@ abstract interface class CloudBackend {
     List<String> path, {
     bool optional = false,
   });
-  Future<List<CloudFile>> search(
-    Account account, {
-    bool favorites = false,
-    List<String> path = const [],
-    int offset = 0,
-    int limit = 200,
-    List<String>? fileIds,
-    bool recursive = true,
-  });
   Future<({List<CloudFile> files, int scanned})> searchPage(
     Account account, {
     bool favorites = false,
@@ -142,12 +133,8 @@ abstract interface class CloudBackend {
     List<String> fileIds, {
     int size = 384,
   });
-  Future<void> transfer(
-    Account account,
-    CloudFile file,
-    List<String> destination, {
-    bool copy = false,
-  });
+  Future<void> move(Account account, CloudFile file, List<String> destination);
+  Future<void> copy(Account account, CloudFile file, List<String> destination);
   Future<void> delete(Account account, CloudFile file);
   Future<void> createFolder(Account account, List<String> path);
   Future<void> setFavorite(Account account, CloudFile file, bool value);
@@ -157,10 +144,13 @@ abstract interface class CloudBackend {
     Stream<List<int>> bytes,
     int size,
   );
-  Future<CloudDownload> download(Account account, CloudFile file);
 
-  /// Downloads only [file]'s inventoried revision, failing if it has changed.
-  Future<CloudDownload> downloadVersion(Account account, CloudFile file);
+  /// If [expectedRevision] is supplied, fails unless that revision is read.
+  Future<CloudDownload> download(
+    Account account,
+    CloudFile file, {
+    String? expectedRevision,
+  });
   Future<List<TrashEntry>> trash(Account account);
   Future<void> restore(Account account, TrashEntry entry);
   Future<List<PublicShare>> shares(Account account, CloudFile file);

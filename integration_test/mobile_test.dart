@@ -18,7 +18,7 @@ import 'package:ncloud/features/backup/sync_schedule.dart';
 import 'package:ncloud/features/backup/workmanager_backup.dart';
 
 import '../test/app_test.dart' show MemoryStore;
-import '../test/folder_sync_test.dart' show CloudFolders;
+import '../test/features/backup/folder_sync_test.dart' show CloudFolders;
 import '../test/nextcloud_client_test.dart'
     show account, multistatus, responseEntry;
 

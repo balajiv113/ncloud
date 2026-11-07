@@ -86,17 +86,6 @@ class _Backend implements CloudBackend {
   }
 
   @override
-  Future<List<CloudFile>> search(
-    Account account, {
-    bool favorites = false,
-    List<String> path = const [],
-    int offset = 0,
-    int limit = 200,
-    List<String>? fileIds,
-    bool recursive = true,
-  }) async => [_photo(path.last)];
-
-  @override
   Future<({List<CloudFile> files, int scanned})> searchPage(
     Account account, {
     bool favorites = false,

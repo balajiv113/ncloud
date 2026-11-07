@@ -229,13 +229,17 @@ void main() {
         client.upload(account, path, Stream.value([1, 2, 3]), 3),
         throwsA(isA<CloudException>()),
       );
-      final revisionDownload = await client.downloadVersion(account, photo);
+      final revisionDownload = await client.download(
+        account,
+        photo,
+        expectedRevision: photo.etag,
+      );
       expect(
         await revisionDownload.stream.expand((chunk) => chunk).toList(),
         bytes,
       );
       await expectLater(
-        client.downloadVersion(
+        client.download(
           account,
           CloudFile(
             path: photo.path,
@@ -243,6 +247,7 @@ void main() {
             isDirectory: false,
             etag: '"not-the-current-revision"',
           ),
+          expectedRevision: '"not-the-current-revision"',
         ),
         throwsA(isA<CloudException>()),
       );
@@ -312,15 +317,12 @@ void main() {
       );
 
       final renamedPath = [...folder, 'Renamed #photo.png'];
-      await client.transfer(account, photo, renamedPath);
+      await client.move(account, photo, renamedPath);
       final renamed = (await client.listFiles(account, folder)).single;
       expect(renamed.path, renamedPath);
       final album = [...folder, 'Album & family'];
       await client.createFolder(account, album);
-      await client.transfer(account, renamed, [
-        ...album,
-        renamed.name,
-      ], copy: true);
+      await client.copy(account, renamed, [...album, renamed.name]);
       final copied = (await client.listFiles(account, album)).single;
       expect(copied.name, renamed.name);
       final share = await client.createShare(

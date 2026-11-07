@@ -589,7 +589,6 @@ class NextcloudClient implements CloudBackend {
     );
   }
 
-  @override
   Future<List<CloudFile>> search(
     Account account, {
     bool favorites = false,
@@ -1127,11 +1126,24 @@ class NextcloudClient implements CloudBackend {
   }
 
   @override
-  Future<void> transfer(
+  Future<void> move(
+    Account account,
+    CloudFile file,
+    List<String> destination,
+  ) => _transfer(account, file, destination, copy: false);
+
+  @override
+  Future<void> copy(
+    Account account,
+    CloudFile file,
+    List<String> destination,
+  ) => _transfer(account, file, destination, copy: true);
+
+  Future<void> _transfer(
     Account account,
     CloudFile file,
     List<String> destination, {
-    bool copy = false,
+    required bool copy,
   }) async {
     if (destination.isEmpty || destination.any((s) => s == '.' || s == '..')) {
       throw const CloudException('Choose a valid destination.');
@@ -1554,42 +1566,27 @@ class NextcloudClient implements CloudBackend {
   }
 
   @override
-  Future<CloudDownload> download(Account account, CloudFile file) async {
-    final request = http.Request('GET', fileUri(account, file))
-      ..followRedirects = false
-      ..headers['Authorization'] = account.authorization;
-    try {
-      final response = await _transport.send(request).timeout(_timeout);
-      if (response.statusCode != 200) {
-        await response.stream.drain<void>().timeout(_timeout);
-        throw statusError(response.statusCode);
-      }
-      return CloudDownload(response.stream);
-    } on TimeoutException {
-      throw const CloudException('Download timed out. Please try again.');
-    } on http.ClientException {
-      throw const CloudException(
-        'Download interrupted. Check your connection.',
-      );
-    }
-  }
-
-  /// Downloads exactly the revision inventoried by folder sync.
-  @override
-  Future<CloudDownload> downloadVersion(Account account, CloudFile file) async {
-    if (file.etag?.isNotEmpty != true) {
+  Future<CloudDownload> download(
+    Account account,
+    CloudFile file, {
+    String? expectedRevision,
+  }) async {
+    if (expectedRevision != null && expectedRevision.isEmpty) {
       throw const CloudException('A file revision is required for safe sync.');
     }
-    final tag = file.etag!;
-    if (tag.startsWith('W/')) {
+    if (expectedRevision?.startsWith('W/') == true) {
       throw const CloudException(
         'Safe sync requires a strong server file revision.',
       );
     }
     final request = http.Request('GET', fileUri(account, file))
       ..followRedirects = false
-      ..headers['Authorization'] = account.authorization
-      ..headers['If-Match'] = tag.startsWith('"') ? tag : '"$tag"';
+      ..headers['Authorization'] = account.authorization;
+    if (expectedRevision != null) {
+      request.headers['If-Match'] = expectedRevision.startsWith('"')
+          ? expectedRevision
+          : '"$expectedRevision"';
+    }
     try {
       final response = await _transport.send(request).timeout(_timeout);
       if (response.statusCode != 200) {
@@ -1598,12 +1595,16 @@ class NextcloudClient implements CloudBackend {
       }
       return CloudDownload(response.stream);
     } on TimeoutException {
-      throw const CloudException(
-        'Sync download timed out. Run again to resume.',
+      throw CloudException(
+        expectedRevision == null
+            ? 'Download timed out. Please try again.'
+            : 'Sync download timed out. Run again to resume.',
       );
     } on http.ClientException {
-      throw const CloudException(
-        'Sync download interrupted. Run again to resume.',
+      throw CloudException(
+        expectedRevision == null
+            ? 'Download interrupted. Check your connection.'
+            : 'Sync download interrupted. Run again to resume.',
       );
     }
   }

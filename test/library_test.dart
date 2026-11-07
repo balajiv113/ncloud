@@ -358,17 +358,14 @@ void main() {
         name: 'photo.jpg',
         isDirectory: false,
       );
-      await client.transfer(account, file, [
-        'Album & family',
-        'photo #1.jpg',
-      ], copy: true);
+      await client.copy(account, file, ['Album & family', 'photo #1.jpg']);
       final folder = CloudFile(
         path: const ['Photos'],
         name: 'Photos',
         isDirectory: true,
       );
       await expectLater(
-        client.transfer(account, folder, ['Photos', 'child']),
+        client.move(account, folder, ['Photos', 'child']),
         throwsA(isA<CloudException>()),
       );
     },

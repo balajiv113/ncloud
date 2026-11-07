@@ -14,9 +14,9 @@ import 'package:ncloud/features/backup/sync_run_lock.dart';
 import 'package:ncloud/features/backup/sync_schedule.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
-import 'app_test.dart' show MemoryStore;
+import '../../app_test.dart' show MemoryStore;
 import 'folder_sync_test.dart' show CloudFolders, DeviceFolders;
-import 'nextcloud_client_test.dart' show account;
+import '../../nextcloud_client_test.dart' show account;
 
 const album = DeviceFolder(
   'photos:album-id',

@@ -8,7 +8,7 @@ import 'package:ncloud/features/backup/sync_schedule.dart';
 
 import 'folder_sync_test.dart'
     show CloudFolders, DeviceFolders, TestSyncBackground;
-import 'nextcloud_client_test.dart' show account;
+import '../../nextcloud_client_test.dart' show account;
 
 class UnavailableScheduler implements BackupScheduler {
   int calls = 0;
