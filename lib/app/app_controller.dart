@@ -2132,7 +2132,7 @@ class AppController extends ChangeNotifier {
     try {
       await _ensureTimelineIndex(session);
       if (generation != _catalogueVersion || account != session) return;
-      final queue = <TimelineFolder>[TimelineFolder(root, [])];
+      final queue = <PhotoFolder>[PhotoFolder(root, [])];
       final found = <String, SmartAlbum>{};
       while (queue.isNotEmpty) {
         if (generation != _catalogueVersion ||
@@ -2146,29 +2146,16 @@ class AppController extends ChangeNotifier {
         // folders are walked through. Loose media at the source root never
         // hides the albums inside it.
         final atRoot = folder.path.length == root.length;
-        List<TimelineFolder> children;
+        List<PhotoFolder> children;
         List<CloudFile> covers;
         if (timelineIndexAvailable == true) {
-          final direct = (await client.timeline(
+          final result = await client.photoFolder(
             session,
-            TimelineQuery(
-              path: folder.path,
-              recursive: false,
-              existenceOnly: true,
-            ),
-          ))?.days;
-          covers = direct!.isEmpty
-              ? []
-              : folder.previews.isNotEmpty
-              ? folder.previews
-              : await client.timelineCover(
-                  session,
-                  folder.path,
-                  direct.first.id,
-                );
-          children = direct.isEmpty || atRoot
-              ? await client.timelineFolders(session, folder.path)
-              : [];
+            folder,
+            includeChildrenWithMedia: atRoot,
+          );
+          covers = result.covers;
+          children = result.children;
         } else {
           final contents = await _listFolder(
             session,
@@ -2181,7 +2168,7 @@ class AppController extends ChangeNotifier {
               ? []
               : contents
                     .where((f) => f.isDirectory)
-                    .map((f) => TimelineFolder(f.path, []))
+                    .map((f) => PhotoFolder(f.path, []))
                     .toList();
         }
         if (generation != _catalogueVersion ||
@@ -2193,13 +2180,7 @@ class AppController extends ChangeNotifier {
           final album = SmartAlbum(path: folder.path, files: covers);
           found[album.key] = album;
         }
-        if (children.isNotEmpty) {
-          queue.addAll(
-            timelineIndexAvailable == true
-                ? children.where((f) => f.previews.isNotEmpty)
-                : children,
-          );
-        }
+        queue.addAll(children);
         discoveredFolders++;
       }
       _catalogue

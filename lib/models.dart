@@ -275,8 +275,8 @@ class TimelineDay {
   }
 }
 
-class TimelineFolder {
-  const TimelineFolder(this.path, this.previews);
+class PhotoFolder {
+  const PhotoFolder(this.path, this.previews);
   final List<String> path;
   final List<CloudFile> previews;
 }

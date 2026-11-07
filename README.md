@@ -10,6 +10,8 @@ UI widgets consume application/domain models and controller operations, not Next
 
 Timeline and map browsing use one query for date counts, selected days or unindexed pages. The provider handles geographic bounds, opaque page continuation tokens and unsupported indexing separately from an empty result or a server failure. The account and remaining discovery contract are not yet provider-neutral. Older disposable browsing snapshots are rebuilt rather than interpreting their offsets as provider cursors.
 
+Indexed Smart-album discovery asks the provider for a folder's direct media covers and descendant candidates, keeping protocol-specific existence and cover lookups inside the adapter.
+
 Preview requests use one batch-friendly backend operation with positional partial results. The application retries missing entries individually and preserves session cancellation; the Nextcloud adapter chooses the relevant preview endpoints.
 
 Async file resolution and previews are scoped to their initiating session. Clearing the preview cache invalidates in-flight results as well as stored entries; late responses cannot refill it. Resuming browsing starts a current change check instead of publishing a failure from the previous inactive session.

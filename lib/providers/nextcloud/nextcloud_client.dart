@@ -851,7 +851,6 @@ class NextcloudClient implements CloudBackend {
           recursive: query.recursive,
           favorites: query.favorites,
           optional: query.optional,
-          existenceOnly: query.existenceOnly,
           person: query.person,
           mapBounds: area,
         );
@@ -1126,7 +1125,32 @@ class NextcloudClient implements CloudBackend {
   }
 
   @override
-  Future<List<TimelineFolder>> timelineFolders(
+  Future<({List<CloudFile> covers, List<PhotoFolder> children})> photoFolder(
+    Account account,
+    PhotoFolder folder, {
+    bool includeChildrenWithMedia = false,
+  }) async {
+    final direct = (await timelineDays(
+      account,
+      path: folder.path,
+      recursive: false,
+      existenceOnly: true,
+    ))!;
+    final covers = direct.isEmpty
+        ? <CloudFile>[]
+        : folder.previews.isNotEmpty
+        ? folder.previews
+        : await _timelineCover(account, folder.path, direct.first.id);
+    final children = direct.isEmpty || includeChildrenWithMedia
+        ? (await _timelineFolders(
+            account,
+            folder.path,
+          )).where((child) => child.previews.isNotEmpty).toList()
+        : <PhotoFolder>[];
+    return (covers: covers, children: children);
+  }
+
+  Future<List<PhotoFolder>> _timelineFolders(
     Account account,
     List<String> path,
   ) async {
@@ -1152,12 +1176,11 @@ class NextcloudClient implements CloudBackend {
           etag: item['etag'] as String?,
         );
       }).toList();
-      return TimelineFolder(folder, previews);
+      return PhotoFolder(folder, previews);
     }).toList();
   }
 
-  @override
-  Future<List<CloudFile>> timelineCover(
+  Future<List<CloudFile>> _timelineCover(
     Account account,
     List<String> path,
     int day,

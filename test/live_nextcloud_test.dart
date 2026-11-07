@@ -21,7 +21,11 @@ void main() {
         'ncloud-ci',
         const String.fromEnvironment('NEXTCLOUD_TEST_PASSWORD'),
       );
-      final folders = await client.timelineFolders(session, []);
+      final folders = (await client.photoFolder(
+        session,
+        const PhotoFolder([], []),
+        includeChildrenWithMedia: true,
+      )).children;
       expect(
         folders.any(
           (f) => f.path.last == 'ncloud-index' && f.previews.isNotEmpty,

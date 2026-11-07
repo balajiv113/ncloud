@@ -27,8 +27,8 @@ class CloudDownload {
 
 /// A timeline request. A null [dayIds] requests the day index; otherwise only
 /// the specified days are loaded. Use [TimelineQuery.page] for unindexed
-/// browsing. [optional] and [existenceOnly] apply to index requests;
-/// [resolvePaths] applies to indexed items.
+/// browsing. [optional] applies to index requests; [resolvePaths] applies to
+/// indexed items.
 class TimelineQuery {
   const TimelineQuery({
     this.dayIds,
@@ -36,7 +36,6 @@ class TimelineQuery {
     this.recursive = true,
     this.favorites = false,
     this.optional = false,
-    this.existenceOnly = false,
     this.resolvePaths = true,
     this.person,
     this.mapBounds,
@@ -52,7 +51,6 @@ class TimelineQuery {
     this.limit = 200,
   }) : dayIds = null,
        optional = false,
-       existenceOnly = false,
        resolvePaths = true,
        person = null,
        mapBounds = null,
@@ -63,7 +61,6 @@ class TimelineQuery {
   final bool recursive;
   final bool favorites;
   final bool optional;
-  final bool existenceOnly;
   final bool resolvePaths;
   final RecognizedPerson? person;
 
@@ -150,15 +147,15 @@ abstract interface class CloudBackend {
   /// are successful responses; other failures must be surfaced. Page cursors
   /// are valid only for the same account and query.
   Future<TimelineResult?> timeline(Account account, TimelineQuery query);
-  Future<List<TimelineFolder>> timelineFolders(
+
+  /// Inspects an indexed folder for direct media and descendant candidates.
+  /// [includeChildrenWithMedia] keeps walking the source root even if it has
+  /// loose photos; returned children contain media in their subtrees.
+  Future<({List<CloudFile> covers, List<PhotoFolder> children})> photoFolder(
     Account account,
-    List<String> path,
-  );
-  Future<List<CloudFile>> timelineCover(
-    Account account,
-    List<String> path,
-    int day,
-  );
+    PhotoFolder folder, {
+    bool includeChildrenWithMedia = false,
+  });
 
   /// Results correspond positionally to the requested files. Null entries may
   /// be retried singly; request failures must throw rather than appear empty.
