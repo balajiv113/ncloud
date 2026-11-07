@@ -10,6 +10,7 @@ import 'change_monitor.dart';
 import 'asset_viewer.dart';
 import '../../discovery_models.dart';
 import 'library_actions.dart';
+import 'folder_picker.dart';
 import 'media_tile.dart';
 import '../../models.dart';
 import '../photos/people_bubble.dart';

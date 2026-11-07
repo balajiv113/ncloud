@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../app/app_controller.dart';
 import 'folder_sync.dart';
-import '../library/library_actions.dart' show chooseFolder;
+import '../library/folder_picker.dart' show chooseFolder;
 import '../../screens.dart' show showError;
 import 'sync_rules.dart';
 import 'sync_schedule.dart';
