@@ -292,7 +292,7 @@ class NextcloudClient implements CloudBackend {
         ]);
 
   @override
-  MediaSource streamSource(Account account, CloudFile file) => (
+  PlaybackSource playbackSource(Account account, CloudFile file) => (
     uri: fileUri(account, file),
     headers: {'Authorization': account.authorization},
   );

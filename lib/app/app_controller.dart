@@ -2936,10 +2936,10 @@ class AppController extends ChangeNotifier {
       '${file.modified?.microsecondsSinceEpoch}|${file.size}';
 
   /// Direct authenticated stream for the platform video player.
-  ({Uri uri, Map<String, String> headers})? streamSource(CloudFile file) {
+  PlaybackSource? playbackSource(CloudFile file) {
     final session = account;
     if (demo || session == null) return null;
-    return client.streamSource(session, file);
+    return client.playbackSource(session, file);
   }
 
   /// Explicitly saved original, outside the bounded browsing cache.

@@ -757,7 +757,7 @@ void main() {
     final c = AppController(store: MemoryStore(), client: NextcloudClient())
       ..account = account;
     addTearDown(c.dispose);
-    final source = c.streamSource(photo())!;
+    final source = c.playbackSource(photo())!;
     expect(source.uri.userInfo, isEmpty);
     expect(source.uri.path, contains('/remote.php/dav/files/alice/Photos/'));
     expect(source.headers['Authorization'], account.authorization);

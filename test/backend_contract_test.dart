@@ -60,7 +60,7 @@ class _PortableBackend implements CloudBackend {
   Stream<Set<String>?> changes(Account account) => hints.stream;
 
   @override
-  MediaSource streamSource(Account account, CloudFile file) => (
+  PlaybackSource playbackSource(Account account, CloudFile file) => (
     uri: Uri.parse('https://media.example/video/${file.id}'),
     headers: {'Authorization': 'Bearer media-token'},
   );
@@ -285,7 +285,7 @@ void main() {
       expect(controller.items, hasLength(3));
       expect(controller.hasMore, isFalse);
       expect(backend.requestedLimits, [2, 2]);
-      final source = controller.streamSource(controller.items.first)!;
+      final source = controller.playbackSource(controller.items.first)!;
       expect(source.uri.host, 'media.example');
       expect(source.headers, {'Authorization': 'Bearer media-token'});
       expect(await controller.preview(controller.items.first, size: 64), [

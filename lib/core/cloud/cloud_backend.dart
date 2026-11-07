@@ -18,7 +18,7 @@ abstract interface class LoginFlow {
   Uri get login;
 }
 
-typedef MediaSource = ({Uri uri, Map<String, String> headers});
+typedef PlaybackSource = ({Uri uri, Map<String, String> headers});
 
 class CloudDownload {
   const CloudDownload(this.stream);
@@ -43,7 +43,7 @@ abstract interface class CloudBackend {
     String appPassword,
   );
 
-  MediaSource streamSource(Account account, CloudFile file);
+  PlaybackSource playbackSource(Account account, CloudFile file);
   Future<({CloudFile? self, List<CloudFile> children})> listFolder(
     Account account,
     List<String> path,

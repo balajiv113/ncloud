@@ -464,7 +464,7 @@ class _VideoAssetState extends State<VideoAsset> with WidgetsBindingObserver {
       final copy = preferStream
           ? null
           : await widget.controller.offlineCopy(file);
-      final source = widget.controller.streamSource(file);
+      final source = widget.controller.playbackSource(file);
       if (!mounted) return;
       if (copy != null) {
         player = VideoPlayerController.file(copy);
