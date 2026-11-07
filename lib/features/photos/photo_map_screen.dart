@@ -5,12 +5,12 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-import 'app_controller.dart';
-import 'discovery_models.dart';
-import 'media_tile.dart';
-import 'models.dart';
-import 'cloud_backend.dart';
-import 'screens.dart';
+import '../../app_controller.dart';
+import '../../discovery_models.dart';
+import '../../media_tile.dart';
+import '../../models.dart';
+import '../../cloud_backend.dart';
+import '../../screens.dart';
 
 class PhotoMapScreen extends StatefulWidget {
   const PhotoMapScreen({

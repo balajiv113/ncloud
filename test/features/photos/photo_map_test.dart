@@ -10,12 +10,12 @@ import 'package:ncloud/app_controller.dart';
 import 'package:ncloud/discovery_models.dart';
 import 'package:ncloud/library_screen.dart';
 import 'package:ncloud/providers/nextcloud/nextcloud_client.dart';
-import 'package:ncloud/photo_map_screen.dart';
+import 'package:ncloud/features/photos/photo_map_screen.dart';
 
-import 'app_test.dart' show MemoryStore;
-import 'discovery_test.dart' show jsonResponse;
-import 'nextcloud_client_test.dart' show account;
-import 'preview_test.dart' show png;
+import '../../app_test.dart' show MemoryStore;
+import '../../discovery_test.dart' show jsonResponse;
+import '../../nextcloud_client_test.dart' show account;
+import '../../preview_test.dart' show png;
 
 void main() {
   testWidgets('Albums opens Map and its area opens the existing photo grid', (

@@ -12,12 +12,12 @@ import 'package:ncloud/discovery_models.dart';
 import 'package:ncloud/library_screen.dart';
 import 'package:ncloud/local_cache.dart';
 import 'package:ncloud/providers/nextcloud/nextcloud_client.dart';
-import 'package:ncloud/people_bubble.dart';
+import 'package:ncloud/features/photos/people_bubble.dart';
 
-import 'app_test.dart' show MemoryStore;
-import 'discovery_test.dart' show jsonResponse;
-import 'nextcloud_client_test.dart' show account, multistatus;
-import 'preview_test.dart' show photo, png;
+import '../../app_test.dart' show MemoryStore;
+import '../../discovery_test.dart' show jsonResponse;
+import '../../nextcloud_client_test.dart' show account, multistatus;
+import '../../preview_test.dart' show photo, png;
 
 const samplePerson = RecognizedPerson(
   id: 12,

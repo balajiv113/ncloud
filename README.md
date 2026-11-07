@@ -18,7 +18,7 @@ Pull-to-refresh keeps cached albums, folders, photos and the Timeline date index
 
 People discovery uses Memories' Recognize clusters directly. The list may include clusters that the Photos app does not show.
 
-`media_listing.dart` owns cached listing membership/paging, and `timeline_scrubber.dart` owns scrolling gestures and accessibility. The scrubber remains available to screen readers while visually hidden, with date announcements and increase/decrease actions.
+`media_listing.dart` owns cached listing membership/paging, and `features/photos/timeline_scrubber.dart` owns scrolling gestures and accessibility. The scrubber remains available to screen readers while visually hidden, with date announcements and increase/decrease actions.
 
 ## Release readiness and support
 

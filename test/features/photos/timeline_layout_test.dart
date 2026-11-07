@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ncloud/timeline_layout.dart';
+import 'package:ncloud/features/photos/timeline_layout.dart';
 
 void main() {
   test('large date indexes keep random timeline lookups bounded', () {

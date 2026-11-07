@@ -12,11 +12,11 @@ import 'discovery_models.dart';
 import 'library_actions.dart';
 import 'media_tile.dart';
 import 'models.dart';
-import 'people_bubble.dart';
-import 'photo_map_screen.dart';
+import 'features/photos/people_bubble.dart';
+import 'features/photos/photo_map_screen.dart';
 import 'screens.dart';
-import 'timeline_layout.dart';
-import 'timeline_scrubber.dart';
+import 'features/photos/timeline_layout.dart';
+import 'features/photos/timeline_scrubber.dart';
 
 enum MediaFilter { all, photos, videos, favorites }
 

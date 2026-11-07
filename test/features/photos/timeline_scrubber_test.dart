@@ -2,7 +2,7 @@ import 'dart:ui' show SemanticsAction;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ncloud/timeline_scrubber.dart';
+import 'package:ncloud/features/photos/timeline_scrubber.dart';
 
 void main() {
   testWidgets('hidden scrubber exposes date and screen-reader adjustments', (
