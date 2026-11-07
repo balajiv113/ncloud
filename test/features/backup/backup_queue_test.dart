@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ncloud/cloud_backend.dart';
+import 'package:ncloud/core/cloud/cloud_backend.dart';
 import 'package:ncloud/features/backup/folder_sync.dart';
 import 'package:ncloud/features/backup/sync_schedule.dart';
 

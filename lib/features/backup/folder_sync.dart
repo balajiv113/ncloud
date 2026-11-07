@@ -11,7 +11,7 @@ import '../../models.dart';
 import 'folder_access.dart';
 import 'sync_journal.dart';
 
-import '../../cloud_backend.dart';
+import '../../core/cloud/cloud_backend.dart';
 import 'sync_rules.dart';
 import 'sync_background.dart';
 import 'sync_schedule.dart';

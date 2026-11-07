@@ -9,7 +9,7 @@ import '../../app_controller.dart';
 import '../../discovery_models.dart';
 import '../../media_tile.dart';
 import '../../models.dart';
-import '../../cloud_backend.dart';
+import '../../core/cloud/cloud_backend.dart';
 import '../../screens.dart';
 
 class PhotoMapScreen extends StatefulWidget {

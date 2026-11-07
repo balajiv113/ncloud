@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'package:flutter/services.dart';
 
-import '../../cloud_backend.dart';
+import '../../core/cloud/cloud_backend.dart';
 import 'folder_sync.dart';
 import '../../models.dart';
 import 'sync_run_lock.dart';

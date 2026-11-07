@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import '../../cloud_backend.dart';
+import '../../core/cloud/cloud_backend.dart';
 import '../../models.dart';
 
 /// Nextcloud notify_push wire protocol; consumers only see invalidation hints.

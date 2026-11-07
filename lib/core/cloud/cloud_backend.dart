@@ -1,7 +1,7 @@
 import 'dart:typed_data';
 
-import 'discovery_models.dart';
-import 'models.dart';
+import '../../discovery_models.dart';
+import '../../models.dart';
 
 class CloudException implements Exception {
   const CloudException(this.message, {this.statusCode, this.retryable = false});

@@ -5,7 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:ncloud/models.dart';
 import 'package:ncloud/providers/nextcloud/nextcloud_client.dart';
-import 'package:ncloud/cloud_backend.dart';
+import 'package:ncloud/core/cloud/cloud_backend.dart';
 
 final account = Account(
   server: normalizeServer('https://cloud.example/nextcloud'),

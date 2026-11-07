@@ -10,7 +10,7 @@ import 'package:ncloud/core/storage/local_cache.dart';
 import 'package:ncloud/main.dart';
 import 'package:ncloud/models.dart';
 import 'package:ncloud/providers/nextcloud/nextcloud_client.dart';
-import 'package:ncloud/cloud_backend.dart';
+import 'package:ncloud/core/cloud/cloud_backend.dart';
 
 import 'app_test.dart' show MemoryStore;
 import 'nextcloud_client_test.dart' show account, multistatus, responseEntry;

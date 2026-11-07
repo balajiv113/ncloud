@@ -4,7 +4,7 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ncloud/app_controller.dart';
 import 'package:ncloud/change_monitor.dart';
-import 'package:ncloud/cloud_backend.dart';
+import 'package:ncloud/core/cloud/cloud_backend.dart';
 import 'package:ncloud/models.dart';
 
 class _SessionStore implements SessionStore {
