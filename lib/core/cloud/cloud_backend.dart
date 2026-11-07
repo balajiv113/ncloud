@@ -63,14 +63,21 @@ class TimelineResult {
   final List<CloudFile>? items;
 }
 
+class MediaPage {
+  const MediaPage({required this.items, this.nextCursor});
+
+  final List<CloudFile> items;
+
+  /// Opaque continuation token; null indicates the end of the listing.
+  final String? nextCursor;
+}
+
 /// Server operations used by browsing, discovery, transfers and folder sync.
 ///
 /// Paths are account-relative names; album references are opaque to consumers.
 /// Optional discovery returns null only when unsupported, never on auth or
 /// connection failure. Implementations retain their own protocol fallbacks.
 abstract interface class CloudBackend {
-  /// Default page length, used by callers for both limits and continuation.
-  int get pageSize;
   void close();
 
   Future<LoginFlow> startLogin(Uri server);
@@ -91,13 +98,14 @@ abstract interface class CloudBackend {
     List<String> path, {
     bool optional = false,
   });
-  Future<({List<CloudFile> files, int scanned})> searchPage(
+
+  /// The cursor is meaningful only for the same account and query.
+  Future<MediaPage> mediaPage(
     Account account, {
     bool favorites = false,
     List<String> path = const [],
-    int offset = 0,
+    String? cursor,
     int limit = 200,
-    List<String>? fileIds,
     bool recursive = true,
   });
   Future<Map<String, CloudFile>> resolveFileIds(

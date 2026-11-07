@@ -262,6 +262,18 @@ void main() {
       expect(page.scanned, 2);
       final all = await client.searchPage(account, path: ['Photos']);
       expect(all.files, hasLength(2));
+      final continuation = await client.mediaPage(
+        account,
+        path: ['Photos'],
+        recursive: false,
+        limit: 2,
+      );
+      expect(continuation.items, hasLength(1));
+      expect(continuation.nextCursor, '2');
+      await expectLater(
+        client.mediaPage(account, cursor: 'not-an-offset'),
+        throwsFormatException,
+      );
     },
   );
 

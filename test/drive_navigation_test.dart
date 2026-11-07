@@ -44,7 +44,7 @@ void main() {
           );
         } else {
           final key =
-              'browse-v4|${account.server}|${account.userId}|1|false|Trips|';
+              'browse-v5|${account.server}|${account.userId}|1|false|Trips|';
           final files = store.where((_) => true);
           await cache.writeListing(key, files);
           final listing = MediaListing()..add(FileStore(), files);

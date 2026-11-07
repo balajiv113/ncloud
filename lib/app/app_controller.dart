@@ -22,7 +22,7 @@ import '../features/backup/ios_album_backup.dart';
 export '../features/account/session_store.dart';
 
 /// A fetched page; [scanned] counts server results before filtering.
-typedef _Page = ({List<CloudFile> files, List<int> days, int scanned});
+typedef _Page = ({List<CloudFile> files, List<int> days, String? nextCursor});
 
 String errorMessage(Object error) {
   Diagnostics.session.record(error);
@@ -1234,7 +1234,9 @@ class AppController extends ChangeNotifier {
         ids.add(day.id);
         count += day.count;
       }
-      if (ids.isEmpty) return (files: <CloudFile>[], days: ids, scanned: 0);
+      if (ids.isEmpty) {
+        return (files: <CloudFile>[], days: ids, nextCursor: null);
+      }
       final cached = await _cachedDayFiles(
         listing,
         session,
@@ -1256,24 +1258,28 @@ class AppController extends ChangeNotifier {
               mapBounds: mapBounds,
             ),
           ))!.items!;
-      return (files: files, days: ids, scanned: files.length);
+      return (files: files, days: ids, nextCursor: null);
     }
-    final page = await client.searchPage(
+    final page = await client.mediaPage(
       session,
       favorites: currentTab == 2,
       path: path,
-      offset: listing.offset,
-      limit: client.pageSize,
+      cursor: listing.cursor,
       recursive: recursive,
     );
-    final existing = listing.keys.toSet();
-    if (page.files.isNotEmpty &&
-        page.files.every((f) => existing.contains(f.key))) {
+    if (page.nextCursor != null && page.nextCursor == listing.cursor) {
       throw const CloudException(
         'The server repeated a page. Pull to refresh your library.',
       );
     }
-    return (files: page.files, days: <int>[], scanned: page.scanned);
+    final existing = listing.keys.toSet();
+    if (page.items.isNotEmpty &&
+        page.items.every((f) => existing.contains(f.key))) {
+      throw const CloudException(
+        'The server repeated a page. Pull to refresh your library.',
+      );
+    }
+    return (files: page.items, days: <int>[], nextCursor: page.nextCursor);
   }
 
   Future<List<CloudFile>?> _cachedDayFiles(
@@ -1336,8 +1342,8 @@ class AppController extends ChangeNotifier {
       listing.loaded.addAll(page.days);
       listing.more = days.any((d) => !listing.loaded.contains(d.id));
     } else {
-      listing.offset += page.scanned;
-      listing.more = page.scanned == client.pageSize;
+      listing.cursor = page.nextCursor;
+      listing.more = page.nextCursor != null;
     }
   }
 
@@ -1684,7 +1690,7 @@ class AppController extends ChangeNotifier {
             !identical(_activeListing, listing)) {
           continue;
         }
-        _mergePage(listing, (files: files, days: batch, scanned: files.length));
+        _mergePage(listing, (files: files, days: batch, nextCursor: null));
         await _publishListing(listing, key);
         notifyListeners();
       }
@@ -1712,7 +1718,7 @@ class AppController extends ChangeNotifier {
   String? _listingKey() {
     final session = account;
     if (demo || session == null || tab == 3) return null;
-    return 'browse-v4|${session.server}|${session.userId}|$tab|$smartAlbumOpen|'
+    return 'browse-v5|${session.server}|${session.userId}|$tab|$smartAlbumOpen|'
         '${directory.join('/')}|${activeCloudAlbum?.reference.join('/') ?? ''}'
         '${activePerson == null ? '' : '|person:${activePerson!.id}'}'
         '${activeMapBounds == null ? '' : '|map:${activeMapBounds!.map((b) => b.query).join(';')}'}';
@@ -1973,11 +1979,11 @@ class AppController extends ChangeNotifier {
               _disposed) {
             return;
           }
-          final covers = (await client.searchPage(
+          final covers = (await client.mediaPage(
             session,
             path: path,
             limit: 1,
-          )).files;
+          )).items;
           if (covers.isNotEmpty) {
             found.add(SmartAlbum(path: path, files: covers));
           }
@@ -2311,11 +2317,11 @@ class AppController extends ChangeNotifier {
             .where((f) => f.isMedia && pathStartsWith(f.path, folder.path))
             .firstOrNull;
         if (known != null) return known;
-        final found = (await client.searchPage(
+        final found = (await client.mediaPage(
           account!,
           path: folder.path,
           limit: 1,
-        )).files;
+        )).items;
         return found.firstOrNull;
       });
 

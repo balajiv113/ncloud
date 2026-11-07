@@ -25,8 +25,6 @@ class _Backend implements CloudBackend {
   final nextDayRequested = Completer<void>();
 
   @override
-  int get pageSize => 200;
-  @override
   void close() {}
 
   @override

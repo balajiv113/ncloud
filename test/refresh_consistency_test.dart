@@ -27,8 +27,6 @@ class _Backend implements CloudBackend {
   int shareCalls = 0;
 
   @override
-  int get pageSize => 200;
-  @override
   void close() {}
 
   List<CloudFile> root(String name) => [
@@ -86,15 +84,14 @@ class _Backend implements CloudBackend {
   }
 
   @override
-  Future<({List<CloudFile> files, int scanned})> searchPage(
+  Future<MediaPage> mediaPage(
     Account account, {
     bool favorites = false,
     List<String> path = const [],
-    int offset = 0,
+    String? cursor,
     int limit = 200,
-    List<String>? fileIds,
     bool recursive = true,
-  }) async => (files: [_photo(path.last)], scanned: 1);
+  }) async => MediaPage(items: [_photo(path.last)]);
 
   @override
   dynamic noSuchMethod(Invocation invocation) =>

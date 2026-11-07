@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ncloud/app/app_controller.dart';
 import 'package:ncloud/features/library/change_monitor.dart';
+import 'package:ncloud/features/library/media_listing.dart';
 import 'package:ncloud/core/cloud/cloud_backend.dart';
 import 'package:ncloud/models.dart';
 
@@ -22,7 +23,7 @@ class _PortableBackend implements CloudBackend {
   bool closed = false;
   final resolution = Completer<Map<String, CloudFile>>();
   final batches = <Completer<Map<String, Uint8List>>>[];
-  Completer<({List<CloudFile> files, int scanned})>? delayedPage;
+  Completer<MediaPage>? delayedPage;
   final pageRequested = Completer<void>();
 
   @override
@@ -42,9 +43,6 @@ class _PortableBackend implements CloudBackend {
     List<String> ids, {
     int concurrency = 4,
   }) => resolution.future;
-
-  @override
-  int get pageSize => 2;
 
   @override
   dynamic noSuchMethod(Invocation invocation) =>
@@ -73,13 +71,12 @@ class _PortableBackend implements CloudBackend {
   }) async => Uint8List.fromList([1, 2, 3]);
 
   @override
-  Future<({List<CloudFile> files, int scanned})> searchPage(
+  Future<MediaPage> mediaPage(
     Account account, {
     bool favorites = false,
     List<String> path = const [],
-    int offset = 0,
+    String? cursor,
     int limit = 200,
-    List<String>? fileIds,
     bool recursive = true,
   }) async {
     requestedLimits.add(limit);
@@ -96,8 +93,15 @@ class _PortableBackend implements CloudBackend {
           contentType: 'image/jpeg',
           id: 'opaque:$i',
         ),
-    ].skip(offset).take(limit).toList();
-    return (files: files, scanned: files.length);
+    ];
+    if (cursor == null) {
+      return MediaPage(
+        items: files.take(2).toList(),
+        nextCursor: 'opaque:next',
+      );
+    }
+    if (cursor != 'opaque:next') throw StateError('Unexpected cursor.');
+    return MediaPage(items: files.skip(2).toList());
   }
 }
 
@@ -109,6 +113,15 @@ void main() {
     userId: 'user:opaque',
     displayName: 'Portable user',
   );
+
+  test('listing persists opaque continuation tokens unchanged', () {
+    final listing = MediaListing()
+      ..cursor = 'provider:continuation/opaque=='
+      ..more = true;
+    final restored = MediaListing.fromJson(listing.toJson());
+    expect(restored.cursor, 'provider:continuation/opaque==');
+    expect(restored.more, isTrue);
+  });
 
   test('late initial page cannot populate a replacement account', () async {
     final backend = _PortableBackend()..delayedPage = Completer();
@@ -126,17 +139,18 @@ void main() {
       userId: 'another-user',
       displayName: 'Another user',
     );
-    backend.delayedPage!.complete((
-      files: [
-        const CloudFile(
-          path: ['Pictures', 'private.jpg'],
-          name: 'private.jpg',
-          isDirectory: false,
-          id: 'private',
-        ),
-      ],
-      scanned: 1,
-    ));
+    backend.delayedPage!.complete(
+      const MediaPage(
+        items: [
+          CloudFile(
+            path: ['Pictures', 'private.jpg'],
+            name: 'private.jpg',
+            isDirectory: false,
+            id: 'private',
+          ),
+        ],
+      ),
+    );
     await pending;
     expect(controller.fileStore.length, 0);
     expect(controller.items, isEmpty);
@@ -158,16 +172,17 @@ void main() {
         .where((_) => true)
         .map((file) => file.key)
         .toSet();
-    delayed.complete((
-      files: [
-        const CloudFile(
-          path: ['Pictures', 'stale.jpg'],
-          name: 'stale.jpg',
-          isDirectory: false,
-        ),
-      ],
-      scanned: 1,
-    ));
+    delayed.complete(
+      const MediaPage(
+        items: [
+          CloudFile(
+            path: ['Pictures', 'stale.jpg'],
+            name: 'stale.jpg',
+            isDirectory: false,
+          ),
+        ],
+      ),
+    );
     await pending;
     expect(
       controller.fileStore.where((_) => true).map((file) => file.key).toSet(),
@@ -284,7 +299,7 @@ void main() {
       await controller.loadNextPage();
       expect(controller.items, hasLength(3));
       expect(controller.hasMore, isFalse);
-      expect(backend.requestedLimits, [2, 2]);
+      expect(backend.requestedLimits, [200, 200]);
       final source = controller.playbackSource(controller.items.first)!;
       expect(source.uri.host, 'media.example');
       expect(source.headers, {'Authorization': 'Bearer media-token'});

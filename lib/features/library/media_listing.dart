@@ -10,7 +10,7 @@ class MediaListing {
   final Set<int> loaded = {};
   final Set<int> staleDays = {};
   bool allowCachedDays = true;
-  int offset = 0;
+  String? cursor;
   String? scopeEtag;
   bool more = false;
   DateTime updated = DateTime.now();
@@ -66,7 +66,7 @@ class MediaListing {
     'days': days?.map((d) => d.toJson()).toList(),
     'loaded': loaded.toList(),
     'staleDays': staleDays.toList(),
-    'offset': offset,
+    'cursor': cursor,
     'scopeEtag': scopeEtag,
     'more': more,
     'updated': updated.toIso8601String(),
@@ -77,7 +77,7 @@ class MediaListing {
       ..days = (value['days'] as List?)
           ?.map((d) => TimelineDay.fromJson((d as Map).cast<String, dynamic>()))
           .toList()
-      ..offset = value['offset'] as int
+      ..cursor = value['cursor'] as String?
       ..scopeEtag = value['scopeEtag'] as String?
       ..more = value['more'] as bool
       ..updated = DateTime.parse(value['updated'] as String);

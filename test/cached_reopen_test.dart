@@ -20,7 +20,7 @@ void main() {
   final session = account.withPhotoRoot(['Photos']);
   final owner = '${account.server}|${account.userId}';
   final catalogueKey = 'album-catalogue-v5|$owner|Photos';
-  final browseKey = 'browse-v4|$owner|4|true|Photos/Trip|';
+  final browseKey = 'browse-v5|$owner|4|true|Photos/Trip|';
   final file = CloudFile(
     path: const ['Photos', 'Trip', 'one.jpg'],
     name: 'one.jpg',
@@ -179,7 +179,7 @@ void main() {
         ],
         'loaded': [21000],
         'staleDays': <int>[],
-        'offset': 0,
+        'cursor': null,
         'more': false,
         'updated': old,
         'scopeEtag': '"folder-one"',
@@ -257,7 +257,7 @@ void main() {
         ],
         'loaded': [21000],
         'staleDays': <int>[],
-        'offset': 0,
+        'cursor': null,
         'more': false,
         'updated': old,
         'scopeEtag': '"folder-one"',

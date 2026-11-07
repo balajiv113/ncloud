@@ -64,8 +64,6 @@ class NextcloudClient implements CloudBackend {
   int _activePreviews = 0;
   static const _timeout = Duration(seconds: 45);
   static const photoLimit = 200;
-  @override
-  int get pageSize => photoLimit;
   // Nextcloud's DAV FileSearchBackend rejects more than 100 comparisons.
   static const fileIdLimit = 100;
   static const _properties = '''
@@ -598,8 +596,34 @@ class NextcloudClient implements CloudBackend {
     );
   }
 
-  /// Reports server results before filtering so paging advances correctly.
   @override
+  Future<MediaPage> mediaPage(
+    Account account, {
+    bool favorites = false,
+    List<String> path = const [],
+    String? cursor,
+    int limit = photoLimit,
+    bool recursive = true,
+  }) async {
+    final offset = cursor == null ? 0 : int.tryParse(cursor);
+    if (offset == null || offset < 0 || limit <= 0) {
+      throw const FormatException('Invalid media page request.');
+    }
+    final page = await searchPage(
+      account,
+      favorites: favorites,
+      path: path,
+      offset: offset,
+      limit: limit,
+      recursive: recursive,
+    );
+    return MediaPage(
+      items: page.files,
+      nextCursor: page.scanned == limit ? '${offset + page.scanned}' : null,
+    );
+  }
+
+  /// Reports server results before filtering so paging advances correctly.
   Future<({List<CloudFile> files, int scanned})> searchPage(
     Account account, {
     bool favorites = false,
