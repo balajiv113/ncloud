@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -6,6 +7,7 @@ import 'package:ncloud/app/app_controller.dart';
 import 'package:ncloud/features/library/change_monitor.dart';
 import 'package:ncloud/features/library/media_listing.dart';
 import 'package:ncloud/core/cloud/cloud_backend.dart';
+import 'package:ncloud/core/storage/local_cache.dart';
 import 'package:ncloud/models.dart';
 
 class _SessionStore implements SessionStore {
@@ -38,10 +40,36 @@ class _PortableBackend implements CloudBackend {
   final hints = StreamController<Set<String>?>.broadcast();
   final requestedLimits = <int>[];
   bool closed = false;
+  int folderListings = 0;
+  int folderInspections = 0;
   final resolution = Completer<Map<String, CloudFile>>();
   final batches = <Completer<List<Uint8List?>>>[];
   Completer<TimelineResult>? delayedPage;
   final pageRequested = Completer<void>();
+
+  @override
+  Future<FolderListing> listFolder(
+    Account account,
+    List<String> path, {
+    bool metadataOnly = false,
+    bool optional = false,
+  }) async {
+    if (metadataOnly) {
+      folderInspections++;
+      return const FolderListing(revision: 'opaque:folder-revision');
+    }
+    folderListings++;
+    return FolderListing(
+      revision: 'opaque:folder-revision',
+      children: [
+        CloudFile(
+          path: [...path, 'photo.jpg'],
+          name: 'photo.jpg',
+          isDirectory: false,
+        ),
+      ],
+    );
+  }
 
   @override
   Future<List<Uint8List?>> previews(
@@ -112,7 +140,7 @@ class _PortableBackend implements CloudBackend {
 }
 
 void main() {
-  const account = _PortableAccount('portable:account');
+  const account = _PortableAccount('portable|account');
 
   test('listing persists opaque continuation tokens unchanged', () {
     final listing = MediaListing()
@@ -123,6 +151,37 @@ void main() {
     expect(restored.more, isTrue);
   });
 
+  test(
+    'folder cache uses provider revision independent of file metadata',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'ncloud-provider-folder-',
+      );
+      final cache = LocalCache(() async => root);
+      final backend = _PortableBackend();
+      final controller = AppController(
+        store: _SessionStore(),
+        client: backend,
+        cache: cache,
+      )..account = account;
+      try {
+        expect(await controller.folderContents(['Photos']), hasLength(1));
+        await cache.writeLibrary(
+          'library-v1|${account.storageKey}',
+          controller.fileStore,
+        );
+        controller.fileStore.markStale();
+        expect(await controller.folderContents(['Photos']), hasLength(1));
+        expect(backend.folderListings, 1);
+        expect(backend.folderInspections, 1);
+      } finally {
+        controller.dispose();
+        await cache.close();
+        await root.delete(recursive: true);
+      }
+    },
+  );
+
   test('late initial page cannot populate a replacement account', () async {
     final backend = _PortableBackend()..delayedPage = Completer();
     final controller = AppController(store: _SessionStore(), client: backend)
@@ -132,7 +191,7 @@ void main() {
     addTearDown(controller.dispose);
     final pending = controller.load();
     await backend.pageRequested.future;
-    controller.account = const _PortableAccount('portable:other');
+    controller.account = const _PortableAccount('portable|other');
     backend.delayedPage!.complete(
       const TimelineResult.page([
         CloudFile(
@@ -269,7 +328,7 @@ void main() {
       controller.preview(file),
       throwsA(isA<PreviewCancelled>()),
     );
-    controller.account = const _PortableAccount('portable:other');
+    controller.account = const _PortableAccount('portable|other');
     final current = controller.preview(file);
     await tester.pump(const Duration(milliseconds: 12));
     await cancelled;

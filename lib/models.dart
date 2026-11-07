@@ -26,7 +26,9 @@ Uri normalizeServer(String input) {
 abstract class Account {
   const Account();
 
-  /// Stable provider-owned namespace; must not contain credentials.
+  /// Stable namespace, formatted as two non-secret components separated by
+  /// `|`, with no additional separators. Storage uses those components to
+  /// isolate an account's collections.
   String get storageKey;
   String get displayName;
   String get serverLabel;
