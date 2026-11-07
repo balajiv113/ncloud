@@ -5,7 +5,7 @@ import 'local_cache.dart';
 import 'screens.dart';
 import 'library_screen.dart';
 import 'warm_start_screen.dart';
-import 'nextcloud_client.dart';
+import 'providers/nextcloud/nextcloud_client.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();

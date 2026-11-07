@@ -5,7 +5,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
 
 import 'folder_access.dart';
-import 'models.dart';
+import '../../models.dart';
 import 'sync_rules.dart';
 import 'sync_schedule.dart';
 

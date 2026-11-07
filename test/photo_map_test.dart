@@ -9,7 +9,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:ncloud/app_controller.dart';
 import 'package:ncloud/discovery_models.dart';
 import 'package:ncloud/library_screen.dart';
-import 'package:ncloud/nextcloud_client.dart';
+import 'package:ncloud/providers/nextcloud/nextcloud_client.dart';
 import 'package:ncloud/photo_map_screen.dart';
 
 import 'app_test.dart' show MemoryStore;

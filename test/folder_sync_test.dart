@@ -6,12 +6,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
-import 'package:ncloud/folder_sync.dart';
+import 'package:ncloud/features/backup/folder_sync.dart';
 import 'package:ncloud/models.dart';
-import 'package:ncloud/nextcloud_client.dart';
+import 'package:ncloud/providers/nextcloud/nextcloud_client.dart';
 import 'package:ncloud/cloud_backend.dart';
-import 'package:ncloud/sync_rules.dart';
-import 'package:ncloud/sync_background.dart';
+import 'package:ncloud/features/backup/sync_rules.dart';
+import 'package:ncloud/features/backup/sync_background.dart';
 
 import 'nextcloud_client_test.dart' show account;
 

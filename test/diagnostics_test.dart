@@ -8,7 +8,7 @@ import 'package:ncloud/app_controller.dart';
 import 'package:ncloud/cloud_backend.dart';
 import 'package:ncloud/diagnostics.dart';
 import 'package:ncloud/library_actions.dart';
-import 'package:ncloud/nextcloud_client.dart';
+import 'package:ncloud/providers/nextcloud/nextcloud_client.dart';
 
 import 'app_test.dart' show MemoryStore;
 

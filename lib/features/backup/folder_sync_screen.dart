@@ -2,10 +2,10 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import 'app_controller.dart';
+import '../../app_controller.dart';
 import 'folder_sync.dart';
-import 'library_actions.dart' show chooseFolder;
-import 'screens.dart' show showError;
+import '../../library_actions.dart' show chooseFolder;
+import '../../screens.dart' show showError;
 import 'sync_rules.dart';
 import 'sync_schedule.dart';
 

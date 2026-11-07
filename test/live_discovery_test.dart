@@ -4,7 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:ncloud/app_controller.dart';
 import 'package:ncloud/discovery_models.dart';
-import 'package:ncloud/nextcloud_client.dart';
+import 'package:ncloud/providers/nextcloud/nextcloud_client.dart';
 
 import 'app_test.dart' show MemoryStore;
 

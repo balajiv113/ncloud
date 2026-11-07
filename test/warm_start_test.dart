@@ -9,7 +9,7 @@ import 'package:http/testing.dart';
 import 'package:ncloud/app_controller.dart';
 import 'package:ncloud/local_cache.dart';
 import 'package:ncloud/main.dart';
-import 'package:ncloud/nextcloud_client.dart';
+import 'package:ncloud/providers/nextcloud/nextcloud_client.dart';
 import 'package:ncloud/warm_start_screen.dart';
 
 import 'app_test.dart' show MemoryStore;

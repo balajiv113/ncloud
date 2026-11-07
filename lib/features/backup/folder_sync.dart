@@ -7,11 +7,11 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:sqflite/sqflite.dart';
 
-import 'models.dart';
+import '../../models.dart';
 import 'folder_access.dart';
 import 'sync_journal.dart';
 
-import 'cloud_backend.dart';
+import '../../cloud_backend.dart';
 import 'sync_rules.dart';
 import 'sync_background.dart';
 import 'sync_schedule.dart';

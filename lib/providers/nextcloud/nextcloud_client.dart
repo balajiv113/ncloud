@@ -7,9 +7,9 @@ import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 import 'package:xml/xml.dart';
 
-import 'models.dart';
-import 'discovery_models.dart';
-import 'cloud_backend.dart';
+import '../../models.dart';
+import '../../discovery_models.dart';
+import '../../cloud_backend.dart';
 import 'nextcloud_change_feed.dart';
 import 'nextcloud_discovery.dart';
 

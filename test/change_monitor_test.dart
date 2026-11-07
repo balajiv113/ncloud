@@ -7,7 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:ncloud/change_monitor.dart';
 import 'package:ncloud/cloud_backend.dart';
-import 'package:ncloud/nextcloud_client.dart';
+import 'package:ncloud/providers/nextcloud/nextcloud_client.dart';
 
 import 'nextcloud_client_test.dart' show account;
 

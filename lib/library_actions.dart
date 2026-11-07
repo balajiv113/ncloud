@@ -6,7 +6,7 @@ import 'package:share_plus/share_plus.dart';
 
 import 'app_controller.dart';
 import 'diagnostics.dart';
-import 'folder_sync_screen.dart';
+import 'features/backup/folder_sync_screen.dart';
 import 'models.dart';
 import 'screens.dart';
 

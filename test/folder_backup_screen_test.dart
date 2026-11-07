@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ncloud/app_controller.dart';
-import 'package:ncloud/folder_sync.dart';
-import 'package:ncloud/folder_sync_screen.dart';
-import 'package:ncloud/sync_rules.dart';
-import 'package:ncloud/sync_schedule.dart';
+import 'package:ncloud/features/backup/folder_sync.dart';
+import 'package:ncloud/features/backup/folder_sync_screen.dart';
+import 'package:ncloud/features/backup/sync_rules.dart';
+import 'package:ncloud/features/backup/sync_schedule.dart';
 
 import 'app_test.dart' show MemoryStore;
 import 'folder_sync_test.dart' show CloudFolders;

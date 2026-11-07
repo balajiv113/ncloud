@@ -10,15 +10,15 @@ import 'demo.dart';
 import 'diagnostics.dart';
 import 'discovery_models.dart';
 import 'file_store.dart';
-import 'folder_sync.dart';
+import 'features/backup/folder_sync.dart';
 import 'local_cache.dart';
 import 'models.dart';
 import 'media_listing.dart';
 import 'cloud_backend.dart';
-import 'workmanager_backup.dart';
-import 'sync_schedule.dart';
+import 'features/backup/workmanager_backup.dart';
+import 'features/backup/sync_schedule.dart';
 import 'session_store.dart';
-import 'ios_album_backup.dart';
+import 'features/backup/ios_album_backup.dart';
 export 'session_store.dart';
 
 /// A fetched page; [scanned] counts server results before filtering.

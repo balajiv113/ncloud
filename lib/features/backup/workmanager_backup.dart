@@ -3,12 +3,12 @@ import 'dart:io';
 import 'package:flutter/widgets.dart';
 import 'package:workmanager/workmanager.dart';
 
-import 'session_store.dart';
+import '../../session_store.dart';
 import 'folder_sync.dart';
 import 'headless_backup.dart';
 import 'ios_album_backup.dart';
-import 'models.dart';
-import 'nextcloud_client.dart';
+import '../../models.dart';
+import '../../providers/nextcloud/nextcloud_client.dart';
 import 'sync_run_lock.dart';
 import 'sync_schedule.dart';
 

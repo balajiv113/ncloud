@@ -1,5 +1,5 @@
-import 'discovery_models.dart';
-import 'models.dart';
+import '../../discovery_models.dart';
+import '../../models.dart';
 
 TimelineDay parseNextcloudDay(Map<String, dynamic> json) {
   final id = json['dayid'];

@@ -11,7 +11,7 @@ import 'package:ncloud/cloud_backend.dart';
 import 'package:ncloud/discovery_models.dart';
 import 'package:ncloud/library_screen.dart';
 import 'package:ncloud/local_cache.dart';
-import 'package:ncloud/nextcloud_client.dart';
+import 'package:ncloud/providers/nextcloud/nextcloud_client.dart';
 import 'package:ncloud/people_bubble.dart';
 
 import 'app_test.dart' show MemoryStore;

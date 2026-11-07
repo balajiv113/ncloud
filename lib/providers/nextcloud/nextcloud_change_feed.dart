@@ -2,8 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'cloud_backend.dart';
-import 'models.dart';
+import '../../cloud_backend.dart';
+import '../../models.dart';
 
 /// Nextcloud notify_push wire protocol; consumers only see invalidation hints.
 Stream<Set<String>?> nextcloudChanges(

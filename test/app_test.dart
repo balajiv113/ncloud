@@ -6,7 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:ncloud/app_controller.dart';
 import 'package:ncloud/main.dart';
-import 'package:ncloud/nextcloud_client.dart';
+import 'package:ncloud/providers/nextcloud/nextcloud_client.dart';
 
 class MemoryStore implements SessionStore {
   String? value;

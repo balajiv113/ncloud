@@ -3,8 +3,8 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ncloud/cloud_backend.dart';
-import 'package:ncloud/folder_sync.dart';
-import 'package:ncloud/sync_schedule.dart';
+import 'package:ncloud/features/backup/folder_sync.dart';
+import 'package:ncloud/features/backup/sync_schedule.dart';
 
 import 'folder_sync_test.dart'
     show CloudFolders, DeviceFolders, TestSyncBackground;

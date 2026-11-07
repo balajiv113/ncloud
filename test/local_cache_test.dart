@@ -13,7 +13,7 @@ import 'package:ncloud/file_store.dart';
 import 'package:ncloud/local_cache.dart';
 import 'package:ncloud/models.dart';
 import 'package:ncloud/media_tile.dart';
-import 'package:ncloud/nextcloud_client.dart';
+import 'package:ncloud/providers/nextcloud/nextcloud_client.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'app_test.dart' show MemoryStore;
