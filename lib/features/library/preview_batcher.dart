@@ -21,6 +21,7 @@ class PreviewBatcher {
   final bool Function() active;
   final bool Function(String key) interested;
   final Map<String, _Request> _queue = {};
+  Account? _queueAccount;
   Timer? _timer;
   int _running = 0;
   int _generation = 0;
@@ -41,6 +42,10 @@ class PreviewBatcher {
     if (!batch || file.id == null || _batchUnavailable || size > 512) {
       return _single(account, file, size);
     }
+    if (_queueAccount != null && !identical(_queueAccount, account)) {
+      pause();
+    }
+    _queueAccount = account;
     final key = '${file.id}|$size';
     final request =
         _queue.remove(key) ?? _Request(file, size, loadKey, Completer());
@@ -56,6 +61,7 @@ class PreviewBatcher {
       request.completer.completeError(const PreviewCancelled());
     }
     _queue.clear();
+    _queueAccount = null;
   }
 
   void clear() {
@@ -81,7 +87,10 @@ class PreviewBatcher {
 
   void _flush(Account account) {
     _timer = null;
-    if (_disposed || !identical(session(), account) || !active()) return;
+    if (_disposed || !identical(session(), account) || !active()) {
+      pause();
+      return;
+    }
     while (_queue.isNotEmpty && _running < 3) {
       final batch = <_Request>[];
       for (final key in _queue.keys.toList().reversed) {
@@ -99,6 +108,7 @@ class PreviewBatcher {
       _running++;
       unawaited(_send(account, batch));
     }
+    if (_queue.isEmpty) _queueAccount = null;
   }
 
   Future<void> _send(Account account, List<_Request> batch) async {

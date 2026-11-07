@@ -252,6 +252,31 @@ void main() {
     expect(backend.batches, isEmpty);
   });
 
+  testWidgets('queued previews cannot cross account changes', (tester) async {
+    final backend = _PortableBackend();
+    final controller = AppController(store: _SessionStore(), client: backend)
+      ..account = account
+      ..timelineIndexAvailable = true;
+    addTearDown(controller.dispose);
+    const file = CloudFile(
+      path: ['Pictures', 'one.jpg'],
+      name: 'one.jpg',
+      isDirectory: false,
+      contentType: 'image/jpeg',
+      id: 'opaque:one',
+    );
+    final cancelled = expectLater(
+      controller.preview(file),
+      throwsA(isA<PreviewCancelled>()),
+    );
+    controller.account = const _PortableAccount('portable:other');
+    final current = controller.preview(file);
+    await tester.pump(const Duration(milliseconds: 12));
+    await cancelled;
+    expect(await current, [1, 2, 3]);
+    expect(backend.batches, isEmpty);
+  });
+
   test(
     'file resolution cannot populate another session with stale paths',
     () async {
