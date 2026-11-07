@@ -2614,22 +2614,23 @@ class AppController extends ChangeNotifier {
     }
   }
 
-  CloudFile? _applyResolved(String id, CloudFile? real) {
+  CloudFile? _applyResolved(CloudFile original, CloudFile? real) {
     final key = CloudFile(
-      path: [CloudFile.pendingRoot, id],
-      name: id,
+      path: [CloudFile.pendingRoot, original.id!],
+      name: original.id!,
       isDirectory: false,
     ).key;
     final placeholder = fileStore[key];
-    if (placeholder == null && real != null) return real;
-    final day = placeholder?.captureDay;
+    final metadata = placeholder ?? original;
+    final day = metadata.captureDay;
     final file = real != null && day != null
         ? real.withCaptureDate(
-            placeholder!.taken ?? real.modified ?? DateTime.now(),
-            placeholder.etag ?? real.etag,
+            metadata.taken ?? real.modified ?? DateTime.now(),
+            metadata.etag ?? real.etag,
             day: day,
           )
         : real;
+    if (placeholder == null && real != null) return file;
     final renamed = file == null ? <String, String>{} : {key: file.key};
     final gone = file == null ? {key} : <String>{};
     if (file != null) fileStore.putAll([file]);

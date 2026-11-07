@@ -594,6 +594,37 @@ void main() {
     expect((await second).path, ['Pictures', 'photo.jpg']);
   });
 
+  test('resolution preserves timeline metadata after store eviction', () async {
+    final backend = _PortableBackend();
+    final controller = AppController(store: _SessionStore(), client: backend)
+      ..account = account;
+    addTearDown(controller.dispose);
+    final taken = DateTime.utc(2020, 3, 5);
+    final file = CloudFile(
+      path: const [CloudFile.pendingRoot, 'opaque:1'],
+      name: 'photo.jpg',
+      isDirectory: false,
+      id: 'opaque:1',
+      taken: taken,
+      captureDay: 18326,
+      etag: 'timeline-revision',
+    );
+    final pending = controller.resolve(file);
+    backend.resolution.complete({
+      'opaque:1': const CloudFile(
+        path: ['Pictures', 'photo.jpg'],
+        name: 'photo.jpg',
+        isDirectory: false,
+        id: 'opaque:1',
+        etag: 'provider-revision',
+      ),
+    });
+    final resolved = await pending;
+    expect(resolved.taken, taken);
+    expect(resolved.captureDay, 18326);
+    expect(resolved.etag, 'timeline-revision');
+  });
+
   test(
     'resolution cannot refill a cache cleared during reconciliation',
     () async {

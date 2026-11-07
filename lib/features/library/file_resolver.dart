@@ -13,7 +13,7 @@ class FileResolver {
   final CloudBackend client;
   final Account? Function() account;
   final bool Function() active;
-  final CloudFile? Function(String id, CloudFile? file) apply;
+  final CloudFile? Function(CloudFile original, CloudFile? file) apply;
   final Map<String, CloudFile> _resolved = {};
   final Map<String, Future<CloudFile>> _pending = {};
   Account? _owner;
@@ -48,7 +48,7 @@ class FileResolver {
     if (_resolved[id] case final known?) return known;
     if (_pending[id] case final pending?) return pending;
     final generation = _generation;
-    final request = _fetch(session, id, generation);
+    final request = _fetch(session, file, id, generation);
     _pending[id] = request;
     try {
       return await request;
@@ -57,10 +57,15 @@ class FileResolver {
     }
   }
 
-  Future<CloudFile> _fetch(Account session, String id, int generation) async {
+  Future<CloudFile> _fetch(
+    Account session,
+    CloudFile original,
+    String id,
+    int generation,
+  ) async {
     final found = await client.resolveFileIds(session, [id]);
     _checkCurrent(session, generation);
-    final resolved = apply(id, found[id]);
+    final resolved = apply(original, found[id]);
     _checkCurrent(session, generation);
     if (resolved == null) {
       throw const CloudException('This item is no longer available.');
