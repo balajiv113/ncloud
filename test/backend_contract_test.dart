@@ -228,6 +228,30 @@ void main() {
     ]);
   });
 
+  testWidgets('disposing cancels previews still queued for batching', (
+    tester,
+  ) async {
+    final backend = _PortableBackend();
+    final controller = AppController(store: _SessionStore(), client: backend)
+      ..account = account
+      ..timelineIndexAvailable = true;
+    const file = CloudFile(
+      path: ['Pictures', 'one.jpg'],
+      name: 'one.jpg',
+      isDirectory: false,
+      contentType: 'image/jpeg',
+      id: 'opaque:one',
+    );
+    final cancelled = expectLater(
+      controller.preview(file),
+      throwsA(isA<PreviewCancelled>()),
+    );
+    controller.dispose();
+    await cancelled;
+    await tester.pump(const Duration(milliseconds: 20));
+    expect(backend.batches, isEmpty);
+  });
+
   test(
     'file resolution cannot populate another session with stale paths',
     () async {

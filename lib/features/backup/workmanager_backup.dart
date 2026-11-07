@@ -26,7 +26,7 @@ void backupDispatcher() {
         final client = createCloudBackend();
         Future<Account?> readAccount() async {
           final value = await SecureSessionStore().read();
-          return value == null ? null : restoreCloudAccount(value);
+          return value == null ? null : client.restoreAccount(value);
         }
 
         final scheduler = IosAlbumScheduler(
@@ -70,7 +70,7 @@ void backupDispatcher() {
         ),
         readAccount: () async {
           final value = await SecureSessionStore().read();
-          return value == null ? null : restoreCloudAccount(value);
+          return value == null ? null : client.restoreAccount(value);
         },
       );
       try {

@@ -2,7 +2,6 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ncloud/app/provider_factory.dart';
-import 'package:ncloud/providers/nextcloud/nextcloud_account.dart';
 import 'package:ncloud/providers/nextcloud/nextcloud_client.dart';
 
 void main() {
@@ -25,19 +24,23 @@ void main() {
       'displayName': 'Alice',
       'photoRoot': ['Photos'],
     });
-    final account = restoreCloudAccount(legacy) as NextcloudAccount;
+    final client = NextcloudClient();
+    addTearDown(client.close);
+    final account = client.restoreAccount(legacy);
     expect(account.storageKey, 'https://cloud.example|uid');
     expect(account.photoRoot, ['Photos']);
     expect(account.loginName, 'alice');
     expect(
-      restoreCloudAccount(account.encode()).storageKey,
+      client.restoreAccount(account.encode()).storageKey,
       account.storageKey,
     );
   });
 
   test('unknown providers are not treated as Nextcloud', () {
+    final client = NextcloudClient();
+    addTearDown(client.close);
     expect(
-      () => restoreCloudAccount(jsonEncode({'provider': 'unknown'})),
+      () => client.restoreAccount(jsonEncode({'provider': 'unknown'})),
       throwsFormatException,
     );
   });

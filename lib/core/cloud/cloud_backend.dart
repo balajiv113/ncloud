@@ -97,6 +97,8 @@ class TimelineResult {
 abstract interface class CloudBackend {
   void close();
 
+  /// Decode a session written by this provider; reject other providers.
+  Account restoreAccount(String value);
   Future<LoginFlow> startLogin(Uri server);
   Future<Account?> pollLogin(Uri server, LoginFlow flow);
   Future<Account> authenticate(

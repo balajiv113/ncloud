@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ncloud/models.dart';
-import 'package:ncloud/app/provider_factory.dart';
 import 'package:ncloud/providers/nextcloud/nextcloud_account.dart';
+import 'package:ncloud/providers/nextcloud/nextcloud_client.dart';
 
 void main() {
   test(
@@ -59,7 +59,9 @@ void main() {
       userId: 'internal-id',
       displayName: 'Example',
     );
-    final result = restoreCloudAccount(account.encode()) as NextcloudAccount;
+    final client = NextcloudClient();
+    addTearDown(client.close);
+    final result = client.restoreAccount(account.encode());
     expect(result.userId, 'internal-id');
     expect(result.loginName, 'user@example.com');
     expect(result.appPassword, 'a:b');
@@ -157,15 +159,15 @@ void main() {
         userId: 'uid',
         displayName: 'User',
       );
-      final updated =
-          restoreCloudAccount(
-                original.withPhotoRoot(['Photos', 'Family']).encode(),
-              )
-              as NextcloudAccount;
+      final client = NextcloudClient();
+      addTearDown(client.close);
+      final updated = client.restoreAccount(
+        original.withPhotoRoot(['Photos', 'Family']).encode(),
+      );
       expect(updated.photoRoot, ['Photos', 'Family']);
       expect(updated.loginName, original.loginName);
       expect(updated.appPassword, original.appPassword);
-      expect(restoreCloudAccount(original.encode()).photoRoot, isNull);
+      expect(client.restoreAccount(original.encode()).photoRoot, isNull);
     },
   );
 }

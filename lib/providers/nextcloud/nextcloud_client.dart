@@ -59,6 +59,16 @@ class NextcloudClient implements CloudBackend {
        _connectPush = connectPush;
 
   final http.Client _transport;
+
+  @override
+  NextcloudAccount restoreAccount(String value) {
+    final data = (jsonDecode(value) as Map).cast<String, dynamic>();
+    if (data['provider'] != null && data['provider'] != 'nextcloud') {
+      throw const FormatException('Unsupported cloud account provider.');
+    }
+    return NextcloudAccount.decode(data);
+  }
+
   final Future<WebSocket> Function(Uri)? _connectPush;
   final _pushEndpoints = <Account, Future<Uri?>>{};
   final _previewQueue = Queue<Completer<void>>();
