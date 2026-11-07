@@ -261,7 +261,7 @@ jobs:
           gh release create "v0.5.5-preview.${{ github.run_number }}" ncloud-android.apk \
             --target "${{ github.sha }}" --prerelease \
             --title "ncloud Android preview #${{ github.run_number }}" \
-            --notes "ncloud 0.5.5 preview: Drive lists unique direct children of the selected folder. Android selected-folder backup supports opt-in best-effort interval/daily/weekly schedules, notification controls, retryable settings loading, subfolder/type filters and up to three create-only upload lanes. No device or cloud originals are deleted or overwritten. Per-file receipts preserve confirmed progress; interrupted originals restart in full. Source folders and subfolders are preserved. Updates reuse the cached development signer. The accompanying iOS source includes scene lifecycle support and explicitly selected whole-Photos-album backup with best-effort background processing; this Android APK is not an iOS installer."
+            --notes "ncloud 0.5.5 preview: Folder backup uses one compact setup for Android device folders and iOS Photos albums, with include/exclude glob patterns, manual or best-effort daily schedules, individual backup and Back up all/Pause all controls. Removing a backup only removes its settings and history. Manual pair storage is independent of background scheduling. No device or cloud originals are deleted or overwritten; per-file receipts preserve confirmed progress and interrupted originals restart in full. Source folders and subfolders are preserved. Updates reuse the cached development signer. This Android APK is not an iOS installer."
 
   ios:
     runs-on: macos-15
