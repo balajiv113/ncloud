@@ -17,9 +17,9 @@ import 'media_listing.dart';
 import 'cloud_backend.dart';
 import 'features/backup/workmanager_backup.dart';
 import 'features/backup/sync_schedule.dart';
-import 'session_store.dart';
+import 'features/account/session_store.dart';
 import 'features/backup/ios_album_backup.dart';
-export 'session_store.dart';
+export 'features/account/session_store.dart';
 
 /// A fetched page; [scanned] counts server results before filtering.
 typedef _Page = ({List<CloudFile> files, List<int> days, int scanned});

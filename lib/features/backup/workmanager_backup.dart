@@ -4,7 +4,7 @@ import 'package:flutter/widgets.dart';
 import 'package:workmanager/workmanager.dart';
 
 import '../../app/provider_factory.dart';
-import '../../session_store.dart';
+import '../account/session_store.dart';
 import 'folder_sync.dart';
 import 'headless_backup.dart';
 import 'ios_album_backup.dart';
