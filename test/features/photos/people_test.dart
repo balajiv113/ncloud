@@ -9,7 +9,7 @@ import 'package:http/testing.dart';
 import 'package:ncloud/app/app_controller.dart';
 import 'package:ncloud/core/cloud/cloud_backend.dart';
 import 'package:ncloud/discovery_models.dart';
-import 'package:ncloud/library_screen.dart';
+import 'package:ncloud/features/library/library_screen.dart';
 import 'package:ncloud/core/storage/local_cache.dart';
 import 'package:ncloud/providers/nextcloud/nextcloud_client.dart';
 import 'package:ncloud/features/photos/people_bubble.dart';

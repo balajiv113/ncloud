@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'app/app_controller.dart';
-import 'media_tile.dart';
+import 'features/library/media_tile.dart';
 
 /// Library preparation for new and previously unprepared saved sessions.
 class WarmStartScreen extends StatelessWidget {

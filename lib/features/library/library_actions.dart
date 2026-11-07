@@ -4,11 +4,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
 
-import 'app/app_controller.dart';
-import 'diagnostics.dart';
-import 'features/backup/folder_sync_screen.dart';
-import 'models.dart';
-import 'screens.dart';
+import '../../app/app_controller.dart';
+import '../../diagnostics.dart';
+import '../backup/folder_sync_screen.dart';
+import '../../models.dart';
+import '../../screens.dart';
 
 Future<bool> confirmDelete(BuildContext context, List<CloudFile> files) async =>
     await showDialog<bool>(

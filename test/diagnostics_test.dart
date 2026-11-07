@@ -7,7 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ncloud/app/app_controller.dart';
 import 'package:ncloud/core/cloud/cloud_backend.dart';
 import 'package:ncloud/diagnostics.dart';
-import 'package:ncloud/library_actions.dart';
+import 'package:ncloud/features/library/library_actions.dart';
 import 'package:ncloud/providers/nextcloud/nextcloud_client.dart';
 
 import 'app_test.dart' show MemoryStore;

@@ -5,18 +5,18 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import 'app/app_controller.dart';
-import 'features/library/change_monitor.dart';
+import '../../app/app_controller.dart';
+import 'change_monitor.dart';
 import 'asset_viewer.dart';
-import 'discovery_models.dart';
+import '../../discovery_models.dart';
 import 'library_actions.dart';
 import 'media_tile.dart';
-import 'models.dart';
-import 'features/photos/people_bubble.dart';
-import 'features/photos/photo_map_screen.dart';
-import 'screens.dart';
-import 'features/photos/timeline_layout.dart';
-import 'features/photos/timeline_scrubber.dart';
+import '../../models.dart';
+import '../photos/people_bubble.dart';
+import '../photos/photo_map_screen.dart';
+import '../../screens.dart';
+import '../photos/timeline_layout.dart';
+import '../photos/timeline_scrubber.dart';
 
 enum MediaFilter { all, photos, videos, favorites }
 
