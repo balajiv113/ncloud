@@ -6,7 +6,7 @@ A single Flutter app for Android and iOS, bringing Nextcloud photos and files in
 
 **Until the app is stable, backward compatibility is not a requirement.** Remove obsolete models, aliases, cache formats and migration paths rather than preserving old preview behavior. Preview upgrades may require reconnecting or rebuilding disposable metadata; never delete server files or current-format offline downloads as part of a metadata reset.
 
-UI widgets consume application/domain models and controller operations, not Nextcloud endpoints, DAV paths or authentication headers. `CloudBackend` defines server operations; `NextcloudClient` implements the current adapter and is selected in `main.dart`. A different server implements that contract, including its own authentication, media sources and optional discovery/change hints, without adding server-specific branches to widgets. Folder transfers and change monitoring use the same backend contract.
+UI widgets consume application/domain models and controller operations, not Nextcloud endpoints, DAV paths or authentication headers. `CloudBackend` defines server operations; `NextcloudClient` implements the current adapter, selected for foreground and background execution by `app/provider_factory.dart`. Folder transfers and change monitoring use the same backend contract. The account model and discovery operations are still being refactored before the contract can be considered provider-neutral.
 
 Async file resolution and previews are scoped to their initiating session. Clearing the preview cache invalidates in-flight results as well as stored entries; late responses cannot refill it. Resuming browsing starts a current change check instead of publishing a failure from the previous inactive session.
 

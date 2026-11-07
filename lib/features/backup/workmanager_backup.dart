@@ -3,12 +3,12 @@ import 'dart:io';
 import 'package:flutter/widgets.dart';
 import 'package:workmanager/workmanager.dart';
 
+import '../../app/provider_factory.dart';
 import '../../session_store.dart';
 import 'folder_sync.dart';
 import 'headless_backup.dart';
 import 'ios_album_backup.dart';
 import '../../models.dart';
-import '../../providers/nextcloud/nextcloud_client.dart';
 import 'sync_run_lock.dart';
 import 'sync_schedule.dart';
 
@@ -23,7 +23,7 @@ void backupDispatcher() {
     (task, data) async {
       if (task == iosAlbumTask) {
         final journal = SyncJournal();
-        final client = NextcloudClient();
+        final client = createCloudBackend();
         Future<Account?> readAccount() async {
           final value = await SecureSessionStore().read();
           return value == null ? null : Account.decode(value);
@@ -59,7 +59,7 @@ void backupDispatcher() {
         return true;
       }
       final journal = SyncJournal();
-      final client = NextcloudClient();
+      final client = createCloudBackend();
       runner = ScheduledBackupRunner(
         journal: journal,
         client: client,

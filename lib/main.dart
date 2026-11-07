@@ -5,7 +5,7 @@ import 'local_cache.dart';
 import 'screens.dart';
 import 'library_screen.dart';
 import 'warm_start_screen.dart';
-import 'providers/nextcloud/nextcloud_client.dart';
+import 'app/provider_factory.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -17,7 +17,7 @@ void main() {
     NcloudApp(
       controller: AppController(
         store: SecureSessionStore(),
-        client: NextcloudClient(),
+        client: createCloudBackend(),
         cache: LocalCache.platform(),
         pathlessTimeline: true,
       ),
