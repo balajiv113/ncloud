@@ -21,7 +21,7 @@ import '../features/account/session_store.dart';
 import '../features/backup/ios_album_backup.dart';
 export '../features/account/session_store.dart';
 
-/// A fetched page; [scanned] counts server results before filtering.
+/// A fetched index batch or page with its opaque continuation.
 typedef _Page = ({List<CloudFile> files, List<int> days, String? nextCursor});
 
 String errorMessage(Object error) {
@@ -455,7 +455,7 @@ class AppController extends ChangeNotifier {
 
   Future<void> _prepareLibrary() async {
     final session = account!;
-    final key = 'warm-v2|${session.server}|${session.userId}';
+    final key = 'warm-v2|${session.storageKey}';
     final prepared = await cache?.readDocument(key);
     if (_disposed || account != session) return;
     final saved = await cache?.readDocument(_listingKey()!);
@@ -1087,8 +1087,7 @@ class AppController extends ChangeNotifier {
     );
   }
 
-  String _storeKey(Account session) =>
-      'library-v1|${session.server}|${session.userId}';
+  String _storeKey(Account session) => 'library-v1|${session.storageKey}';
 
   Future<void> _restoreStore(Account session) {
     final generation = _cacheGeneration;
@@ -1450,7 +1449,7 @@ class AppController extends ChangeNotifier {
     _checkingChanges = true;
     final loadVersion = _loadVersion;
     try {
-      final owner = 'changes-v1|${session.server}|${session.userId}';
+      final owner = 'changes-v1|${session.storageKey}';
       if (_changeOwner != owner) {
         _changeOwner = owner;
         _changeEtag = (await cache?.readDocument(owner))?['etag'] as String?;
@@ -1718,7 +1717,7 @@ class AppController extends ChangeNotifier {
   String? _listingKey() {
     final session = account;
     if (demo || session == null || tab == 3) return null;
-    return 'browse-v5|${session.server}|${session.userId}|$tab|$smartAlbumOpen|'
+    return 'browse-v5|${session.storageKey}|$tab|$smartAlbumOpen|'
         '${directory.join('/')}|${activeCloudAlbum?.reference.join('/') ?? ''}'
         '${activePerson == null ? '' : '|person:${activePerson!.id}'}'
         '${activeMapBounds == null ? '' : '|map:${activeMapBounds!.map((b) => b.query).join(';')}'}';
@@ -1735,12 +1734,11 @@ class AppController extends ChangeNotifier {
       return;
     }
     final generation = ++_peopleVersion;
-    final key = 'people-v1|${session.server}|${session.userId}';
+    final key = 'people-v1|${session.storageKey}';
     bool current() =>
         !_disposed &&
         generation == _peopleVersion &&
-        account?.server == session.server &&
-        account?.userId == session.userId;
+        (account?.sameOwner(session) ?? false);
     loadingPeople = true;
     peopleError = null;
     notifyListeners();
@@ -1815,7 +1813,7 @@ class AppController extends ChangeNotifier {
     final session = account;
     return session == null
         ? null
-        : 'face-v1|${session.server}|${session.userId}|${person.id}';
+        : 'face-v1|${session.storageKey}|${person.id}';
   }
 
   String _personPreviewVersion(RecognizedPerson person) =>
@@ -1940,7 +1938,7 @@ class AppController extends ChangeNotifier {
     final session = account!;
     final generation = ++_sharedAlbumsVersion;
     final task = () async {
-      final key = 'incoming-albums-v1|${session.server}|${session.userId}';
+      final key = 'incoming-albums-v1|${session.storageKey}';
       sharedAlbumError = null;
       loadingSharedAlbums = true;
       notifyListeners();
@@ -2029,7 +2027,7 @@ class AppController extends ChangeNotifier {
   Future<void> _loadCatalogue(Account session, {required bool refresh}) async {
     final generation = ++_catalogueVersion;
     if (session.photoRoot == null && _autoPhotoRoot == null) {
-      final sourceKey = 'album-source|${session.server}|${session.userId}';
+      final sourceKey = 'album-source|${session.storageKey}';
       final saved = await cache?.readDocument(sourceKey);
       if (account != session || generation != _catalogueVersion || _disposed) {
         return;
@@ -2057,7 +2055,7 @@ class AppController extends ChangeNotifier {
       return;
     }
     final root = [...photoRoot];
-    final rootKey = '${session.server}|${session.userId}|${root.join('/')}';
+    final rootKey = '${session.storageKey}|${root.join('/')}';
     if (!refresh &&
         _catalogueRoot == rootKey &&
         _catalogueUpdated != null &&
@@ -2697,7 +2695,7 @@ class AppController extends ChangeNotifier {
   String? _previewKey(CloudFile file, int size) {
     final session = account;
     if (session == null) return null;
-    return '${session.server}|${session.userId}|${file.id ?? file.key}|$size';
+    return '${session.storageKey}|${file.id ?? file.key}|$size';
   }
 
   static String _previewVersion(CloudFile file) {
@@ -2966,7 +2964,7 @@ class AppController extends ChangeNotifier {
   }
 
   String _originalKey(Account session, CloudFile file) =>
-      'original|${session.server}|${session.userId}|${file.id ?? file.key}|'
+      'original|${session.storageKey}|${file.id ?? file.key}|'
       '${file.modified?.microsecondsSinceEpoch}|${file.size}';
 
   /// Direct authenticated stream for the platform video player.
@@ -2980,7 +2978,7 @@ class AppController extends ChangeNotifier {
   Future<File> saveOffline(CloudFile file) => _download(file, offline: true);
 
   String get _offlineListingKey =>
-      'offline|${account?.server}|${account?.userId}';
+      'offline|${account?.storageKey ?? 'null|null'}';
 
   Future<int> cacheSize() async => await cache?.size() ?? 0;
   Future<int> downloadSize() async => await cache?.downloadSize() ?? 0;
@@ -3049,7 +3047,7 @@ class AppController extends ChangeNotifier {
           : null;
       Future<File> publishOffline() async {
         checkSession();
-        final key = 'offline|${session.server}|${session.userId}';
+        final key = 'offline|${session.storageKey}';
         final saved = await cache!.readOfflineListing(key);
         checkSession();
         await cache!.writeOfflineListing(key, [

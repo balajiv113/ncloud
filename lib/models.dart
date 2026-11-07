@@ -42,6 +42,12 @@ class Account {
   final String displayName;
   final List<String>? photoRoot;
 
+  /// Stable account namespace shared by caches and background backups.
+  String get storageKey => '$server|$userId';
+
+  bool sameOwner(Account other) =>
+      server == other.server && userId == other.userId;
+
   Account withPhotoRoot(List<String> path) => Account(
     server: server,
     loginName: loginName,

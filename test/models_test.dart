@@ -62,6 +62,9 @@ void main() {
     expect(result.loginName, 'user@example.com');
     expect(result.appPassword, 'a:b');
     expect(result.displayName, 'Example');
+    expect(result.storageKey, 'https://example.com|internal-id');
+    expect(result.withPhotoRoot(['Photos']).storageKey, result.storageKey);
+    expect(result.sameOwner(account), isTrue);
   });
 
   test('validates names and formats sizes', () {

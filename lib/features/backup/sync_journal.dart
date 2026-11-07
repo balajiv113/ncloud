@@ -9,7 +9,7 @@ import '../../models.dart';
 import 'sync_rules.dart';
 import 'sync_schedule.dart';
 
-String syncAccount(Account account) => '${account.server}|${account.userId}';
+String syncAccount(Account account) => account.storageKey;
 
 class FolderPair {
   FolderPair({
