@@ -14,6 +14,7 @@ import '../features/backup/folder_sync.dart';
 import '../core/storage/local_cache.dart';
 import '../models.dart';
 import '../features/library/media_listing.dart';
+import '../features/library/preview_batcher.dart';
 import '../core/cloud/cloud_backend.dart';
 import '../features/backup/workmanager_backup.dart';
 import '../features/backup/sync_schedule.dart';
@@ -21,6 +22,7 @@ import '../features/account/session_store.dart';
 import '../features/backup/ios_album_backup.dart';
 import 'provider_factory.dart';
 export '../features/account/session_store.dart';
+export '../features/library/preview_batcher.dart' show PreviewCancelled;
 
 /// A fetched index batch or page with its opaque continuation.
 typedef _Page = ({List<CloudFile> files, List<int> days, String? nextCursor});
@@ -209,12 +211,13 @@ class AppController extends ChangeNotifier {
   static const thumbnailMemoryBudget = 64 * 1024 * 1024;
   final Map<String, Future<Uint8List>> _previewLoads = {};
   final Map<String, int> _previewInterest = {};
-  final Map<String, _PreviewRequest> _previewBatch = {};
-  Timer? _previewTimer;
-  int _previewBatches = 0;
   int _previewGeneration = 0;
-  bool _previewBatchUnavailable = false;
-  int _previewBatchFailures = 0;
+  late final PreviewBatcher _previewBatcher = PreviewBatcher(
+    client: client,
+    session: () => account,
+    active: () => _browsingActive && !_disposed,
+    interested: (key) => (_previewInterest[key] ?? 0) > 0,
+  );
   Timer? _thumbnailWarmupTimer;
   final List<CloudFile> _thumbnailWarmupQueue = [];
   final Set<String> _thumbnailWarmupKnown = {};
@@ -228,12 +231,7 @@ class AppController extends ChangeNotifier {
     if (!active) {
       _thumbnailWarmupTimer?.cancel();
       _thumbnailWarmupTimer = null;
-      _previewTimer?.cancel();
-      _previewTimer = null;
-      for (final request in _previewBatch.values) {
-        request.completer.completeError(const PreviewCancelled());
-      }
-      _previewBatch.clear();
+      _previewBatcher.pause();
     } else {
       _scheduleThumbnailWarmup();
       if (!_fetchingDays && _pendingDays.isNotEmpty && error == null) {
@@ -2516,14 +2514,7 @@ class AppController extends ChangeNotifier {
     _thumbBytes = 0;
     _previewLoads.clear();
     _previewInterest.clear();
-    _previewTimer?.cancel();
-    _previewTimer = null;
-    for (final request in _previewBatch.values) {
-      request.completer.completeError(const PreviewCancelled());
-    }
-    _previewBatch.clear();
-    _previewBatchUnavailable = false;
-    _previewBatchFailures = 0;
+    _previewBatcher.clear();
   }
 
   final Map<String, CloudFile> _resolvedIds = {};
@@ -2763,7 +2754,13 @@ class AppController extends ChangeNotifier {
         }
       }
       checkCurrent();
-      final bytes = await _fetchPreview(session, file, size, loadKey);
+      final bytes = await _previewBatcher.fetch(
+        session,
+        file,
+        size,
+        loadKey,
+        batch: timelineIndexAvailable == true,
+      );
       checkCurrent();
       _rememberPreview(key, bytes, version);
       unawaited(disk?.writeThumbnail(key, bytes, version: version));
@@ -2791,141 +2788,6 @@ class AppController extends ChangeNotifier {
       _previewInterest[loadKey] = interest;
     } else {
       _previewInterest.remove(loadKey);
-    }
-  }
-
-  Future<Uint8List> _fetchPreview(
-    Account session,
-    CloudFile file,
-    int size,
-    String loadKey,
-  ) {
-    if (!_browsingActive) return Future.error(const PreviewCancelled());
-    if (file.id == null ||
-        timelineIndexAvailable != true ||
-        _previewBatchUnavailable ||
-        size > 512) {
-      return _singlePreview(session, file, size);
-    }
-    final batchKey = '${file.id}|$size';
-    final queued = _previewBatch.remove(batchKey);
-    final request =
-        queued ?? _PreviewRequest(file, size, loadKey, Completer<Uint8List>());
-    // Re-inserting keeps the most recently wanted thumbnails last.
-    _previewBatch[batchKey] = request;
-    _previewTimer ??= Timer(
-      const Duration(milliseconds: 12),
-      () => _flushPreviews(session),
-    );
-    return request.completer.future;
-  }
-
-  Future<Uint8List> _singlePreview(
-    Account session,
-    CloudFile file,
-    int size,
-  ) async {
-    final previews = await client.previews(session, [file], size: size);
-    if (previews.length != 1) {
-      throw const CloudException('Invalid preview response.');
-    }
-    final bytes = previews.single;
-    if (bytes == null) {
-      throw const CloudException('No preview is available for this file.');
-    }
-    return bytes;
-  }
-
-  /// Sends queued thumbnails as batched preview requests, newest
-  /// requests (tiles currently on screen) first.
-  void _flushPreviews(Account session) {
-    _previewTimer = null;
-    if (!identical(account, session) || !_browsingActive) return;
-    while (_previewBatch.isNotEmpty && _previewBatches < 3) {
-      final batch = <_PreviewRequest>[];
-      for (final key in _previewBatch.keys.toList().reversed) {
-        final request = _previewBatch[key]!;
-        if (batch.isNotEmpty && request.size != batch.first.size) continue;
-        _previewBatch.remove(key);
-        if ((_previewInterest[request.loadKey] ?? 0) <= 0) {
-          request.completer.completeError(const PreviewCancelled());
-          continue;
-        }
-        batch.add(request);
-        if (batch.length == 48) break;
-      }
-      if (batch.isEmpty) continue;
-      _previewBatches++;
-      unawaited(_sendPreviews(session, batch));
-    }
-  }
-
-  Future<void> _sendPreviews(
-    Account session,
-    List<_PreviewRequest> batch,
-  ) async {
-    final generation = _previewGeneration;
-    bool current() =>
-        !_disposed &&
-        identical(account, session) &&
-        generation == _previewGeneration;
-    void single(_PreviewRequest request) {
-      if (!_browsingActive || !current()) {
-        request.completer.completeError(const PreviewCancelled());
-      } else {
-        request.completer.complete(
-          _singlePreview(session, request.file, request.size),
-        );
-      }
-    }
-
-    try {
-      if (batch.length == 1) {
-        single(batch.single);
-        return;
-      }
-      final previews = await client.previews(session, [
-        for (final request in batch) request.file,
-      ], size: batch.first.size);
-      if (previews.length != batch.length) {
-        throw const CloudException('Invalid preview response.');
-      }
-      if (!current()) {
-        for (final request in batch) {
-          request.completer.completeError(const PreviewCancelled());
-        }
-        return;
-      }
-      _previewBatchFailures = 0;
-      for (var i = 0; i < batch.length; i++) {
-        final request = batch[i];
-        final bytes = previews[i];
-        if (bytes != null) {
-          request.completer.complete(bytes);
-        } else {
-          single(request);
-        }
-      }
-    } on Object {
-      // Some servers or proxies may not support batching.
-      if (current() && ++_previewBatchFailures >= 2) {
-        _previewBatchUnavailable = true;
-      }
-      for (final request in batch) {
-        if (!request.completer.isCompleted) single(request);
-      }
-    } finally {
-      _previewBatches--;
-      final nextSession = account;
-      if (!_disposed &&
-          _browsingActive &&
-          nextSession != null &&
-          _previewBatch.isNotEmpty) {
-        _previewTimer ??= Timer(
-          Duration.zero,
-          () => _flushPreviews(nextSession),
-        );
-      }
     }
   }
 
@@ -3116,6 +2978,7 @@ class AppController extends ChangeNotifier {
   void dispose() {
     _folderSync?.dispose();
     _disposed = true;
+    _previewBatcher.dispose();
     _warmTimer?.cancel();
     _thumbnailWarmupTimer?.cancel();
     _catalogueVersion++;
@@ -3128,17 +2991,4 @@ class AppController extends ChangeNotifier {
     unawaited(cache?.close());
     super.dispose();
   }
-}
-
-class _PreviewRequest {
-  _PreviewRequest(this.file, this.size, this.loadKey, this.completer);
-  final CloudFile file;
-  final int size;
-  final String loadKey;
-  final Completer<Uint8List> completer;
-}
-
-/// A thumbnail request dropped because no tile is waiting for it anymore.
-class PreviewCancelled implements Exception {
-  const PreviewCancelled();
 }

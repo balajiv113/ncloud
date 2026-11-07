@@ -12,7 +12,7 @@ Timeline and map browsing use one query for date counts, selected days or uninde
 
 Indexed Smart-album discovery asks the provider for a folder's direct media covers and descendant candidates, keeping protocol-specific existence and cover lookups inside the adapter.
 
-Preview requests use one batch-friendly backend operation with positional partial results. The application retries missing entries individually and preserves session cancellation; the Nextcloud adapter chooses the relevant preview endpoints.
+Preview requests use one batch-friendly backend operation with positional partial results. `features/library/preview_batcher.dart` prioritizes visible requests, retries missing entries individually and preserves session cancellation; the Nextcloud adapter chooses the relevant preview endpoints.
 
 Async file resolution and previews are scoped to their initiating session. Clearing the preview cache invalidates in-flight results as well as stored entries; late responses cannot refill it. Resuming browsing starts a current change check instead of publishing a failure from the previous inactive session.
 
