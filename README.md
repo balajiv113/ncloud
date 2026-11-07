@@ -8,7 +8,7 @@ A single Flutter app for Android and iOS, bringing Nextcloud photos and files in
 
 UI widgets consume application/domain models and controller operations, not Nextcloud endpoints, DAV paths or authentication headers. `core/cloud/cloud_backend.dart` defines server operations; `NextcloudClient` implements the current adapter, selected for foreground and background execution by `app/provider_factory.dart`. Folder transfers and change monitoring use the same backend contract. The account model and discovery operations are still being refactored before the contract can be considered provider-neutral.
 
-Indexed timeline and map browsing share a timeline query for date counts or selected days. The provider handles geographic bounds and reports unsupported indexing separately from an empty result or a server failure. Non-indexed browsing uses opaque provider-owned continuation tokens; the account and remaining discovery contract are not yet provider-neutral. Older disposable browsing snapshots are rebuilt rather than interpreting their offsets as provider cursors.
+Timeline and map browsing use one query for date counts, selected days or unindexed pages. The provider handles geographic bounds, opaque page continuation tokens and unsupported indexing separately from an empty result or a server failure. The account and remaining discovery contract are not yet provider-neutral. Older disposable browsing snapshots are rebuilt rather than interpreting their offsets as provider cursors.
 
 Preview requests use one batch-friendly backend operation with positional partial results. The application retries missing entries individually and preserves session cancellation; the Nextcloud adapter chooses the relevant preview endpoints.
 

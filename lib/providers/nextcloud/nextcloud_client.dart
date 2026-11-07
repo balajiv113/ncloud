@@ -596,8 +596,7 @@ class NextcloudClient implements CloudBackend {
     );
   }
 
-  @override
-  Future<MediaPage> mediaPage(
+  Future<TimelineResult> _mediaPage(
     Account account, {
     bool favorites = false,
     List<String> path = const [],
@@ -617,9 +616,9 @@ class NextcloudClient implements CloudBackend {
       limit: limit,
       recursive: recursive,
     );
-    return MediaPage(
-      items: page.files,
-      nextCursor: page.scanned == limit ? '${offset + page.scanned}' : null,
+    return TimelineResult.page(
+      page.files,
+      page.scanned == limit ? '${offset + page.scanned}' : null,
     );
   }
 
@@ -827,6 +826,16 @@ class NextcloudClient implements CloudBackend {
 
   @override
   Future<TimelineResult?> timeline(Account account, TimelineQuery query) async {
+    if (query.paged) {
+      return _mediaPage(
+        account,
+        path: query.path,
+        favorites: query.favorites,
+        cursor: query.cursor,
+        limit: query.limit,
+        recursive: query.recursive,
+      );
+    }
     final bounds = query.mapBounds;
     if (bounds != null && bounds.isEmpty) {
       throw const FormatException('Choose a map area.');

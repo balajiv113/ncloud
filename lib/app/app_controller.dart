@@ -1259,26 +1259,28 @@ class AppController extends ChangeNotifier {
           ))!.items!;
       return (files: files, days: ids, nextCursor: null);
     }
-    final page = await client.mediaPage(
+    final page = (await client.timeline(
       session,
-      favorites: currentTab == 2,
-      path: path,
-      cursor: listing.cursor,
-      recursive: recursive,
-    );
+      TimelineQuery.page(
+        favorites: currentTab == 2,
+        path: path,
+        cursor: listing.cursor,
+        recursive: recursive,
+      ),
+    ))!;
     if (page.nextCursor != null && page.nextCursor == listing.cursor) {
       throw const CloudException(
         'The server repeated a page. Pull to refresh your library.',
       );
     }
     final existing = listing.keys.toSet();
-    if (page.items.isNotEmpty &&
-        page.items.every((f) => existing.contains(f.key))) {
+    if (page.items!.isNotEmpty &&
+        page.items!.every((f) => existing.contains(f.key))) {
       throw const CloudException(
         'The server repeated a page. Pull to refresh your library.',
       );
     }
-    return (files: page.items, days: <int>[], nextCursor: page.nextCursor);
+    return (files: page.items!, days: <int>[], nextCursor: page.nextCursor);
   }
 
   Future<List<CloudFile>?> _cachedDayFiles(
@@ -1977,11 +1979,10 @@ class AppController extends ChangeNotifier {
               _disposed) {
             return;
           }
-          final covers = (await client.mediaPage(
+          final covers = (await client.timeline(
             session,
-            path: path,
-            limit: 1,
-          )).items;
+            TimelineQuery.page(path: path, limit: 1),
+          ))!.items!;
           if (covers.isNotEmpty) {
             found.add(SmartAlbum(path: path, files: covers));
           }
@@ -2315,11 +2316,10 @@ class AppController extends ChangeNotifier {
             .where((f) => f.isMedia && pathStartsWith(f.path, folder.path))
             .firstOrNull;
         if (known != null) return known;
-        final found = (await client.mediaPage(
+        final found = (await client.timeline(
           account!,
-          path: folder.path,
-          limit: 1,
-        )).items;
+          TimelineQuery.page(path: folder.path, limit: 1),
+        ))!.items!;
         return found.firstOrNull;
       });
 

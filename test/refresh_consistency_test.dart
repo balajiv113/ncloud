@@ -84,14 +84,10 @@ class _Backend implements CloudBackend {
   }
 
   @override
-  Future<MediaPage> mediaPage(
-    Account account, {
-    bool favorites = false,
-    List<String> path = const [],
-    String? cursor,
-    int limit = 200,
-    bool recursive = true,
-  }) async => MediaPage(items: [_photo(path.last)]);
+  Future<TimelineResult?> timeline(Account account, TimelineQuery query) async {
+    if (!query.paged) throw StateError('Expected a page request.');
+    return TimelineResult.page([_photo(query.path.last)], null);
+  }
 
   @override
   dynamic noSuchMethod(Invocation invocation) =>

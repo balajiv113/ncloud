@@ -25,9 +25,10 @@ class CloudDownload {
   final Stream<List<int>> stream;
 }
 
-/// An indexed timeline request. A null [dayIds] requests the day index;
-/// otherwise only the specified days are loaded. [optional] and
-/// [existenceOnly] apply to index requests; [resolvePaths] applies to items.
+/// A timeline request. A null [dayIds] requests the day index; otherwise only
+/// the specified days are loaded. Use [TimelineQuery.page] for unindexed
+/// browsing. [optional] and [existenceOnly] apply to index requests;
+/// [resolvePaths] applies to indexed items.
 class TimelineQuery {
   const TimelineQuery({
     this.dayIds,
@@ -39,7 +40,23 @@ class TimelineQuery {
     this.resolvePaths = true,
     this.person,
     this.mapBounds,
-  });
+  }) : paged = false,
+       cursor = null,
+       limit = 200;
+
+  const TimelineQuery.page({
+    this.path = const [],
+    this.recursive = true,
+    this.favorites = false,
+    this.cursor,
+    this.limit = 200,
+  }) : dayIds = null,
+       optional = false,
+       existenceOnly = false,
+       resolvePaths = true,
+       person = null,
+       mapBounds = null,
+       paged = true;
 
   final List<int>? dayIds;
   final List<String> path;
@@ -52,23 +69,26 @@ class TimelineQuery {
 
   /// Null means no geographic filter; an empty list is invalid.
   final List<PhotoMapBounds>? mapBounds;
+  final bool paged;
+  final String? cursor;
+  final int limit;
 }
 
 class TimelineResult {
-  const TimelineResult.index(this.days) : items = null;
-  const TimelineResult.items(this.items) : days = null;
+  const TimelineResult.index(List<TimelineDay> this.days)
+    : items = null,
+      nextCursor = null;
+  const TimelineResult.items(List<CloudFile> this.items)
+    : days = null,
+      nextCursor = null;
+  const TimelineResult.page(List<CloudFile> this.items, this.nextCursor)
+    : days = null;
 
   /// Only the field corresponding to the request is populated.
   final List<TimelineDay>? days;
   final List<CloudFile>? items;
-}
 
-class MediaPage {
-  const MediaPage({required this.items, this.nextCursor});
-
-  final List<CloudFile> items;
-
-  /// Opaque continuation token; null indicates the end of the listing.
+  /// Opaque page continuation, scoped to the same account and query.
   final String? nextCursor;
 }
 
@@ -99,15 +119,6 @@ abstract interface class CloudBackend {
     bool optional = false,
   });
 
-  /// The cursor is meaningful only for the same account and query.
-  Future<MediaPage> mediaPage(
-    Account account, {
-    bool favorites = false,
-    List<String> path = const [],
-    String? cursor,
-    int limit = 200,
-    bool recursive = true,
-  });
   Future<Map<String, CloudFile>> resolveFileIds(
     Account account,
     List<String> ids, {
@@ -136,7 +147,8 @@ abstract interface class CloudBackend {
   });
 
   /// Null means the optional indexed timeline is unsupported. Empty results
-  /// are successful responses; other failures must be surfaced.
+  /// are successful responses; other failures must be surfaced. Page cursors
+  /// are valid only for the same account and query.
   Future<TimelineResult?> timeline(Account account, TimelineQuery query);
   Future<List<TimelineFolder>> timelineFolders(
     Account account,

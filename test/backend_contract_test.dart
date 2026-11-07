@@ -23,7 +23,7 @@ class _PortableBackend implements CloudBackend {
   bool closed = false;
   final resolution = Completer<Map<String, CloudFile>>();
   final batches = <Completer<List<Uint8List?>>>[];
-  Completer<MediaPage>? delayedPage;
+  Completer<TimelineResult>? delayedPage;
   final pageRequested = Completer<void>();
 
   @override
@@ -69,15 +69,9 @@ class _PortableBackend implements CloudBackend {
   );
 
   @override
-  Future<MediaPage> mediaPage(
-    Account account, {
-    bool favorites = false,
-    List<String> path = const [],
-    String? cursor,
-    int limit = 200,
-    bool recursive = true,
-  }) async {
-    requestedLimits.add(limit);
+  Future<TimelineResult?> timeline(Account account, TimelineQuery query) async {
+    if (!query.paged) throw StateError('Expected a page request.');
+    requestedLimits.add(query.limit);
     if (delayedPage case final pending?) {
       if (!pageRequested.isCompleted) pageRequested.complete();
       return pending.future;
@@ -92,14 +86,11 @@ class _PortableBackend implements CloudBackend {
           id: 'opaque:$i',
         ),
     ];
-    if (cursor == null) {
-      return MediaPage(
-        items: files.take(2).toList(),
-        nextCursor: 'opaque:next',
-      );
+    if (query.cursor == null) {
+      return TimelineResult.page(files.take(2).toList(), 'opaque:next');
     }
-    if (cursor != 'opaque:next') throw StateError('Unexpected cursor.');
-    return MediaPage(items: files.skip(2).toList());
+    if (query.cursor != 'opaque:next') throw StateError('Unexpected cursor.');
+    return TimelineResult.page(files.skip(2).toList(), null);
   }
 }
 
@@ -138,16 +129,14 @@ void main() {
       displayName: 'Another user',
     );
     backend.delayedPage!.complete(
-      const MediaPage(
-        items: [
-          CloudFile(
-            path: ['Pictures', 'private.jpg'],
-            name: 'private.jpg',
-            isDirectory: false,
-            id: 'private',
-          ),
-        ],
-      ),
+      const TimelineResult.page([
+        CloudFile(
+          path: ['Pictures', 'private.jpg'],
+          name: 'private.jpg',
+          isDirectory: false,
+          id: 'private',
+        ),
+      ], null),
     );
     await pending;
     expect(controller.fileStore.length, 0);
@@ -171,15 +160,13 @@ void main() {
         .map((file) => file.key)
         .toSet();
     delayed.complete(
-      const MediaPage(
-        items: [
-          CloudFile(
-            path: ['Pictures', 'stale.jpg'],
-            name: 'stale.jpg',
-            isDirectory: false,
-          ),
-        ],
-      ),
+      const TimelineResult.page([
+        CloudFile(
+          path: ['Pictures', 'stale.jpg'],
+          name: 'stale.jpg',
+          isDirectory: false,
+        ),
+      ], null),
     );
     await pending;
     expect(
