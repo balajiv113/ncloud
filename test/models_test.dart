@@ -30,19 +30,9 @@ void main() {
     },
   );
 
-  test('normalizes HTTPS subfolder installs without losing encoded paths', () {
+  test('normalizes HTTPS subfolder installs', () {
     final server = normalizeServer(' https://example.com/nextcloud/ ');
     expect(server.toString(), 'https://example.com/nextcloud');
-    final uri = serverEndpoint(server, [
-      'remote.php',
-      'dav',
-      'files',
-      'a@b',
-      'a #?.jpg',
-    ]);
-    expect(uri.pathSegments.last, 'a #?.jpg');
-    expect(uri.toString(), contains('a%20%23%3F.jpg'));
-    expect(uri.pathSegments, contains('nextcloud'));
   });
 
   test('rejects unsafe server URLs', () {

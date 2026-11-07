@@ -25,18 +25,6 @@ Uri normalizeServer(String input) {
   return uri.replace(pathSegments: segments);
 }
 
-Uri serverEndpoint(
-  Uri server,
-  List<String> segments, [
-  Map<String, String>? query,
-]) => server.replace(
-  pathSegments: [
-    ...server.pathSegments.where((s) => s.isNotEmpty),
-    ...segments,
-  ],
-  queryParameters: query,
-);
-
 class Account {
   const Account({
     required this.server,

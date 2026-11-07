@@ -40,6 +40,20 @@ String multistatus(String body) =>
     '<d:multistatus xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns">$body</d:multistatus>';
 
 void main() {
+  test('endpoint preserves subfolder installs and encoded path segments', () {
+    final server = normalizeServer(' https://example.com/nextcloud/ ');
+    final uri = serverEndpoint(server, [
+      'remote.php',
+      'dav',
+      'files',
+      'a@b',
+      'a #?.jpg',
+    ]);
+    expect(uri.pathSegments.last, 'a #?.jpg');
+    expect(uri.toString(), contains('a%20%23%3F.jpg'));
+    expect(uri.pathSegments, contains('nextcloud'));
+  });
+
   test(
     'parses namespace-qualified properties, dates, and encoded filenames',
     () {

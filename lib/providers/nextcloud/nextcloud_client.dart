@@ -13,6 +13,18 @@ import '../../cloud_backend.dart';
 import 'nextcloud_change_feed.dart';
 import 'nextcloud_discovery.dart';
 
+Uri serverEndpoint(
+  Uri server,
+  List<String> segments, [
+  Map<String, String>? query,
+]) => server.replace(
+  pathSegments: [
+    ...server.pathSegments.where((s) => s.isNotEmpty),
+    ...segments,
+  ],
+  queryParameters: query,
+);
+
 class _NextcloudLoginFlow implements LoginFlow {
   _NextcloudLoginFlow(
     this.login,
