@@ -11,6 +11,7 @@ import '../library/media_tile.dart';
 import '../../models.dart';
 import '../../core/cloud/cloud_backend.dart';
 import '../../screens.dart';
+import 'photo_map_session.dart';
 
 class PhotoMapScreen extends StatefulWidget {
   const PhotoMapScreen({
@@ -40,6 +41,7 @@ class _PhotoMapScreenState extends State<PhotoMapScreen> {
   int _generation = 0;
   bool _fetching = false;
   bool _queued = false;
+  PhotoMapSession? _session;
 
   @override
   void initState() {
@@ -68,12 +70,16 @@ class _PhotoMapScreenState extends State<PhotoMapScreen> {
       } else if (session == null) {
         throw const CloudException('Sign in to browse your photo map.');
       } else {
-        final position = await controller.client.mapPosition(session);
+        final mapSession = controller.photoMapSession();
+        _session = mapSession;
+        final position = await mapSession.position();
         if (!mounted || controller.account != session) return;
         setState(() => _position = position);
       }
     } catch (e) {
-      if (mounted) setState(() => _error = errorMessage(e));
+      if (mounted && identical(controller.account, session)) {
+        setState(() => _error = errorMessage(e));
+      }
     } finally {
       if (mounted) setState(() => _initializing = false);
     }
@@ -117,32 +123,26 @@ class _PhotoMapScreenState extends State<PhotoMapScreen> {
           _error = null;
         });
         try {
-          final clusters = <int, PhotoMapCluster>{};
-          for (final area in bounds) {
-            final result = await controller.client.mapClusters(
-              session,
-              bounds: area,
-              zoom: zoom,
-            );
-            if (!mounted ||
-                generation != _generation ||
-                controller.account != session) {
-              break;
-            }
-            for (final cluster in result) {
-              clusters[cluster.id] = cluster;
-            }
-          }
-          if (mounted &&
+          final mapSession = _session ?? controller.photoMapSession();
+          _session = mapSession;
+          final clusters = await mapSession.clusters(
+            bounds,
+            zoom: zoom,
+            isCurrentViewport: () => mounted && generation == _generation,
+          );
+          if (clusters != null &&
+              mounted &&
               generation == _generation &&
               controller.account == session) {
             setState(() {
-              _clusters = clusters.values.toList();
+              _clusters = clusters;
               _bounds = bounds;
             });
           }
         } catch (e) {
-          if (mounted && generation == _generation) {
+          if (mounted &&
+              generation == _generation &&
+              controller.account == session) {
             setState(() => _error = errorMessage(e));
           }
         } finally {

@@ -6,7 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 
-import '../demo.dart';
+import '../features/library/demo.dart';
 import '../diagnostics.dart';
 import '../discovery_models.dart';
 import '../core/storage/file_store.dart';
@@ -16,6 +16,7 @@ import '../models.dart';
 import '../features/library/media_listing.dart';
 import '../features/library/file_resolver.dart';
 import '../features/library/share_session.dart';
+import '../features/photos/photo_map_session.dart';
 import '../features/library/preview_batcher.dart';
 import '../core/cloud/cloud_backend.dart';
 import '../features/backup/workmanager_backup.dart';
@@ -2659,6 +2660,18 @@ class AppController extends ChangeNotifier {
       client: client,
       account: session,
       file: file,
+      isCurrent: () => !_disposed && !demo && identical(account, session),
+    );
+  }
+
+  PhotoMapSession photoMapSession() {
+    final session = account;
+    if (session == null || demo || _disposed) {
+      throw const CloudException('Sign in to browse your photo map.');
+    }
+    return PhotoMapSession(
+      client: client,
+      account: session,
       isCurrent: () => !_disposed && !demo && identical(account, session),
     );
   }

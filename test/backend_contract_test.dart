@@ -9,6 +9,7 @@ import 'package:ncloud/features/library/file_resolver.dart';
 import 'package:ncloud/features/library/media_listing.dart';
 import 'package:ncloud/core/cloud/cloud_backend.dart';
 import 'package:ncloud/core/storage/local_cache.dart';
+import 'package:ncloud/discovery_models.dart';
 import 'package:ncloud/models.dart';
 
 class _SessionStore implements SessionStore {
@@ -198,8 +199,79 @@ class _ShareBackend extends _PortableBackend {
   }
 }
 
+class _MapBackend extends _PortableBackend {
+  final requests = <Completer<List<PhotoMapCluster>>>[];
+
+  @override
+  Future<List<PhotoMapCluster>> mapClusters(
+    Account account, {
+    required PhotoMapBounds bounds,
+    required int zoom,
+    List<String> path = const [],
+  }) {
+    final request = Completer<List<PhotoMapCluster>>();
+    requests.add(request);
+    return request.future;
+  }
+}
+
 void main() {
   const account = _PortableAccount('portable|account');
+
+  test(
+    'map session merges wrapped clusters and stops superseded requests',
+    () async {
+      final backend = _MapBackend();
+      final controller = AppController(store: _SessionStore(), client: backend)
+        ..account = account;
+      addTearDown(controller.dispose);
+      final bounds = PhotoMapBounds.viewport(
+        south: -10,
+        north: 10,
+        west: 170,
+        east: 190,
+      );
+      final cluster = PhotoMapCluster(
+        id: 1,
+        location: PhotoLocation(0, 175),
+        count: 2,
+      );
+      var current = true;
+      final session = controller.photoMapSession();
+      final loading = session.clusters(
+        bounds,
+        zoom: 5,
+        isCurrentViewport: () => current,
+      );
+      backend.requests.first.complete([cluster]);
+      await Future<void>.delayed(Duration.zero);
+      expect(backend.requests, hasLength(2));
+      backend.requests.last.complete([cluster]);
+      expect((await loading)!.map((c) => c.id), [1]);
+
+      final stale = session.clusters(
+        bounds,
+        zoom: 5,
+        isCurrentViewport: () => current,
+      );
+      current = false;
+      backend.requests.last.complete([cluster]);
+      expect(await stale, isNull);
+      expect(backend.requests, hasLength(3));
+
+      current = true;
+      final oldAccount = session.clusters(
+        bounds,
+        zoom: 5,
+        isCurrentViewport: () => current,
+      );
+      final failed = expectLater(oldAccount, throwsA(isA<CloudException>()));
+      controller.account = const _PortableAccount('portable|other');
+      backend.requests.last.complete([cluster]);
+      await failed;
+      expect(backend.requests, hasLength(4));
+    },
+  );
 
   test(
     'share panel operations are bound to their initiating account',
