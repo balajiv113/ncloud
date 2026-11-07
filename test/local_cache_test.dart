@@ -848,6 +848,32 @@ void main() {
     });
 
     test(
+      'offline download rejects a missing revision before network access',
+      () async {
+        var requests = 0;
+        final original = photo(size: png.length);
+        final controller = AppController(
+          store: MemoryStore(),
+          cache: cache,
+          client: NextcloudClient(
+            transport: MockClient((_) async {
+              requests++;
+              return http.Response.bytes(png, 200);
+            }),
+          ),
+        )..account = account;
+        addTearDown(controller.dispose);
+        await expectLater(
+          controller.saveOffline(original),
+          throwsA(isA<CloudException>()),
+        );
+        expect(requests, 0);
+        expect(await controller.offlineCopy(original), isNull);
+        expect(controller.busy, isFalse);
+      },
+    );
+
+    test(
       'offline publication holds the transfer lock until membership is saved',
       () async {
         final blocked = _BlockingOfflineCache(root);
