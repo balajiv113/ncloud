@@ -1,7 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ncloud/file_store.dart';
+import 'package:ncloud/core/storage/file_store.dart';
 import 'package:ncloud/models.dart';
 
 CloudFile file(List<String> path, {bool directory = false, String? etag}) =>

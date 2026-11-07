@@ -6,7 +6,7 @@ import 'package:flutter_driver/driver_extension.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:ncloud/app/app_controller.dart';
-import 'package:ncloud/file_store.dart';
+import 'package:ncloud/core/storage/file_store.dart';
 import 'package:ncloud/features/backup/folder_sync.dart';
 import 'package:ncloud/features/backup/ios_album_backup.dart';
 import 'package:ncloud/library_screen.dart';

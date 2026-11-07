@@ -1,4 +1,4 @@
-import 'models.dart';
+import '../../models.dart';
 
 String pathKey(List<String> path) => path.map(Uri.encodeComponent).join('/');
 

@@ -9,7 +9,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:ncloud/app/app_controller.dart';
 import 'package:ncloud/core/cloud/cloud_backend.dart';
-import 'package:ncloud/file_store.dart';
+import 'package:ncloud/core/storage/file_store.dart';
 import 'package:ncloud/core/storage/local_cache.dart';
 import 'package:ncloud/models.dart';
 import 'package:ncloud/media_tile.dart';

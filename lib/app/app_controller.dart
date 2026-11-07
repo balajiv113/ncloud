@@ -9,7 +9,7 @@ import 'package:path_provider/path_provider.dart';
 import '../demo.dart';
 import '../diagnostics.dart';
 import '../discovery_models.dart';
-import '../file_store.dart';
+import '../core/storage/file_store.dart';
 import '../features/backup/folder_sync.dart';
 import '../core/storage/local_cache.dart';
 import '../models.dart';

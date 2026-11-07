@@ -3,7 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ncloud/file_store.dart';
+import 'package:ncloud/core/storage/file_store.dart';
 import 'package:ncloud/core/storage/library_database.dart';
 import 'package:ncloud/core/storage/local_cache.dart';
 import 'package:ncloud/models.dart';
