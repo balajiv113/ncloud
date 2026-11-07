@@ -22,17 +22,22 @@ class _PortableBackend implements CloudBackend {
   final requestedLimits = <int>[];
   bool closed = false;
   final resolution = Completer<Map<String, CloudFile>>();
-  final batches = <Completer<Map<String, Uint8List>>>[];
+  final batches = <Completer<List<Uint8List?>>>[];
   Completer<MediaPage>? delayedPage;
   final pageRequested = Completer<void>();
 
   @override
-  Future<Map<String, Uint8List>> multipreview(
+  Future<List<Uint8List?>> previews(
     Account account,
-    List<String> fileIds, {
+    List<CloudFile> files, {
     int size = 384,
   }) {
-    final response = Completer<Map<String, Uint8List>>();
+    if (files.length == 1) {
+      return Future.value([
+        Uint8List.fromList([1, 2, 3]),
+      ]);
+    }
+    final response = Completer<List<Uint8List?>>();
     batches.add(response);
     return response.future;
   }
@@ -62,13 +67,6 @@ class _PortableBackend implements CloudBackend {
     uri: Uri.parse('https://media.example/video/${file.id}'),
     headers: {'Authorization': 'Bearer media-token'},
   );
-
-  @override
-  Future<Uint8List> preview(
-    Account account,
-    CloudFile file, {
-    int size = 384,
-  }) async => Uint8List.fromList([1, 2, 3]);
 
   @override
   Future<MediaPage> mediaPage(
@@ -223,12 +221,12 @@ void main() {
     final next = [controller.preview(photo(10)), controller.preview(photo(11))];
     await tester.pump(const Duration(milliseconds: 12));
     expect(backend.batches, hasLength(3));
-    backend.batches.first.complete({});
+    backend.batches.first.complete([null, null]);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 1));
     expect(backend.batches, hasLength(4));
     for (final batch in backend.batches.skip(1)) {
-      batch.complete({});
+      batch.complete([null, null]);
     }
     await tester.pump();
     await Future.wait(cancelled);

@@ -884,6 +884,28 @@ class NextcloudClient implements CloudBackend {
   /// Thumbnails for many files in one streamed Memories request. Files whose
   /// preview is not generated yet are omitted; callers fetch those singly.
   @override
+  Future<List<Uint8List?>> previews(
+    Account account,
+    List<CloudFile> files, {
+    int size = 384,
+  }) async {
+    if (files.isEmpty) return [];
+    if (files.length == 1) {
+      return [await preview(account, files.single, size: size)];
+    }
+    if (files.any((file) => int.tryParse(file.id ?? '') == null)) {
+      final result = <Uint8List>[];
+      for (final file in files) {
+        result.add(await preview(account, file, size: size));
+      }
+      return result;
+    }
+    final result = await multipreview(account, [
+      for (final file in files) file.id!,
+    ], size: size);
+    return [for (final file in files) result[file.id]];
+  }
+
   Future<Map<String, Uint8List>> multipreview(
     Account account,
     List<String> fileIds, {
@@ -1633,7 +1655,6 @@ class NextcloudClient implements CloudBackend {
     }
   }
 
-  @override
   Future<Uint8List> preview(
     Account account,
     CloudFile file, {

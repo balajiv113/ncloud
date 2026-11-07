@@ -10,6 +10,8 @@ UI widgets consume application/domain models and controller operations, not Next
 
 Indexed timeline and map browsing share a timeline query for date counts or selected days. The provider handles geographic bounds and reports unsupported indexing separately from an empty result or a server failure. Non-indexed browsing uses opaque provider-owned continuation tokens; the account and remaining discovery contract are not yet provider-neutral. Older disposable browsing snapshots are rebuilt rather than interpreting their offsets as provider cursors.
 
+Preview requests use one batch-friendly backend operation with positional partial results. The application retries missing entries individually and preserves session cancellation; the Nextcloud adapter chooses the relevant preview endpoints.
+
 Async file resolution and previews are scoped to their initiating session. Clearing the preview cache invalidates in-flight results as well as stored entries; late responses cannot refill it. Resuming browsing starts a current change check instead of publishing a failure from the previous inactive session.
 
 Initial and subsequent listing pages are checked against the initiating account and view generation before merging. Original downloads must match the listed byte count; offline saves additionally request the inventoried server revision. Failed transfers are not published as saved originals, and the transfer lock remains held through offline-file and membership publication.

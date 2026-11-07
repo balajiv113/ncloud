@@ -212,8 +212,8 @@ class AppController extends ChangeNotifier {
   Timer? _previewTimer;
   int _previewBatches = 0;
   int _previewGeneration = 0;
-  bool _multipreviewUnavailable = false;
-  int _multipreviewFailures = 0;
+  bool _previewBatchUnavailable = false;
+  int _previewBatchFailures = 0;
   Timer? _thumbnailWarmupTimer;
   final List<CloudFile> _thumbnailWarmupQueue = [];
   final Set<String> _thumbnailWarmupKnown = {};
@@ -2542,8 +2542,8 @@ class AppController extends ChangeNotifier {
       request.completer.completeError(const PreviewCancelled());
     }
     _previewBatch.clear();
-    _multipreviewUnavailable = false;
-    _multipreviewFailures = 0;
+    _previewBatchUnavailable = false;
+    _previewBatchFailures = 0;
   }
 
   final Map<String, CloudFile> _resolvedIds = {};
@@ -2823,9 +2823,9 @@ class AppController extends ChangeNotifier {
     if (!_browsingActive) return Future.error(const PreviewCancelled());
     if (file.id == null ||
         timelineIndexAvailable != true ||
-        _multipreviewUnavailable ||
+        _previewBatchUnavailable ||
         size > 512) {
-      return client.preview(session, file, size: size);
+      return _singlePreview(session, file, size);
     }
     final batchKey = '${file.id}|$size';
     final queued = _previewBatch.remove(batchKey);
@@ -2838,6 +2838,22 @@ class AppController extends ChangeNotifier {
       () => _flushPreviews(session),
     );
     return request.completer.future;
+  }
+
+  Future<Uint8List> _singlePreview(
+    Account session,
+    CloudFile file,
+    int size,
+  ) async {
+    final previews = await client.previews(session, [file], size: size);
+    if (previews.length != 1) {
+      throw const CloudException('Invalid preview response.');
+    }
+    final bytes = previews.single;
+    if (bytes == null) {
+      throw const CloudException('No preview is available for this file.');
+    }
+    return bytes;
   }
 
   /// Sends queued thumbnails as batched preview requests, newest
@@ -2878,7 +2894,7 @@ class AppController extends ChangeNotifier {
         request.completer.completeError(const PreviewCancelled());
       } else {
         request.completer.complete(
-          client.preview(session, request.file, size: request.size),
+          _singlePreview(session, request.file, request.size),
         );
       }
     }
@@ -2888,18 +2904,22 @@ class AppController extends ChangeNotifier {
         single(batch.single);
         return;
       }
-      final previews = await client.multipreview(session, [
-        for (final request in batch) request.file.id!,
+      final previews = await client.previews(session, [
+        for (final request in batch) request.file,
       ], size: batch.first.size);
+      if (previews.length != batch.length) {
+        throw const CloudException('Invalid preview response.');
+      }
       if (!current()) {
         for (final request in batch) {
           request.completer.completeError(const PreviewCancelled());
         }
         return;
       }
-      _multipreviewFailures = 0;
-      for (final request in batch) {
-        final bytes = previews[request.file.id];
+      _previewBatchFailures = 0;
+      for (var i = 0; i < batch.length; i++) {
+        final request = batch[i];
+        final bytes = previews[i];
         if (bytes != null) {
           request.completer.complete(bytes);
         } else {
@@ -2908,8 +2928,8 @@ class AppController extends ChangeNotifier {
       }
     } on Object {
       // Some servers or proxies may not support batching.
-      if (current() && ++_multipreviewFailures >= 2) {
-        _multipreviewUnavailable = true;
+      if (current() && ++_previewBatchFailures >= 2) {
+        _previewBatchUnavailable = true;
       }
       for (final request in batch) {
         if (!request.completer.isCompleted) single(request);

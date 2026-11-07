@@ -148,10 +148,11 @@ abstract interface class CloudBackend {
     int day,
   );
 
-  Future<Uint8List> preview(Account account, CloudFile file, {int size = 384});
-  Future<Map<String, Uint8List>> multipreview(
+  /// Results correspond positionally to the requested files. Null entries may
+  /// be retried singly; request failures must throw rather than appear empty.
+  Future<List<Uint8List?>> previews(
     Account account,
-    List<String> fileIds, {
+    List<CloudFile> files, {
     int size = 384,
   });
   Future<void> move(Account account, CloudFile file, List<String> destination);
