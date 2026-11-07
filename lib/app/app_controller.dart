@@ -13,7 +13,7 @@ import '../core/storage/file_store.dart';
 import '../features/backup/folder_sync.dart';
 import '../core/storage/local_cache.dart';
 import '../models.dart';
-import '../media_listing.dart';
+import '../features/library/media_listing.dart';
 import '../core/cloud/cloud_backend.dart';
 import '../features/backup/workmanager_backup.dart';
 import '../features/backup/sync_schedule.dart';

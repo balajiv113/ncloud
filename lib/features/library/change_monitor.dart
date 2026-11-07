@@ -1,7 +1,7 @@
 import 'dart:async';
 
-import 'models.dart';
-import 'core/cloud/cloud_backend.dart';
+import '../../models.dart';
+import '../../core/cloud/cloud_backend.dart';
 
 /// Foreground-only change hints. No timers or socket survive inactivity.
 class ChangeMonitor {

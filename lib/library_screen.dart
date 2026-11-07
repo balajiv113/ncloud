@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'app/app_controller.dart';
-import 'change_monitor.dart';
+import 'features/library/change_monitor.dart';
 import 'asset_viewer.dart';
 import 'discovery_models.dart';
 import 'library_actions.dart';

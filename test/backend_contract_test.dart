@@ -3,7 +3,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ncloud/app/app_controller.dart';
-import 'package:ncloud/change_monitor.dart';
+import 'package:ncloud/features/library/change_monitor.dart';
 import 'package:ncloud/core/cloud/cloud_backend.dart';
 import 'package:ncloud/models.dart';
 

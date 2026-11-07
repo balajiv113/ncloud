@@ -1,5 +1,5 @@
-import 'core/storage/file_store.dart';
-import 'models.dart';
+import '../../core/storage/file_store.dart';
+import '../../models.dart';
 
 /// A view's ordered references into the shared [FileStore] plus its paging
 /// state; files themselves are never duplicated per view.
