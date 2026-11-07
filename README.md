@@ -26,6 +26,8 @@ Share panels use a library-owned session bound to the account that opened them, 
 
 File actions resolve locations only when their operation needs them; share sessions and playback preparation handle their own lazy lookup and reject account changes before proceeding.
 
+Multi-file mutations remain bound to their initiating account; a session change stops subsequent operations and prevents stale results from modifying the replacement account's cache.
+
 Photo map requests are coordinated by a photo-feature session that merges wrapped viewport clusters and stops superseded or account-stale requests.
 
 Initial and subsequent listing pages are checked against the initiating account and view generation before merging. Original downloads must match the listed byte count; offline saves additionally request the inventoried server revision. Failed transfers are not published as saved originals, and the transfer lock remains held through offline-file and membership publication.

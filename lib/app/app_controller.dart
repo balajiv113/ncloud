@@ -2313,6 +2313,18 @@ class AppController extends ChangeNotifier {
     bool favorite = true,
   }) async {
     if (busy || files.isEmpty) return false;
+    final session = account;
+    final wasDemo = demo;
+    bool current() =>
+        !_disposed && demo == wasDemo && identical(account, session);
+    void checkSession() {
+      if (!current()) {
+        throw const CloudException(
+          'The account changed. Start the operation again.',
+        );
+      }
+    }
+
     busy = true;
     error = null;
     notice = null;
@@ -2321,8 +2333,18 @@ class AppController extends ChangeNotifier {
     notifyListeners();
     Object? failure;
     try {
-      files = await _resolveAll(files);
+      if (!wasDemo && session == null) {
+        throw const CloudException('Sign in to manage files.');
+      }
+      final resolvedFiles = <CloudFile>[];
       for (final file in files) {
+        checkSession();
+        resolvedFiles.add(await resolve(file));
+        checkSession();
+      }
+      files = resolvedFiles;
+      for (final file in files) {
+        checkSession();
         if (file.readOnly) {
           throw const CloudException(
             'This album item is view-only. Manage its original on your server.',
@@ -2342,7 +2364,7 @@ class AppController extends ChangeNotifier {
               'A folder cannot be placed inside itself.',
             );
           }
-          if (demo) {
+          if (wasDemo) {
             if (_demo.any((f) => listEquals(f.path, target))) {
               throw const CloudException(
                 'An item with that name already exists.',
@@ -2363,28 +2385,31 @@ class AppController extends ChangeNotifier {
             _demo.addAll(moved);
           } else {
             if (operation == 'copy') {
-              await client.copy(account!, file, target);
+              await client.copy(session!, file, target);
             } else {
-              await client.move(account!, file, target);
+              await client.move(session!, file, target);
             }
+            checkSession();
             fileStore.moveTree(file.path, target, copy: operation == 'copy');
           }
         } else if (operation == 'delete') {
-          if (demo) {
+          if (wasDemo) {
             _demoTrash['${file.key}:${DateTime.now().microsecondsSinceEpoch}'] =
                 _demo.where((f) => pathStartsWith(f.path, file.path)).toList();
             _demo.removeWhere((f) => pathStartsWith(f.path, file.path));
           } else {
-            await client.delete(account!, file);
+            await client.delete(session!, file);
+            checkSession();
             fileStore.removeTree(file.path);
           }
         } else if (operation == 'favorite') {
-          if (demo) {
+          if (wasDemo) {
             _demo = _demo
                 .map((f) => f.key == file.key ? f.withFavorite(favorite) : f)
                 .toList();
           } else {
-            await client.setFavorite(account!, file, favorite);
+            await client.setFavorite(session!, file, favorite);
+            checkSession();
             fileStore.update(file.key, (f) => f.withFavorite(favorite));
           }
         } else {
@@ -2396,17 +2421,23 @@ class AppController extends ChangeNotifier {
     } catch (e) {
       failure = e;
     }
-    _covers.clear();
-    await _invalidateBrowse();
-    await load();
-    if (failure != null) {
-      error = '$completed of $total completed. ${errorMessage(failure)}';
-    } else {
-      notice = '$completed ${completed == 1 ? 'item' : 'items'} updated';
+    try {
+      if (!current()) return false;
+      _covers.clear();
+      await _invalidateBrowse();
+      if (!current()) return false;
+      await load();
+      if (!current()) return false;
+      if (failure != null) {
+        error = '$completed of $total completed. ${errorMessage(failure)}';
+      } else {
+        notice = '$completed ${completed == 1 ? 'item' : 'items'} updated';
+      }
+      return failure == null;
+    } finally {
+      busy = false;
+      notifyListeners();
     }
-    busy = false;
-    notifyListeners();
-    return failure == null;
   }
 
   Future<List<TrashEntry>> trash() async {
@@ -2633,11 +2664,6 @@ class AppController extends ChangeNotifier {
       account: session,
       isCurrent: () => !_disposed && !demo && identical(account, session),
     );
-  }
-
-  Future<List<CloudFile>> _resolveAll(List<CloudFile> files) async {
-    if (!files.any((f) => f.pending)) return files;
-    return [for (final file in files) await resolve(file)];
   }
 
   String? _previewKey(CloudFile file, int size) {

@@ -216,8 +216,60 @@ class _MapBackend extends _PortableBackend {
   }
 }
 
+class _DelayedMoveBackend extends _PortableBackend {
+  final started = Completer<void>();
+  final finished = Completer<void>();
+  final moved = <({Account account, CloudFile file})>[];
+
+  @override
+  Future<void> move(
+    Account account,
+    CloudFile file,
+    List<String> destination,
+  ) async {
+    moved.add((account: account, file: file));
+    if (!started.isCompleted) started.complete();
+    await finished.future;
+  }
+}
+
 void main() {
   const account = _PortableAccount('portable|account');
+
+  test(
+    'multi-file actions stop without touching a replacement account',
+    () async {
+      final backend = _DelayedMoveBackend();
+      final controller = AppController(store: _SessionStore(), client: backend)
+        ..account = account;
+      addTearDown(controller.dispose);
+      const first = CloudFile(
+        path: ['a.jpg'],
+        name: 'a.jpg',
+        isDirectory: false,
+      );
+      const second = CloudFile(
+        path: ['b.jpg'],
+        name: 'b.jpg',
+        isDirectory: false,
+      );
+      controller.fileStore.putAll([first, second]);
+      final result = controller.organize(
+        [first, second],
+        'move',
+        destination: ['Folder'],
+      );
+      await backend.started.future;
+      controller.account = const _PortableAccount('portable|other');
+      backend.finished.complete();
+      expect(await result, isFalse);
+      expect(backend.moved, hasLength(1));
+      expect(backend.moved.single.account, same(account));
+      expect(controller.fileStore[first.key], isNotNull);
+      expect(controller.fileStore['Folder/a.jpg'], isNull);
+      expect(controller.busy, isFalse);
+    },
+  );
 
   test(
     'resolved locations reconcile every listing and retain timeline data',
