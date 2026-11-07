@@ -69,35 +69,19 @@ void main() {
         WorkmanagerPlatform.instance = previous;
       });
       final scheduler = AndroidBackupScheduler(android: true);
-      final schedule = BackupSchedule(
-        kind: ScheduleKind.daily,
-        created: DateTime(2026, 1, 1),
-        hour: 10,
-      );
+      final schedule = BackupSchedule(created: DateTime(2026, 1, 1), hour: 10);
       await expectLater(
-        scheduler.put(
-          'pair',
-          'revision',
-          schedule,
-          wifiOnly: true,
-          chargingOnly: true,
-        ),
+        scheduler.put('pair', 'revision', schedule, wifiOnly: true),
         throwsA(isA<PlatformException>()),
       );
       platform.failInitialization = false;
-      await scheduler.put(
-        'pair',
-        'revision',
-        schedule,
-        wifiOnly: true,
-        chargingOnly: true,
-      );
+      await scheduler.put('pair', 'revision', schedule, wifiOnly: true);
       expect(platform.initialized, 2);
       expect(platform.unique, AndroidBackupScheduler.job('pair'));
       expect(platform.task, backupTask);
       expect(platform.payload, {'pairId': 'pair', 'revision': 'revision'});
       expect(platform.constraints!.networkType, NetworkType.connected);
-      expect(platform.constraints!.requiresCharging, isTrue);
+      expect(platform.constraints!.requiresCharging, isFalse);
       expect(
         platform.foreground!.foregroundServiceType,
         ForegroundServiceType.dataSync,

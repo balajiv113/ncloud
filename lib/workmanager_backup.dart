@@ -126,7 +126,6 @@ class AndroidBackupScheduler implements BackupScheduler {
     String revision,
     BackupSchedule schedule, {
     required bool wifiOnly,
-    required bool chargingOnly,
   }) async {
     if (!supported) throw UnsupportedError('Scheduled backup is Android only.');
     await initialize();
@@ -140,7 +139,7 @@ class AndroidBackupScheduler implements BackupScheduler {
         // WorkManager has no Wi-Fi transport constraint. Check actual Wi-Fi
         // before scanning and every transfer, including on unmetered networks.
         networkType: NetworkType.connected,
-        requiresCharging: chargingOnly,
+        requiresCharging: false,
       ),
       foregroundServiceConfig: ForegroundServiceConfig(
         notificationTitle: 'ncloud scheduled backup',

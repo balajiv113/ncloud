@@ -31,7 +31,6 @@ class IosAlbumScheduler implements BackupScheduler {
     return [
       for (final pair in await journal.pairs(owner))
         if (pair.folder.kind == DeviceSourceKind.photoAlbum &&
-            pair.mode == SyncMode.backup &&
             pair.schedule != null)
           pair,
     ]..sort(
@@ -47,9 +46,7 @@ class IosAlbumScheduler implements BackupScheduler {
       await NativeFolderAccess.channel.invokeMethod<void>('cancelAlbums');
       return;
     }
-    await armNextOpportunity(
-      requiresCharging: pairs.every((pair) => pair.chargingOnly),
-    );
+    await armNextOpportunity();
   }
 
   Future<void> armNextOpportunity({bool requiresCharging = false}) async {
@@ -67,7 +64,6 @@ class IosAlbumScheduler implements BackupScheduler {
     String revision,
     BackupSchedule schedule, {
     required bool wifiOnly,
-    required bool chargingOnly,
   }) async {
     if (!supported) {
       throw UnsupportedError('Apple Photos background backup requires iOS.');
@@ -126,7 +122,7 @@ class IosAlbumBackupBatch {
       await scheduler.journal.writeState(SyncJournal.iosAlbumService, {
         'error':
             'iOS automatic album backup needs attention (${error.runtimeType}). '
-            'Open Folder sync to retry.',
+            'Open Folder backup to retry.',
       });
       rethrow;
     } finally {

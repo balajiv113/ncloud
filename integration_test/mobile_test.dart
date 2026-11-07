@@ -213,7 +213,44 @@ Future<String> _testNativeContract() async {
   }
   _require(await lock.acquire(owner), 'Native lock was not released.');
   await lock.release(owner);
-  return 'Native staging, conditions and account locks verified.';
+  final root = await Directory.systemTemp.createTemp('ncloud-pair-contract-');
+  final journal = SyncJournal(path: '${root.path}/pairs.sqlite3');
+  final cloud = CloudFolders();
+  final sync = FolderSyncController(
+    client: cloud,
+    account: () => account,
+    journal: journal,
+  );
+  try {
+    await sync.load();
+    _require(sync.error == null, 'Could not open pair storage: ${sync.error}');
+    await sync.add(
+      'Saved folder',
+      const DeviceFolder('content://fixture/tree/source', 'Source', 'source'),
+      ['Backup'],
+      wifiOnly: false,
+    );
+    final saved = sync.pairs.single;
+    await journal.close();
+    final reopened = await journal.pair(saved.id);
+    _require(
+      reopened?.folder.token == saved.folder.token &&
+          reopened?.cloudRoot.join('/') == 'Backup/Source',
+      'The saved pair did not survive closing and reopening SQLite.',
+    );
+    await sync.forget(saved);
+    _require(
+      await journal.pair(saved.id) == null,
+      'Pair removal was not saved.',
+    );
+  } finally {
+    await sync.disconnect();
+    await journal.close();
+    sync.dispose();
+    cloud.close();
+    await root.delete(recursive: true);
+  }
+  return 'Native staging, conditions, account locks and pair storage verified.';
 }
 
 void _require(bool condition, String message) {
@@ -286,14 +323,7 @@ Future<String> _testRealAlbum() async {
     await _stage('opening the journal', sync.load);
     await _stage(
       'saving the album pair',
-      () => sync.add(
-        'Simulator album',
-        folder,
-        ['Backup'],
-        SyncMode.backup,
-        false,
-        wifiOnly: false,
-      ),
+      () => sync.add('Simulator album', folder, ['Backup'], wifiOnly: false),
     );
     final pair = sync.pairs.single;
     await _stage('uploading the album', () => sync.run(pair));

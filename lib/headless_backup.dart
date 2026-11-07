@@ -95,7 +95,6 @@ class ScheduledBackupRunner implements HeadlessBackupRunner {
           pair.account != owner ||
           pair.revision != revision ||
           pair.schedule == null ||
-          pair.mode != SyncMode.backup ||
           !await journal.accountEnabled(owner)) {
         return true;
       }

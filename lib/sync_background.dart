@@ -9,8 +9,6 @@ abstract interface class SyncBackground {
 class NativeSyncBackground implements SyncBackground {
   static const channel = MethodChannel('app.ncloud/sync_background');
 
-  static Future<void> openSettings() => channel.invokeMethod<void>('settings');
-
   @override
   Future<bool> permission({bool request = false}) async =>
       await channel.invokeMethod<bool>('permission', {'request': request}) ==

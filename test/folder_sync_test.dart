@@ -3,22 +3,17 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:ncloud/folder_sync.dart';
-import 'package:ncloud/folder_sync_screen.dart';
-import 'package:ncloud/app_controller.dart';
 import 'package:ncloud/models.dart';
 import 'package:ncloud/nextcloud_client.dart';
 import 'package:ncloud/cloud_backend.dart';
-import 'package:ncloud/android_folder_sync_screen.dart';
 import 'package:ncloud/sync_rules.dart';
 import 'package:ncloud/sync_background.dart';
 
 import 'nextcloud_client_test.dart' show account;
-import 'app_test.dart' show MemoryStore;
 
 class DeviceFolders implements FolderAccess {
   DeviceFolders(this.root, this.staging);
@@ -118,11 +113,11 @@ class DeviceFolders implements FolderAccess {
 
 class TestSyncBackground implements SyncBackground {
   int starts = 0, stops = 0;
-  bool allowed = true;
+  bool allowed = false;
   Object? startError;
   void Function(String?)? onPause;
   @override
-  Future<bool> permission({bool request = false}) async => allowed;
+  Future<bool> permission({bool request = false}) async => request || allowed;
   @override
   Future<void> start(void Function(String?) callback) async {
     if (startError case final e?) throw e;
@@ -259,10 +254,7 @@ void main() {
         backgroundService: background,
       );
 
-  Future<FolderPair> pair(
-    SyncMode mode, {
-    bool repeat = false,
-    bool chargingOnly = false,
+  Future<FolderPair> pair({
     SyncRules rules = const SyncRules.all(),
     int concurrency = 1,
     bool inBackground = false,
@@ -272,13 +264,10 @@ void main() {
       'My backup',
       const DeviceFolder('grant', 'Selected', 'folder-id'),
       ['Backup'],
-      mode,
-      repeat,
-      chargingOnly: chargingOnly,
       rules: rules,
       uploadConcurrency: concurrency,
-      background: inBackground,
     );
+    background.allowed = inBackground;
     return sync.pairs.single;
   }
 
@@ -310,11 +299,10 @@ void main() {
     () async {
       await sync.load();
       expect(sync.pairs, isEmpty);
-      final custom = await pair(SyncMode.backup);
+      final custom = await pair();
       final payload = custom.toJson()
         ..['id'] = 'obsolete-photos'
-        ..['photoBackup'] = true
-        ..['repeat'] = true;
+        ..['photoBackup'] = true;
       await (await sync.journal.db).insert('pairs', {
         'id': 'obsolete-photos',
         'account': syncAccount(account),
@@ -338,16 +326,11 @@ void main() {
       await device.put('Trips/document.pdf', 'document');
       await device.put('Trips/Private/no.jpg', 'private');
       await device.put('TripsExtra/no.jpg', 'not included');
-      final rules = SyncRules(
-        included: [
-          ['Trips'],
-        ],
-        excluded: [
-          ['Trips', 'Private'],
-        ],
-        types: SyncFileTypes.photosAndVideos,
+      final rules = SyncRules.patterns(
+        'Trips/**/*.jpg, Trips/**/*.mov',
+        'Trips/Private/**',
       );
-      final value = await pair(SyncMode.backup, rules: rules, concurrency: 3);
+      final value = await pair(rules: rules, concurrency: 3);
       await sync.run(value);
       expect(sync.error, isNull);
       expect(cloud.files.keys.toSet(), {
@@ -357,7 +340,7 @@ void main() {
       expect(device.exports, 2);
       expect(rules.visits(['Trips']), isTrue);
       expect(rules.visits(['Trips', 'Private']), isFalse);
-      expect(rules.visits(['TripsExtra']), isFalse);
+      expect(rules.visits(['TripsExtra']), isTrue);
       expect(rules.allows(['Trips', 'Private', 'no.jpg']), isFalse);
       expect(
         rules.allows([
@@ -378,7 +361,7 @@ void main() {
     () async {
       await device.put('Public/keep.jpg', 'keep');
       await device.put('Private/old.jpg', 'private');
-      final value = await pair(SyncMode.backup);
+      final value = await pair();
       await sync.run(value);
       expect(cloud.uploads, 2);
       await device.put('Private/new.jpg', 'do not upload');
@@ -386,14 +369,8 @@ void main() {
         value.name,
         value.folder,
         value.remote,
-        value.mode,
-        false,
         replacing: value,
-        rules: SyncRules(
-          excluded: [
-            ['Private'],
-          ],
-        ),
+        rules: SyncRules.patterns('', 'Private/**'),
       );
       final edited = sync.pairs.single;
       expect(edited.id, value.id);
@@ -410,38 +387,11 @@ void main() {
       sync.dispose();
       sync = controller();
       await sync.load();
-      expect(sync.pairs.single.rules.excluded, [
-        ['Private'],
-      ]);
+      expect(sync.pairs.single.rules.exclude, ['Private/**']);
       await sync.run(sync.pairs.single);
       expect(cloud.uploads, 2);
     },
   );
-
-  test('download and merge respect exclusions on both sides', () async {
-    for (final mode in [SyncMode.download, SyncMode.merge]) {
-      final prefix = mode == SyncMode.download ? 'Backup' : 'Backup/Selected';
-      cloud.put('$prefix/Public/photo.jpg', 'allowed');
-      cloud.put('$prefix/Private/secret.jpg', 'excluded');
-      cloud.put('$prefix/Public/file.txt', 'wrong type');
-      final value = await pair(
-        mode,
-        rules: SyncRules(
-          excluded: [
-            ['Private'],
-          ],
-          types: SyncFileTypes.photos,
-        ),
-      );
-      await sync.run(value);
-      expect(sync.error, isNull);
-      expect(await device.file(['Public', 'photo.jpg']).exists(), isTrue);
-      expect(await device.file(['Private', 'secret.jpg']).exists(), isFalse);
-      expect(await device.file(['Public', 'file.txt']).exists(), isFalse);
-      expect(cloud.files.keys, contains('$prefix/Private/secret.jpg'));
-      await sync.forget(value);
-    }
-  });
 
   test(
     'manually selected media folder applies inclusion and exclusion rules',
@@ -454,15 +404,7 @@ void main() {
         'Selected',
         const DeviceFolder('token', 'Selected', 'identity'),
         ['Backup'],
-        SyncMode.backup,
-        false,
-        rules: SyncRules(
-          included: [[]],
-          excluded: [
-            ['Screenshots'],
-          ],
-          types: SyncFileTypes.photos,
-        ),
+        rules: SyncRules.patterns('*.heic, *.png', 'Screenshots/**'),
         uploadConcurrency: 3,
       );
       await sync.run(sync.pairs.single);
@@ -489,7 +431,7 @@ void main() {
         await Future<void>.delayed(const Duration(milliseconds: 2));
         active--;
       };
-      final value = await pair(SyncMode.backup, concurrency: 3);
+      final value = await pair(concurrency: 3);
       await sync.run(value);
       expect(sync.error, isNull);
       expect(maximum, 3);
@@ -515,11 +457,7 @@ void main() {
         await allStarted.future;
         if (n == 1) throw const CloudException('First upload failed');
       };
-      final value = await pair(
-        SyncMode.backup,
-        concurrency: 3,
-        inBackground: true,
-      );
+      final value = await pair(concurrency: 3, inBackground: true);
       await sync.run(value);
       expect(sync.error, 'First upload failed');
       expect(started, 3);
@@ -542,7 +480,7 @@ void main() {
         await device.put('$id/same.jpg', id);
         cloud.put('Backup/Selected/$id/same.jpg', 'existing-$id');
       }
-      await pair(SyncMode.backup, concurrency: 3);
+      await pair(concurrency: 3);
       await sync.run(sync.pairs.single);
       expect(sync.error, isNull);
       expect(cloud.files, hasLength(6));
@@ -569,7 +507,7 @@ void main() {
         if (!started.isCompleted) started.complete();
         await release.future;
       };
-      final value = await pair(SyncMode.backup, inBackground: true);
+      final value = await pair(inBackground: true);
       final running = sync.run(value);
       await started.future;
       expect(background.starts, 1);
@@ -589,7 +527,7 @@ void main() {
       await device.put('first.txt', 'one');
       await device.put('second.txt', 'two');
       cloud.beforeUpload = () => background.onPause?.call(null);
-      final value = await pair(SyncMode.backup, inBackground: true);
+      final value = await pair(inBackground: true);
       await sync.run(value);
       expect(sync.error, isNull);
       expect(sync.phase, contains('Paused'));
@@ -607,7 +545,7 @@ void main() {
     () async {
       await device.put('first.txt', 'one');
       background.startError = PlatformException(code: 'background_permission');
-      final value = await pair(SyncMode.backup, inBackground: true);
+      final value = await pair(inBackground: true);
       await sync.run(value);
       expect(sync.error, contains('notifications'));
       expect(cloud.uploads, 0);
@@ -620,14 +558,8 @@ void main() {
   test(
     'persisted pairs require the current schema and reject invalid concurrency',
     () async {
-      final value = await pair(SyncMode.backup);
-      for (final field in [
-        'rules',
-        'background',
-        'uploadConcurrency',
-        'wifiOnly',
-        'chargingOnly',
-      ]) {
+      final value = await pair();
+      for (final field in ['rules', 'uploadConcurrency', 'wifiOnly']) {
         expect(
           () => FolderPair.fromJson(value.toJson()..remove(field)),
           throwsA(isA<TypeError>()),
@@ -636,14 +568,9 @@ void main() {
       }
       for (final count in [0, 4]) {
         await expectLater(
-          sync.add(
-            'Bad',
-            value.folder,
-            ['Elsewhere'],
-            SyncMode.backup,
-            false,
-            uploadConcurrency: count,
-          ),
+          sync.add('Bad', value.folder, [
+            'Elsewhere',
+          ], uploadConcurrency: count),
           throwsFormatException,
         );
       }
@@ -651,7 +578,7 @@ void main() {
   );
 
   test('selected source folder is included even when empty', () async {
-    final value = await pair(SyncMode.backup);
+    final value = await pair();
     expect(value.cloudRoot, ['Backup', 'Selected']);
     await sync.run(value);
     expect(sync.error, isNull);
@@ -665,7 +592,7 @@ void main() {
     'previously flattened files stay untouched when backup includes the source folder',
     () async {
       await device.put('nested/file.txt', 'original');
-      final value = await pair(SyncMode.backup);
+      final value = await pair();
       cloud.put('Backup/nested/file.txt', 'original');
       final oldVersion = '${cloud.cloud('Backup/nested/file.txt').etag}|8';
       await sync.journal.confirm(
@@ -701,7 +628,7 @@ void main() {
     () async {
       await device.put('notes.txt', 'local');
       cloud.put('Backup/Selected', 'protected');
-      final value = await pair(SyncMode.backup);
+      final value = await pair();
       await sync.run(value);
       expect(sync.error, contains('file blocks'));
       expect(utf8.decode(cloud.files['Backup/Selected']!.$1), 'protected');
@@ -718,8 +645,6 @@ void main() {
         'Unsafe',
         const DeviceFolder('grant', '../Documents', 'folder-id'),
         ['Backup'],
-        SyncMode.backup,
-        false,
       ),
       throwsFormatException,
     );
@@ -730,7 +655,7 @@ void main() {
   test('backup preserves server names, local deletions and restarts', () async {
     await device.put('nested/photo.jpg', 'local photo');
     cloud.put('Backup/Selected/nested/photo.jpg', 'existing cloud photo');
-    final value = await pair(SyncMode.backup);
+    final value = await pair();
     await sync.run(value);
     expect(sync.error, isNull);
     expect(cloud.uploads, 1);
@@ -762,66 +687,11 @@ void main() {
   });
 
   test(
-    'download preserves local files and cloud deletions do not delete locally',
-    () async {
-      await device.put('photo.jpg', 'existing local');
-      cloud.put('Backup/photo.jpg', 'remote original');
-      final value = await pair(SyncMode.download);
-      await sync.run(value);
-      expect(sync.error, isNull);
-      expect(await device.file(['photo.jpg']).readAsString(), 'existing local');
-      expect(device.imports, 1);
-      expect(cloud.uploads, 0);
-      await sync.run(value);
-      expect(device.imports, 1);
-      cloud.files.clear();
-      await sync.run(value);
-      expect(device.root.listSync().whereType<File>(), hasLength(2));
-    },
-  );
-
-  test(
-    'two-way merge reaches a fixed point and edited versions keep originals',
-    () async {
-      await device.put('same.txt', 'local version');
-      await device.put('only-local.txt', 'local');
-      cloud.put('Backup/Selected/same.txt', 'cloud version');
-      cloud.put('Backup/Selected/only-remote.txt', 'remote');
-      final value = await pair(SyncMode.merge);
-      await sync.run(value);
-      expect(sync.error, isNull);
-      expect(cloud.uploads, 2);
-      expect(device.imports, 2);
-      expect(await device.file(['same.txt']).readAsString(), 'local version');
-      expect(
-        utf8.decode(cloud.files['Backup/Selected/same.txt']!.$1),
-        'cloud version',
-      );
-      await sync.run(value);
-      expect(cloud.uploads, 2);
-      expect(device.imports, 2);
-      await device.put('only-local.txt', 'new local version');
-      await sync.run(value);
-      expect(sync.error, isNull);
-      expect(
-        utf8.decode(cloud.files['Backup/Selected/only-local.txt']!.$1),
-        'local',
-      );
-      final uploads = cloud.uploads;
-      final downloads = device.imports;
-      await sync.run(value);
-      expect(sync.error, isNull);
-      expect(cloud.uploads, uploads);
-      expect(device.imports, downloads);
-    },
-  );
-
-  test(
     'permission errors stop the entire scan without interpreting deletions',
     () async {
       await device.put('keep.txt', 'local');
       cloud.put('Backup/Selected/keep.txt', 'remote');
-      final value = await pair(SyncMode.merge);
+      final value = await pair();
       device.denied = true;
       await sync.run(value);
       expect(sync.error, isNotNull);
@@ -835,7 +705,7 @@ void main() {
 
   test('failed remote scan never starts transfers', () async {
     await device.put('keep.txt', 'local');
-    final value = await pair(SyncMode.merge);
+    final value = await pair();
     cloud.listingFails = true;
     await sync.run(value);
     expect(sync.error, 'Listing failed');
@@ -847,7 +717,7 @@ void main() {
     'interrupted file has no success receipt and temporary bytes are removed',
     () async {
       await device.put('file.txt', 'source bytes');
-      final value = await pair(SyncMode.backup);
+      final value = await pair();
       cloud.interrupted = true;
       await sync.run(value);
       expect(sync.error, isNotNull);
@@ -863,24 +733,9 @@ void main() {
     },
   );
 
-  test('interrupted download never imports partial files', () async {
-    cloud.put('Backup/file.txt', 'source bytes');
-    final value = await pair(SyncMode.download);
-    cloud.interrupted = true;
-    await sync.run(value);
-    expect(sync.error, isNotNull);
-    expect(device.imports, 0);
-    expect(device.root.listSync(), isEmpty);
-    expect(device.staging.listSync(), isEmpty);
-    cloud.interrupted = false;
-    await sync.run(value);
-    expect(sync.error, isNull);
-    expect(device.imports, 1);
-  });
-
   test('destination races never overwrite cloud files', () async {
     await device.put('file.txt', 'source');
-    final value = await pair(SyncMode.backup);
+    final value = await pair();
     cloud.beforeUpload = () =>
         cloud.put('Backup/Selected/file.txt', 'racing content');
     await sync.run(value);
@@ -892,45 +747,24 @@ void main() {
     expect(await sync.journal.receipt(value.id, 'local', ['file.txt']), isNull);
   });
 
-  test('destination races never overwrite device files', () async {
-    cloud.put('Backup/file.txt', 'source');
-    final value = await pair(SyncMode.download);
-    device.beforeImport = () =>
-        device.file(['file.txt']).writeAsStringSync('racing content');
+  test('Wi-Fi policy blocks work without losing pending files', () async {
+    await device.put('file.txt', 'source');
+    final value = await pair();
+    device.wifi = false;
     await sync.run(value);
-    expect(sync.error, isNotNull);
-    expect(await device.file(['file.txt']).readAsString(), 'racing content');
-    expect(
-      await sync.journal.receipt(value.id, 'remote', ['file.txt']),
-      isNull,
-    );
+    expect(sync.error, contains('Wi-Fi'));
+    expect(cloud.uploads, 0);
+    device.wifi = true;
+    await sync.run(value);
+    expect(sync.error, isNull);
+    expect(cloud.uploads, 1);
   });
-
-  test(
-    'Wi-Fi and charging policies block work without losing pending files',
-    () async {
-      await device.put('file.txt', 'source');
-      final value = await pair(SyncMode.backup, chargingOnly: true);
-      device.wifi = false;
-      await sync.run(value);
-      expect(sync.error, contains('Wi-Fi'));
-      expect(cloud.uploads, 0);
-      device.wifi = true;
-      device.charging = false;
-      await sync.run(value);
-      expect(sync.error, contains('charging'));
-      device.charging = true;
-      await sync.run(value);
-      expect(sync.error, isNull);
-      expect(cloud.uploads, 1);
-    },
-  );
 
   test(
     'missing native policy handler does not request or blame folder permission',
     () async {
       await device.put('file.txt', 'source');
-      final value = await pair(SyncMode.backup);
+      final value = await pair();
       device.conditionsError = MissingPluginException('conditions');
       await sync.run(value);
       expect(sync.error, contains('native folder-sync service'));
@@ -1006,8 +840,9 @@ void main() {
         access: NativeFolderAccess(),
         journal: SyncJournal(path: journalPath),
         android: true,
+        backgroundService: background,
       );
-      final value = await pair(SyncMode.backup);
+      final value = await pair();
       await sync.run(value);
       expect(sync.error, isNull);
       await sync.run(value);
@@ -1024,7 +859,7 @@ void main() {
     () async {
       await device.put('one.txt', 'one');
       await device.put('two.txt', 'two');
-      final value = await pair(SyncMode.backup);
+      final value = await pair();
       cloud.beforeUpload = () => sync.setForeground(false);
       await sync.run(value);
       expect(cloud.uploads, 1);
@@ -1041,7 +876,7 @@ void main() {
     'account changes cannot run another account pair or display its pairs',
     () async {
       await device.put('file.txt', 'source');
-      final value = await pair(SyncMode.backup);
+      final value = await pair();
       session = Account(
         server: Uri(scheme: 'https', host: 'different.example'),
         loginName: 'other',
@@ -1056,25 +891,21 @@ void main() {
     },
   );
 
-  test(
-    'iPhone saved pairs can run repeatedly but never schedule repeat',
-    () async {
-      sync.dispose();
-      sync = controller(android: false);
-      final value = await pair(SyncMode.backup, repeat: true);
-      expect(value.repeat, isFalse);
-      await device.put('first.txt', 'one');
-      await sync.run(value);
-      await device.put('second.txt', 'two');
-      await sync.run(value);
-      expect(cloud.uploads, 2);
-      expect(sync.error, isNull);
-    },
-  );
+  test('iPhone saved pairs can run repeatedly', () async {
+    sync.dispose();
+    sync = controller(android: false);
+    final value = await pair();
+    await device.put('first.txt', 'one');
+    await sync.run(value);
+    await device.put('second.txt', 'two');
+    await sync.run(value);
+    expect(cloud.uploads, 2);
+    expect(sync.error, isNull);
+  });
 
   test('forgetting pairs removes only settings and history', () async {
     await device.put('file.txt', 'source');
-    final value = await pair(SyncMode.merge);
+    final value = await pair();
     await sync.run(value);
     await sync.forget(value);
     expect(sync.pairs, isEmpty);
@@ -1086,15 +917,13 @@ void main() {
   test(
     'overlapping cloud destinations and device grants are rejected',
     () async {
-      await pair(SyncMode.backup);
+      await pair();
       await expectLater(
-        sync.add(
-          'Nested',
-          const DeviceFolder('different', 'other', 'other'),
-          ['Backup', 'Selected', 'Child'],
-          SyncMode.backup,
-          false,
-        ),
+        sync.add('Nested', const DeviceFolder('different', 'other', 'other'), [
+          'Backup',
+          'Selected',
+          'Child',
+        ]),
         throwsFormatException,
       );
       await expectLater(
@@ -1102,8 +931,6 @@ void main() {
           'Same grant',
           const DeviceFolder('grant', 'Selected', 'folder-id'),
           ['Other'],
-          SyncMode.backup,
-          false,
         ),
         throwsFormatException,
       );
@@ -1161,151 +988,6 @@ void main() {
         throwsA(isA<CloudException>()),
       );
       expect(methods, ['GET', 'PUT']);
-    },
-  );
-
-  testWidgets(
-    'destination preview shows exact Android roots without flattening',
-    (tester) async {
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: SyncCloudPreview(
-              destination: const ['Photos', 'Phone'],
-              source: 'Documents',
-              rules: SyncRules(
-                included: [[]],
-                excluded: [
-                  ['Private'],
-                ],
-              ),
-            ),
-          ),
-        ),
-      );
-      expect(find.text('/Photos/Phone/Documents'), findsOneWidget);
-      expect(
-        find.text('1 excluded folder selections are skipped.'),
-        findsOneWidget,
-      );
-      expect(tester.takeException(), isNull);
-      await tester.pumpWidget(const SizedBox());
-    },
-  );
-
-  testWidgets(
-    'folder rule selector narrows entire source to selected subfolder',
-    (tester) async {
-      List<List<String>>? result;
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Builder(
-            builder: (context) => TextButton(
-              onPressed: () async {
-                result = await Navigator.of(context).push<List<List<String>>>(
-                  MaterialPageRoute(
-                    builder: (_) => SyncFolderRulesScreen(
-                      inclusion: true,
-                      rootName: 'Documents',
-                      initial: const [[]],
-                      included: const [[]],
-                      children: (path) async =>
-                          path.isEmpty ? ['Trips', 'Private'] : [],
-                    ),
-                  ),
-                );
-              },
-              child: const Text('Open rules'),
-            ),
-          ),
-        ),
-      );
-      await tester.tap(find.text('Open rules'));
-      await tester.pumpAndSettle();
-      await tester.tap(
-        find.descendant(
-          of: find.widgetWithText(ListTile, 'Trips'),
-          matching: find.byType(Checkbox),
-        ),
-      );
-      await tester.pumpAndSettle();
-      expect(find.widgetWithText(InputChip, 'Trips'), findsOneWidget);
-      expect(find.widgetWithText(InputChip, 'Entire source'), findsNothing);
-      await tester.tap(find.text('Apply inclusions'));
-      await tester.pumpAndSettle();
-      expect(result, [
-        ['Trips'],
-      ]);
-      expect(tester.takeException(), isNull);
-      await tester.pumpWidget(const SizedBox());
-    },
-  );
-
-  testWidgets(
-    'Android dashboard offers manual folders only and keeps advanced settings collapsed',
-    (tester) async {
-      final controller = AppController(
-        store: MemoryStore(),
-        client: cloud,
-        folderSyncController: sync,
-      )..account = account;
-      await tester.runAsync(sync.load);
-      await tester.pumpWidget(
-        MaterialApp(home: FolderSyncScreen(controller: controller)),
-      );
-      await tester.runAsync(sync.load);
-      await tester.pumpAndSettle();
-      expect(
-        find.text('Choose folders. Decide what gets uploaded.'),
-        findsOneWidget,
-      );
-      expect(find.text('Add folder'), findsOneWidget);
-      await tester.tap(find.text('Add folder'));
-      await tester.pumpAndSettle();
-      expect(find.text('Camera & pictures'), findsNothing);
-      expect(device.picks, 0);
-      expect(sync.pairs, isEmpty);
-      expect(find.text('Included subfolders'), findsOneWidget);
-      expect(find.text('Excluded folders'), findsOneWidget);
-      expect(find.text('More options'), findsOneWidget);
-      expect(find.text('Pair name'), findsNothing);
-      expect(find.byType(CheckboxListTile), findsNothing);
-      await tester.scrollUntilVisible(
-        find.text('More options'),
-        200,
-        scrollable: find.byType(Scrollable).last,
-      );
-      await tester.tap(find.text('More options'));
-      await tester.pumpAndSettle();
-      expect(find.text('Transfer direction'), findsOneWidget);
-      expect(find.text('Wi-Fi only'), findsOneWidget);
-      expect(find.text('Only while charging'), findsOneWidget);
-      await tester.tap(find.byType(DropdownButtonFormField<SyncMode>));
-      await tester.pumpAndSettle();
-      expect(find.text(SyncMode.download.label).last, findsOneWidget);
-      expect(find.text(SyncMode.merge.label).last, findsOneWidget);
-      await tester.tap(find.text(SyncMode.backup.label).last);
-      await tester.pumpAndSettle();
-      await tester.scrollUntilVisible(
-        find.text('Save backup'),
-        200,
-        scrollable: find
-            .byWidgetPredicate(
-              (widget) =>
-                  widget is Scrollable &&
-                  widget.axisDirection == AxisDirection.down,
-            )
-            .last,
-      );
-      final save = tester.widget<FilledButton>(
-        find.widgetWithText(FilledButton, 'Save backup'),
-      );
-      expect(save.onPressed, isNull);
-      expect(tester.takeException(), isNull);
-      await tester.pumpWidget(const SizedBox());
-      // The test fixture owns sync's asynchronous shutdown.
-      controller.dispose();
-      disposed = true;
     },
   );
 }

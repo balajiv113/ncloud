@@ -645,13 +645,11 @@ class SettingsScreen extends StatelessWidget {
           if (!controller.demo && (Platform.isAndroid || Platform.isIOS))
             ListTile(
               leading: const Icon(Icons.sync),
-              title: Text(
-                Platform.isAndroid ? 'Folder sync' : 'Files folder sync',
-              ),
+              title: const Text('Folder backup'),
               subtitle: Text(
                 Platform.isIOS
-                    ? 'Selected Files folders · run manually · no deletions'
-                    : 'Choose device folders · include or exclude files',
+                    ? 'Choose Photos albums'
+                    : 'Choose device folders',
               ),
               trailing: const Icon(Icons.chevron_right),
               onTap: () => Navigator.of(context).push<void>(

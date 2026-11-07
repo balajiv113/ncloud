@@ -93,27 +93,15 @@ void main() {
   final messenger =
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
 
-  BackupSchedule schedule() => BackupSchedule(
-    kind: ScheduleKind.interval,
-    created: DateTime.now().subtract(const Duration(hours: 1)),
-    minutes: 15,
-  );
+  BackupSchedule schedule() =>
+      BackupSchedule(created: DateTime(2026, 1, 1), hour: 0);
 
   Future<FolderPair> add({
     DeviceFolder source = album,
     BackupSchedule? scheduling,
-    bool charging = false,
   }) async {
     await ui.load();
-    await ui.add(
-      source.name,
-      source,
-      ['Backup'],
-      SyncMode.backup,
-      false,
-      schedule: scheduling,
-      chargingOnly: charging,
-    );
+    await ui.add(source.name, source, ['Backup'], schedule: scheduling);
     return ui.pairs.last;
   }
 
@@ -231,7 +219,7 @@ void main() {
       final pair = await add(scheduling: schedule());
       await device.put('first.HEIC', 'one');
       ui.setForeground(true);
-      await ui.checkAutomaticAlbums(force: true);
+      await ui.checkAutomaticAlbums();
       expect(ui.error, isNull);
       expect(cloud.uploads, 1);
       expect((await journal.state(pair.id))['slot'], isNotNull);
@@ -239,26 +227,19 @@ void main() {
       await ui.checkAutomaticAlbums();
       expect(cloud.uploads, 1);
       ui.setForeground(false);
-      await ui.checkAutomaticAlbums(force: true);
+      await ui.checkAutomaticAlbums();
       expect(cloud.uploads, 1);
       ui.setForeground(true);
-      await ui.checkAutomaticAlbums(force: true);
-      expect(cloud.uploads, 2);
-      await ui.add(
-        pair.name,
-        pair.folder,
-        pair.remote,
-        pair.mode,
-        false,
-        replacing: pair,
-      );
+      await ui.checkAutomaticAlbums();
+      expect(cloud.uploads, 1);
+      await ui.add(pair.name, pair.folder, pair.remote, replacing: pair);
       expect(ui.pairs.single.schedule, isNull);
       expect(ui.pairs.single.lastRun, isNotNull);
       await device.put('third.HEIC', 'three');
       ui.setForeground(false);
       ui.setForeground(true);
-      await ui.checkAutomaticAlbums(force: true);
-      expect(cloud.uploads, 2);
+      await ui.checkAutomaticAlbums();
+      expect(cloud.uploads, 1);
       await ui.run(ui.pairs.single);
       expect(cloud.uploads, 3);
     },
@@ -269,18 +250,9 @@ void main() {
     () async {
       await ui.load();
       await expectLater(
-        ui.add('No', album, ['Backup'], SyncMode.merge, false),
-        throwsFormatException,
-      );
-      await expectLater(
-        ui.add(
-          'No',
-          const DeviceFolder('grant', 'Files', 'grant'),
-          ['Backup'],
-          SyncMode.backup,
-          false,
-          schedule: schedule(),
-        ),
+        ui.add('No', const DeviceFolder('grant', 'Files', 'grant'), [
+          'Backup',
+        ], schedule: schedule()),
         throwsFormatException,
       );
       final pair = await add(
@@ -296,11 +268,11 @@ void main() {
   test(
     'one fixed background task reconciles albums sharing a parent and cancels the last removal',
     () async {
-      final first = await add(scheduling: schedule(), charging: true);
+      final first = await add(scheduling: schedule());
       expect(methods.last.method, 'scheduleAlbums');
       expect(methods.last.arguments, {
         'earliestSeconds': 900,
-        'requiresCharging': true,
+        'requiresCharging': false,
       });
       final second = await add(
         source: const DeviceFolder(
@@ -342,7 +314,7 @@ void main() {
       scheduleDenied = true;
       await expectLater(
         add(scheduling: schedule()),
-        throwsA(isA<PlatformException>()),
+        throwsA(isA<BackupScheduleFailure>()),
       );
       final saved = (await journal.pairs(syncAccount(account))).single;
       expect(saved.schedule, isNotNull);
@@ -526,15 +498,14 @@ void main() {
         MaterialApp(home: FolderSyncScreen(controller: controller)),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.byTooltip('Add sync pair'));
+      await tester.tap(find.byTooltip('Add backup'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Apple Photos album'));
+      await tester.tap(find.text('Photos album'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Trips'));
       await tester.pumpAndSettle();
-      expect(find.text('Automatic album backup'), findsOneWidget);
+      expect(find.text('Schedule'), findsOneWidget);
       expect(find.text('Transfer direction'), findsNothing);
-      expect(find.byType(DropdownButtonFormField<SyncMode>), findsNothing);
       expect(find.textContaining('individual files'), findsNothing);
       expect(device.picks, 0);
       expect(cloud.uploads, 0);

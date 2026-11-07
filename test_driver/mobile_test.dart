@@ -34,7 +34,7 @@ Future<void> main() async {
       timeout: const Duration(seconds: 45),
     );
     if (nativeResult !=
-        'Native staging, conditions and account locks verified.') {
+        'Native staging, conditions, account locks and pair storage verified.') {
       throw StateError('Unexpected native contract result: $nativeResult');
     }
     for (var attempt = 0; attempt < 2; attempt++) {

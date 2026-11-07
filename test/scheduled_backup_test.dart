@@ -5,7 +5,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ncloud/android_folder_sync_screen.dart';
+import 'package:ncloud/folder_sync_screen.dart';
 import 'package:ncloud/app_controller.dart';
 import 'package:ncloud/folder_sync.dart';
 import 'package:ncloud/headless_backup.dart';
@@ -31,7 +31,6 @@ class RecordingScheduler implements BackupScheduler {
     String revision,
     BackupSchedule schedule, {
     required bool wifiOnly,
-    required bool chargingOnly,
   }) async {
     if (fail) throw PlatformException(code: 'schedule_denied');
     jobs[pairId] = revision;
@@ -57,15 +56,8 @@ void main() {
   late TestSyncBackground background;
   final lock = InProcessSyncRunLock();
 
-  BackupSchedule schedule({ScheduleKind kind = ScheduleKind.interval}) =>
-      BackupSchedule(
-        kind: kind,
-        created: created,
-        minutes: 30,
-        hour: 10,
-        minute: 20,
-        weekday: DateTime.friday,
-      );
+  BackupSchedule schedule() =>
+      BackupSchedule(created: created, hour: 10, minute: 20);
 
   FolderSyncController controller() => FolderSyncController(
     client: cloud,
@@ -84,8 +76,6 @@ void main() {
       'Scheduled',
       const DeviceFolder('grant', 'Selected', 'folder-id'),
       ['Backup'],
-      SyncMode.backup,
-      false,
       schedule: value ?? schedule(),
       replacing: replacing,
     );
@@ -122,7 +112,7 @@ void main() {
     scheduler = RecordingScheduler();
     background = TestSyncBackground();
     ui = controller();
-    now = created.add(const Duration(hours: 3));
+    now = DateTime(2026, 1, 2, 12);
   });
   tearDown(() async {
     await ui.disconnect();
@@ -131,45 +121,30 @@ void main() {
     await root.delete(recursive: true);
   });
 
-  test('interval minimum, invalid calendar values and serialization', () {
-    for (final minutes in [0, 1, 14]) {
-      expect(
-        () => BackupSchedule(
-          kind: ScheduleKind.interval,
-          created: created,
-          minutes: minutes,
-        ),
-        throwsFormatException,
-      );
-    }
+  test('daily time validation and serialization', () {
     expect(
-      () =>
-          BackupSchedule(kind: ScheduleKind.daily, created: created, hour: 24),
+      () => BackupSchedule(created: created, hour: 24),
+      throwsFormatException,
+    );
+    expect(
+      () => BackupSchedule(created: created, minute: -1),
       throwsFormatException,
     );
     expect(
       BackupSchedule.fromJson(schedule().toJson()).toJson(),
       schedule().toJson(),
     );
-    expect(
-      schedule().dueSlot(created.add(const Duration(minutes: 29))),
-      isNull,
-    );
-    expect(schedule().dueSlot(now), 'interval:6');
-    expect(schedule().next(now), now.add(const Duration(minutes: 30)));
-    expect(schedule().handled('interval:6', 'interval:9'), isTrue);
+    expect(schedule().dueSlot(created), isNull);
+    expect(schedule().dueSlot(now), '2026-01-02');
+    expect(schedule().next(now), DateTime(2026, 1, 3, 10, 20));
   });
-
   test(
-    'daily and weekly coalesce missed days and deduplicate clock reversal',
+    'daily schedules coalesce missed days and deduplicate clock reversal',
     () {
-      final daily = schedule(kind: ScheduleKind.daily);
-      final weekly = schedule(kind: ScheduleKind.weekly);
+      final daily = schedule();
       final current = DateTime(2026, 1, 12, 12);
       expect(daily.dueSlot(current), '2026-01-12');
       expect(daily.next(current), DateTime(2026, 1, 13, 10, 20));
-      expect(weekly.dueSlot(current), '2026-01-09');
-      expect(weekly.next(current), DateTime(2026, 1, 16, 10, 20));
       expect(daily.handled('2026-01-10', '2026-01-12'), isTrue);
       expect(daily.dueSlot(created), isNull);
     },
@@ -179,19 +154,13 @@ void main() {
     'calendar day construction follows DST and has one slot per wall date',
     () {
       final daily = BackupSchedule(
-        kind: ScheduleKind.daily,
         created: DateTime(2026, 1, 1),
         hour: 2,
         minute: 30,
       );
       final before = DateTime(2026, 3, 7, 23);
       expect(daily.next(before), DateTime(2026, 3, 8, 2, 30));
-      final fall = BackupSchedule(
-        kind: ScheduleKind.daily,
-        created: created,
-        hour: 1,
-        minute: 30,
-      );
+      final fall = BackupSchedule(created: created, hour: 1, minute: 30);
       final first = DateTime(2026, 11, 1, 1, 30);
       final slot = fall.dueSlot(first)!;
       expect(
@@ -208,17 +177,14 @@ void main() {
       await device.put('photo.jpg', 'original');
       await ui.run(pair);
       final receipt = await journal.receipt(pair.id, 'local', ['photo.jpg']);
-      final updated = await add(
-        value: schedule(kind: ScheduleKind.daily),
-        replacing: pair,
-      );
+      final updated = await add(value: schedule(), replacing: pair);
       expect(updated.id, pair.id);
       expect(updated.revision, isNot(pair.revision));
       expect(scheduler.jobs[updated.id], updated.revision);
       expect(await journal.receipt(pair.id, 'local', ['photo.jpg']), receipt);
       await journal.close();
       final restored = await journal.pair(pair.id);
-      expect(restored!.schedule!.kind, ScheduleKind.daily);
+      expect(restored!.schedule!.hour, 10);
       expect(restored.revision, updated.revision);
       expect(
         jsonEncode(restored.toJson()),
@@ -231,8 +197,8 @@ void main() {
     'registration failure is surfaced, persists intent and can reconcile',
     () async {
       scheduler.fail = true;
-      await expectLater(add(), throwsA(isA<PlatformException>()));
-      expect(ui.error, contains('registration failed'));
+      await expectLater(add(), throwsA(isA<BackupScheduleFailure>()));
+      expect(ui.error, contains('settings saved, but scheduling failed'));
       final saved = (await journal.pairs(syncAccount(account))).single;
       expect(saved.schedule, isNotNull);
       scheduler.fail = false;
@@ -274,14 +240,14 @@ void main() {
       expect(device.picks, 0);
       expect(background.starts, 0);
       expect((await journal.state(pair.id))['status'], 'success');
-      expect((await journal.state(pair.id))['slot'], 'interval:6');
+      expect((await journal.state(pair.id))['slot'], '2026-01-02');
       expect((await journal.pair(pair.id))!.lastRun, isNotNull);
       await runner().run(pair.id, pair.revision);
       expect(cloud.uploads, 1);
-      now = now.add(const Duration(hours: 6));
+      now = now.add(const Duration(days: 1));
       await runner().run(pair.id, pair.revision);
       expect(cloud.uploads, 1);
-      expect((await journal.state(pair.id))['slot'], 'interval:18');
+      expect((await journal.state(pair.id))['slot'], '2026-01-03');
     },
   );
 
@@ -310,7 +276,7 @@ void main() {
   );
 
   test(
-    'unmetered non-Wi-Fi and charging errors persist and retry without consuming slot',
+    'unmetered non-Wi-Fi errors persist and retry without consuming slot',
     () async {
       final pair = await add();
       await device.put('photo.jpg', 'original');
@@ -491,7 +457,6 @@ void main() {
           'rev',
           schedule(),
           wifiOnly: true,
-          chargingOnly: false,
         ),
         throwsUnsupportedError,
       );
@@ -500,8 +465,6 @@ void main() {
         'Manual',
         const DeviceFolder('grant', 'Selected', 'folder-id'),
         ['Backup'],
-        SyncMode.backup,
-        false,
       );
       expect(ui.pairs.single.schedule, isNull);
       expect(scheduler.jobs, isEmpty);
@@ -553,33 +516,29 @@ void main() {
     },
   );
 
-  testWidgets(
-    'schedule editor exposes interval, daily and weekly controls and Android warning',
-    (tester) async {
-      await tester.runAsync(ui.load);
-      final app = AppController(
-        store: MemoryStore(),
-        client: cloud,
-        folderSyncController: ui,
-      )..account = account;
-      await tester.pumpWidget(
-        MaterialApp(home: AndroidSyncSetup(controller: app)),
-      );
-      expect(find.text('Scheduled backup'), findsOneWidget);
-      await tester.tap(find.byType(DropdownButtonFormField<String>));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('interval').last);
-      await tester.pumpAndSettle();
-      expect(find.text('Interval in minutes (minimum 15)'), findsOneWidget);
-      expect(find.textContaining('Android best effort'), findsOneWidget);
-      await tester.ensureVisible(find.byType(DropdownButtonFormField<String>));
-      await tester.tap(find.byType(DropdownButtonFormField<String>));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('weekly').last);
-      await tester.pumpAndSettle();
-      expect(find.text('Local device time'), findsOneWidget);
-      expect(find.text('Weekday'), findsOneWidget);
-      await tester.pumpWidget(const SizedBox());
-    },
-  );
+  testWidgets('schedule editor offers manual and daily time only', (
+    tester,
+  ) async {
+    await tester.runAsync(ui.load);
+    final app = AppController(
+      store: MemoryStore(),
+      client: cloud,
+      folderSyncController: ui,
+    )..account = account;
+    await tester.pumpWidget(
+      MaterialApp(home: BackupSetupScreen(controller: app)),
+    );
+    expect(find.text('Schedule'), findsOneWidget);
+    expect(find.text('Time'), findsNothing);
+    await tester.tap(find.byType(DropdownButtonFormField<bool>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Daily').last);
+    await tester.pumpAndSettle();
+    expect(find.text('Time'), findsOneWidget);
+    expect(find.text('Best effort'), findsOneWidget);
+    expect(find.text('Only while charging'), findsNothing);
+    expect(find.text('Continue in background'), findsNothing);
+    expect(find.text('Cron'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  });
 }
