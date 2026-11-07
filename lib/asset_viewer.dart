@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 
-import 'app_controller.dart';
+import 'app/app_controller.dart';
 import 'library_actions.dart';
 import 'media_tile.dart';
 import 'models.dart';

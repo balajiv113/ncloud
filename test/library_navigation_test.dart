@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ncloud/app_controller.dart';
+import 'package:ncloud/app/app_controller.dart';
 import 'package:ncloud/library_screen.dart';
 import 'package:ncloud/providers/nextcloud/nextcloud_client.dart';
 

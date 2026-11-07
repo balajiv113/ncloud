@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import 'app_controller.dart';
+import 'app/app_controller.dart';
 import 'media_tile.dart';
 
 /// Library preparation for new and previously unprepared saved sessions.

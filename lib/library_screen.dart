@@ -5,7 +5,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import 'app_controller.dart';
+import 'app/app_controller.dart';
 import 'change_monitor.dart';
 import 'asset_viewer.dart';
 import 'discovery_models.dart';

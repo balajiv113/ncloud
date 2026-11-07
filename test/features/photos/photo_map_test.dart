@@ -6,7 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:latlong2/latlong.dart';
-import 'package:ncloud/app_controller.dart';
+import 'package:ncloud/app/app_controller.dart';
 import 'package:ncloud/discovery_models.dart';
 import 'package:ncloud/library_screen.dart';
 import 'package:ncloud/providers/nextcloud/nextcloud_client.dart';

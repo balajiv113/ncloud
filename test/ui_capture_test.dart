@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ncloud/app_controller.dart';
+import 'package:ncloud/app/app_controller.dart';
 import 'package:ncloud/main.dart';
 import 'package:ncloud/providers/nextcloud/nextcloud_client.dart';
 

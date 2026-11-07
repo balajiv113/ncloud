@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import 'app_controller.dart';
+import 'app/app_controller.dart';
 import 'core/storage/local_cache.dart';
 import 'screens.dart';
 import 'library_screen.dart';

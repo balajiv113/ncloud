@@ -6,20 +6,20 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 
-import 'demo.dart';
-import 'diagnostics.dart';
-import 'discovery_models.dart';
-import 'file_store.dart';
-import 'features/backup/folder_sync.dart';
-import 'core/storage/local_cache.dart';
-import 'models.dart';
-import 'media_listing.dart';
-import 'core/cloud/cloud_backend.dart';
-import 'features/backup/workmanager_backup.dart';
-import 'features/backup/sync_schedule.dart';
-import 'features/account/session_store.dart';
-import 'features/backup/ios_album_backup.dart';
-export 'features/account/session_store.dart';
+import '../demo.dart';
+import '../diagnostics.dart';
+import '../discovery_models.dart';
+import '../file_store.dart';
+import '../features/backup/folder_sync.dart';
+import '../core/storage/local_cache.dart';
+import '../models.dart';
+import '../media_listing.dart';
+import '../core/cloud/cloud_backend.dart';
+import '../features/backup/workmanager_backup.dart';
+import '../features/backup/sync_schedule.dart';
+import '../features/account/session_store.dart';
+import '../features/backup/ios_album_backup.dart';
+export '../features/account/session_store.dart';
 
 /// A fetched page; [scanned] counts server results before filtering.
 typedef _Page = ({List<CloudFile> files, List<int> days, int scanned});

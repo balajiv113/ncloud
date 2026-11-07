@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ncloud/features/backup/folder_sync_screen.dart';
-import 'package:ncloud/app_controller.dart';
+import 'package:ncloud/app/app_controller.dart';
 import 'package:ncloud/features/backup/folder_sync.dart';
 import 'package:ncloud/features/backup/headless_backup.dart';
 import 'package:ncloud/models.dart';

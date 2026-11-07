@@ -3,7 +3,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 
-import 'app_controller.dart';
+import 'app/app_controller.dart';
 import 'models.dart';
 
 class MediaTile extends StatefulWidget {
