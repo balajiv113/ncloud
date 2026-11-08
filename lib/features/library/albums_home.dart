@@ -1,30 +1,18 @@
-import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 
 import '../../app/app_controller.dart';
 import '../../core/ui/messages.dart';
 import '../../discovery_models.dart';
-import '../../models.dart';
 import '../../shared/ui/media_tile.dart';
 import '../photos/people_bubble.dart';
+import 'domain/album_entries.dart';
 import 'domain/library_view.dart';
 
-/// One album as shown on a card: its title, subtitle, cover and open action.
-typedef AlbumCard = ({
-  String name,
-  String subtitle,
-  String count,
-  CloudFile? cover,
-  VoidCallback open,
-});
-
-/// How the album home asks the screen to navigate; the screen also resets its
-/// own view state and scroll position.
+/// How the Albums destination asks the screen to navigate; the screen also
+/// resets its own view state and scroll position.
 class AlbumHomeActions {
   const AlbumHomeActions({
-    required this.openSmart,
-    required this.openNative,
-    required this.openShared,
+    required this.openAlbum,
     required this.openPerson,
     required this.expandAlbums,
     required this.expandPeople,
@@ -32,18 +20,16 @@ class AlbumHomeActions {
     required this.openCollection,
   });
 
-  final void Function(List<String> path) openSmart;
-  final void Function(CloudAlbum album) openNative;
-  final void Function(List<String> path) openShared;
+  final void Function(AlbumEntry album) openAlbum;
   final void Function(RecognizedPerson person) openPerson;
-  final void Function(bool native) expandAlbums;
+  final VoidCallback expandAlbums;
   final VoidCallback expandPeople;
   final VoidCallback openMap;
   final void Function(int tab) openCollection;
 }
 
-/// The Albums destination: pinned collections, Smart albums, People, Map,
-/// shared folders and cloud albums, or one of those sections expanded.
+/// The Albums destination: pinned shortcuts, People and every album in one
+/// list, or one of those two sections expanded.
 class AlbumHomeSlivers extends StatelessWidget {
   const AlbumHomeSlivers({
     super.key,
@@ -51,7 +37,6 @@ class AlbumHomeSlivers extends StatelessWidget {
     required this.query,
     required this.sort,
     required this.expanded,
-    required this.showNative,
     required this.showPeople,
     required this.actions,
   });
@@ -60,7 +45,6 @@ class AlbumHomeSlivers extends StatelessWidget {
   final String query;
   final LibrarySort sort;
   final bool expanded;
-  final bool showNative;
   final bool showPeople;
   final AlbumHomeActions actions;
 
@@ -70,40 +54,17 @@ class AlbumHomeSlivers extends StatelessWidget {
       context: context,
       c: controller,
       query: query,
-      sort: sort,
       expanded: expanded,
-      showNative: showNative,
-      showPeople: showPeople,
       actions: actions,
-    ).home(),
-  );
-}
-
-/// Folders other people shared with this account, as album cards.
-class SharedAlbumSlivers extends StatelessWidget {
-  const SharedAlbumSlivers({
-    super.key,
-    required this.controller,
-    required this.query,
-    required this.actions,
-  });
-
-  final AppController controller;
-  final String query;
-  final AlbumHomeActions actions;
-
-  @override
-  Widget build(BuildContext context) => SliverMainAxisGroup(
-    slivers: _AlbumSections(
-      context: context,
-      c: controller,
-      query: query,
-      sort: LibrarySort.newest,
-      expanded: false,
-      showNative: false,
-      showPeople: false,
-      actions: actions,
-    ).shared(),
+      albums: albumEntries(
+        smart: controller.smartAlbums,
+        shared: controller.sharedAlbums,
+        server: controller.nativeAlbums,
+        root: controller.photoRoot,
+        query: query,
+        sort: sort,
+      ),
+    ).home(showPeople: showPeople),
   );
 }
 
@@ -112,21 +73,23 @@ class _AlbumSections {
     required this.context,
     required this.c,
     required this.query,
-    required this.sort,
     required this.expanded,
-    required this.showNative,
-    required this.showPeople,
     required this.actions,
+    required this.albums,
   });
 
   final BuildContext context;
   final AppController c;
   final String query;
-  final LibrarySort sort;
   final bool expanded;
-  final bool showNative;
-  final bool showPeople;
   final AlbumHomeActions actions;
+  final List<AlbumEntry> albums;
+
+  static IconData _icon(AlbumKind kind) => switch (kind) {
+    AlbumKind.smart => Icons.auto_awesome_outlined,
+    AlbumKind.shared => Icons.folder_shared_outlined,
+    AlbumKind.server => Icons.photo_album_outlined,
+  };
 
   List<Widget> _peopleSlivers({bool expanded = false}) {
     final people = c.people
@@ -245,56 +208,94 @@ class _AlbumSections {
   Widget _pinnedCollections() => SliverToBoxAdapter(
     child: SizedBox(
       height: 100 + MediaQuery.textScalerOf(context).scale(12) * 1.4,
-      child: ListView.separated(
+      child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16),
-        scrollDirection: Axis.horizontal,
-        itemCount: 3,
-        separatorBuilder: (_, _) => const SizedBox(width: 8),
-        itemBuilder: (context, index) {
-          final (label, icon, tab) = [
-            ('Favorites', Icons.favorite_border, 2),
-            ('Offline', Icons.offline_bolt_outlined, 6),
-            ('Bin', Icons.restore_from_trash_outlined, 3),
-          ][index];
-          return SizedBox(
-            width: 84,
-            child: Tooltip(
-              message: tab == 3 ? 'Recently deleted' : label,
-              child: Material(
-                color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                borderRadius: BorderRadius.circular(20),
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(20),
-                  onTap: () => actions.openCollection(tab),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(icon, size: 28),
-                      const SizedBox(height: 16),
-                      Text(label, style: const TextStyle(fontSize: 12)),
-                    ],
+        child: Row(
+          children: [
+            for (final (index, (label, tooltip, icon, open)) in [
+              (
+                'Favorites',
+                'Favorites',
+                Icons.favorite_border,
+                () => actions.openCollection(2),
+              ),
+              (
+                'Offline',
+                'Offline',
+                Icons.offline_bolt_outlined,
+                () => actions.openCollection(6),
+              ),
+              (
+                'Bin',
+                'Recently deleted',
+                Icons.restore_from_trash_outlined,
+                () => actions.openCollection(3),
+              ),
+              ('Map', 'Photo map', Icons.map_outlined, actions.openMap),
+            ].indexed) ...[
+              if (index > 0) const SizedBox(width: 8),
+              Expanded(
+                child: Tooltip(
+                  message: tooltip,
+                  child: Material(
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(20),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(20),
+                      onTap: open,
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(icon, size: 28),
+                          const SizedBox(height: 16),
+                          Text(label, style: const TextStyle(fontSize: 12)),
+                        ],
+                      ),
+                    ),
                   ),
                 ),
               ),
-            ),
-          );
-        },
+            ],
+          ],
+        ),
       ),
     ),
   );
 
-  Widget _albumArtwork(AlbumCard album) => album.cover == null
+  Widget _albumArtwork(AlbumEntry album) => album.cover == null
       ? ColoredBox(
           color: Theme.of(context).colorScheme.primaryContainer,
-          child: const Center(
-            child: Icon(Icons.photo_album_outlined, size: 38),
-          ),
+          child: Center(child: Icon(_icon(album.kind), size: 38)),
         )
       : ExcludeSemantics(
           child: MediaTile(file: album.cover!, controller: c),
         );
 
-  Widget _albumPreview(List<AlbumCard> albums) => SliverToBoxAdapter(
+  /// Small icon on a cover that tells Smart and Shared albums apart; server
+  /// albums are the ordinary case and carry none.
+  Widget _albumBadge(AlbumEntry album) {
+    if (album.kind == AlbumKind.server) return const SizedBox.shrink();
+    return Positioned(
+      left: 8,
+      top: 8,
+      child: ExcludeSemantics(
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: Colors.black.withValues(alpha: .55),
+            shape: BoxShape.circle,
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(5),
+            child: Icon(_icon(album.kind), size: 14, color: Colors.white),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _albumPreview(List<AlbumEntry> albums) => SliverToBoxAdapter(
     child: SizedBox(
       height: 180 + (MediaQuery.textScalerOf(context).scale(13) - 13) * 2.8,
       child: ListView.separated(
@@ -308,7 +309,7 @@ class _AlbumSections {
             width: 144,
             child: Semantics(
               button: true,
-              label: album.name,
+              label: [album.name, album.kindLabel].nonNulls.join(', '),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(20),
                 child: Stack(
@@ -341,9 +342,10 @@ class _AlbumSections {
                         ),
                       ),
                     ),
+                    _albumBadge(album),
                     Material(
                       color: Colors.transparent,
-                      child: InkWell(onTap: album.open),
+                      child: InkWell(onTap: () => actions.openAlbum(album)),
                     ),
                   ],
                 ),
@@ -355,215 +357,7 @@ class _AlbumSections {
     ),
   );
 
-  List<Widget> home() {
-    if (expanded && showPeople) {
-      return _peopleSlivers(expanded: true);
-    }
-    final root = c.photoRoot;
-    final smartAlbums = c.smartAlbums;
-    final albums = filterSmartAlbums(smartAlbums, query: query, sort: sort);
-    final native = c.nativeAlbums
-        .where(
-          (a) =>
-              query.isEmpty ||
-              a.name.toLowerCase().contains(query.toLowerCase()),
-        )
-        .toList();
-    final sharedCards = _sharedCards();
-    final smartCards = albums
-        .map(
-          (a) => (
-            name: listEquals(a.path, root) ? 'Photos at root' : a.name,
-            subtitle: a.path.length <= root.length + 1
-                ? ''
-                : a.path
-                      .skip(root.length)
-                      .take(a.path.length - root.length - 1)
-                      .join(' / '),
-            count: '',
-            cover: a.files.first,
-            open: () => actions.openSmart(a.path),
-          ),
-        )
-        .toList();
-    final nativeCards = native
-        .map(
-          (a) => (
-            name: a.name,
-            subtitle: a.shared ? 'Shared album' : 'Cloud album',
-            count: '${a.count} items',
-            cover: a.cover,
-            open: () => actions.openNative(a),
-          ),
-        )
-        .toList();
-    if (!expanded) {
-      return [
-        _albumSectionHeading('Pinned'),
-        _pinnedCollections(),
-        _albumSectionHeading(
-          'Smart albums',
-          expand: () => actions.expandAlbums(false),
-        ),
-        SliverToBoxAdapter(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(18, 0, 18, 8),
-            child: SizedBox(
-              height: 2,
-              child: c.discoveringAlbums
-                  ? const LinearProgressIndicator(minHeight: 2)
-                  : null,
-            ),
-          ),
-        ),
-        if (smartCards.isNotEmpty)
-          _albumPreview(smartCards)
-        else
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
-              child: Text(
-                query.isNotEmpty
-                    ? 'No matching Smart albums.'
-                    : c.discoveringAlbums
-                    ? 'Discovering your photo folders...'
-                    : 'No photo albums yet. Choose a photo source in View options.',
-              ),
-            ),
-          ),
-        ..._peopleSlivers(),
-        SliverToBoxAdapter(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            child: Card(
-              child: ListTile(
-                leading: const Icon(Icons.map_outlined),
-                title: const Text('Map'),
-                subtitle: const Text('All photos with a saved location'),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: actions.openMap,
-              ),
-            ),
-          ),
-        ),
-        _albumSectionHeading(
-          'Shared with you',
-          expand: () => actions.openCollection(5),
-        ),
-        if (sharedCards.isNotEmpty)
-          _albumPreview(sharedCards)
-        else
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
-              child: Text(
-                c.loadingSharedAlbums
-                    ? 'Loading folders shared with you...'
-                    : 'Incoming photo folders appear here.',
-              ),
-            ),
-          ),
-        if (c.sharedAlbumError case final error?)
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: MessageCard(
-                message: error,
-                isError: true,
-                onRetry: c.load,
-              ),
-            ),
-          ),
-        _albumSectionHeading(
-          'Cloud albums',
-          expand: () => actions.expandAlbums(true),
-        ),
-        if (nativeCards.isNotEmpty)
-          _albumPreview(nativeCards)
-        else if (c.nativeAlbumError == null)
-          const SliverToBoxAdapter(
-            child: Padding(
-              padding: EdgeInsets.symmetric(horizontal: 18, vertical: 16),
-              child: Text('Albums from your photo service appear here.'),
-            ),
-          ),
-        if (c.nativeAlbumError case final error?)
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: MessageCard(
-                message: error,
-                isError: true,
-                onRetry: c.load,
-              ),
-            ),
-          ),
-      ];
-    }
-    return [
-      SliverToBoxAdapter(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
-          child: Row(
-            children: [
-              Text(
-                '${showNative ? native.length : albums.length} albums',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-              const SizedBox(width: 8),
-              if (c.discoveringAlbums && !showNative)
-                const SizedBox(
-                  width: 14,
-                  height: 14,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                ),
-            ],
-          ),
-        ),
-      ),
-      if (showNative) ...[
-        if (native.isEmpty && c.nativeAlbumError == null)
-          const SliverToBoxAdapter(
-            child: Padding(
-              padding: EdgeInsets.all(24),
-              child: Text(
-                'No cloud albums here yet. Albums from your photo service appear here with their original membership.',
-              ),
-            ),
-          ),
-        _albumCards(nativeCards),
-      ],
-      if (showNative && c.nativeAlbumError != null)
-        SliverToBoxAdapter(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: MessageCard(
-              message: c.nativeAlbumError!,
-              isError: true,
-              onRetry: c.load,
-            ),
-          ),
-        ),
-      if (!showNative) ...[
-        if (albums.isEmpty)
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.all(24),
-              child: Text(
-                query.isNotEmpty
-                    ? 'No matching Smart albums.'
-                    : c.discoveringAlbums
-                    ? 'Discovering your photo folders...'
-                    : 'No photo albums yet. Choose a photo source in View options.',
-              ),
-            ),
-          ),
-        _albumCards(smartCards),
-      ],
-    ];
-  }
-
-  Widget _albumCards(List<AlbumCard> albums) => SliverPadding(
+  Widget _albumCards(List<AlbumEntry> albums) => SliverPadding(
     padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
     sliver: SliverLayoutBuilder(
       builder: (context, constraints) {
@@ -583,10 +377,14 @@ class _AlbumSections {
             final album = albums[index];
             return Semantics(
               button: true,
-              label: '${album.name}, ${album.count}',
+              label: [
+                album.name,
+                album.kindLabel,
+                album.count,
+              ].nonNulls.where((part) => part.isNotEmpty).join(', '),
               child: InkWell(
                 borderRadius: BorderRadius.circular(14),
-                onTap: album.open,
+                onTap: () => actions.openAlbum(album),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -595,7 +393,10 @@ class _AlbumSections {
                       width: width,
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(14),
-                        child: _albumArtwork(album),
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [_albumArtwork(album), _albumBadge(album)],
+                        ),
                       ),
                     ),
                     const SizedBox(height: 8),
@@ -631,45 +432,82 @@ class _AlbumSections {
     ),
   );
 
-  List<AlbumCard> _sharedCards() => c.sharedAlbums
-      .where(
-        (a) =>
-            query.isEmpty || a.name.toLowerCase().contains(query.toLowerCase()),
-      )
-      .map(
-        (a) => (
-          name: a.name,
-          subtitle: 'Shared with you',
-          count: '',
-          cover: a.files.first,
-          open: () => actions.openShared(a.path),
-        ),
-      )
-      .toList();
+  Widget _errorCard(String message) => SliverToBoxAdapter(
+    child: Padding(
+      padding: const EdgeInsets.all(16),
+      child: MessageCard(message: message, isError: true, onRetry: c.load),
+    ),
+  );
 
-  List<Widget> shared() {
-    final albums = _sharedCards();
-    return [
-      SliverToBoxAdapter(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(18, 8, 18, 18),
-          child: Text(
-            c.loading && albums.isEmpty
-                ? 'Loading folders shared with you...'
-                : 'Folders others shared with you. Your outgoing shares stay in Drive.',
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-        ),
-      ),
-      if (albums.isEmpty && !c.loading && c.sharedAlbumError == null)
-        const SliverToBoxAdapter(
+  String get _emptyText => query.isNotEmpty
+      ? 'No matching albums.'
+      : c.discoveringAlbums
+      ? 'Discovering your photo folders...'
+      : c.loadingSharedAlbums
+      ? 'Loading albums...'
+      : 'No albums yet. Choose a photo source in View options.';
+
+  List<Widget> home({required bool showPeople}) {
+    if (expanded && showPeople) return _peopleSlivers(expanded: true);
+    final errors = [?c.sharedAlbumError, ?c.nativeAlbumError];
+    if (!expanded) {
+      return [
+        _albumSectionHeading('Pinned'),
+        _pinnedCollections(),
+        _albumSectionHeading('Albums', expand: actions.expandAlbums),
+        SliverToBoxAdapter(
           child: Padding(
-            padding: EdgeInsets.all(24),
-            child: Text(
-              'No shared photo albums here yet. Incoming folders containing photos or videos appear here.',
+            padding: const EdgeInsets.fromLTRB(18, 0, 18, 8),
+            child: SizedBox(
+              height: 2,
+              child: c.discoveringAlbums
+                  ? const LinearProgressIndicator(minHeight: 2)
+                  : null,
             ),
           ),
         ),
+        if (albums.isNotEmpty)
+          _albumPreview(albums)
+        else
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+              child: Text(_emptyText),
+            ),
+          ),
+        for (final error in errors) _errorCard(error),
+        ..._peopleSlivers(),
+      ];
+    }
+    return [
+      SliverToBoxAdapter(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+          child: Row(
+            children: [
+              Text(
+                '${albums.length} albums',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              const SizedBox(width: 8),
+              if (c.discoveringAlbums)
+                const SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+            ],
+          ),
+        ),
+      ),
+      if (albums.isEmpty)
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Text(_emptyText),
+          ),
+        ),
+      for (final error in errors) _errorCard(error),
       _albumCards(albums),
     ];
   }

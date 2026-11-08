@@ -207,7 +207,7 @@ void main() {
     }
     await tester.tap(find.byTooltip('Albums'));
     await tester.pumpAndSettle();
-    expect(find.text('Smart albums'), findsOneWidget);
+    expect(find.byKey(const ValueKey('View all Albums')), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -446,7 +446,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('Albums'));
     await tester.pumpAndSettle();
-    expect(find.text('Smart albums'), findsOneWidget);
+    expect(find.byKey(const ValueKey('View all Albums')), findsOneWidget);
     expect(find.text('Empty folder'), findsNothing);
     expect(find.text('Japan'), findsNothing);
     expect(find.text('Travel'), findsNothing);

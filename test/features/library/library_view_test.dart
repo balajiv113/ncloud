@@ -100,28 +100,6 @@ void main() {
     expect(names(view(nested, subfolder: ['Photos', 'Trip'])), ['in.jpg']);
   });
 
-  test('Smart albums filter by name or folder and sort by newest file', () {
-    SmartAlbum album(List<String> path, DateTime modified) => SmartAlbum(
-      path: path,
-      files: [file('c.jpg', modified: modified, parent: path)],
-    );
-    final albums = [
-      album(['Photos', 'Alps'], DateTime(2020)),
-      album(['Photos', 'Beach'], DateTime(2024)),
-      album(['Photos', 'Cabin'], DateTime(2022)),
-    ];
-    List<String> list(String query, LibrarySort sort) => [
-      for (final a in filterSmartAlbums(albums, query: query, sort: sort))
-        a.name,
-    ];
-    expect(list('', LibrarySort.newest), ['Beach', 'Cabin', 'Alps']);
-    expect(list('', LibrarySort.oldest), ['Alps', 'Cabin', 'Beach']);
-    expect(list('', LibrarySort.name), ['Alps', 'Beach', 'Cabin']);
-    expect(list('', LibrarySort.size), ['Alps', 'Beach', 'Cabin']);
-    expect(list('photos/ca', LibrarySort.name), isEmpty);
-    expect(list('cab', LibrarySort.name), ['Cabin']);
-  });
-
   test('sub-folder chips list each child that holds media, once', () {
     final items = [
       file('a.jpg', parent: ['Photos', 'Trip', 'Day1']),

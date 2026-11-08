@@ -405,7 +405,7 @@ void main() {
   );
 
   testWidgets(
-    'first folders with media become Smart albums and native albums remain separate',
+    'first folders with media become Smart albums listed with server albums',
     (tester) async {
       final c = AppController(store: MemoryStore(), client: NextcloudClient());
       await tester.pumpWidget(NcloudApp(controller: c));
@@ -425,34 +425,24 @@ void main() {
       expect(find.widgetWithText(ChoiceChip, 'Kyoto'), findsNothing);
       expect(find.text('Empty folder'), findsNothing);
       expect(c.nativeAlbums.single.name, 'Best days');
-      await tester.scrollUntilVisible(
-        find.text('Shared with you'),
-        150,
-        scrollable: find.byType(Scrollable).first,
-      );
-      expect(find.text('Shared with you'), findsOneWidget);
-      await tester.scrollUntilVisible(
-        find.byKey(const ValueKey('View all Cloud albums')),
-        200,
-        scrollable: find.byType(Scrollable).first,
-      );
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('View all Cloud albums')));
-      await tester.pumpAndSettle();
+      expect(find.text('Map'), findsOneWidget);
+      expect(find.text('All photos with a saved location'), findsNothing);
+      expect(find.text('Shared with you'), findsNothing);
+      expect(find.text('Cloud albums'), findsNothing);
+      expect(find.text('Smart albums'), findsNothing);
       expect(find.text('Best days'), findsOneWidget);
-      expect(find.text('Kyoto'), findsNothing);
+      expect(find.byIcon(Icons.auto_awesome_outlined), findsWidgets);
       await tester.tap(find.text('Best days'));
       await tester.pumpAndSettle();
       expect(c.items, hasLength(3));
       await tester.tap(find.byTooltip('Back'));
       await tester.pumpAndSettle();
       expect(find.text('Best days'), findsOneWidget);
-      expect(find.text('Kyoto'), findsNothing);
-      await tester.tap(find.byTooltip('Back'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('View all Smart albums')));
+      expect(find.text('Kyoto'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('View all Albums')));
       await tester.pumpAndSettle();
       expect(find.text('Dolomites'), findsOneWidget);
+      expect(find.text('Best days'), findsOneWidget);
       expect(
         c.smartAlbums.map((a) => a.name),
         unorderedEquals(['Kyoto', 'Dolomites', 'Coast & country']),
@@ -466,38 +456,37 @@ void main() {
     },
   );
 
-  testWidgets(
-    'Albums sections expand independently and pinned shortcuts open directly',
-    (tester) async {
-      tester.view.physicalSize = const Size(412, 915);
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.resetPhysicalSize);
-      addTearDown(tester.view.resetDevicePixelRatio);
-      final c = AppController(store: MemoryStore(), client: NextcloudClient());
-      await tester.pumpWidget(NcloudApp(controller: c));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Try demo'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byTooltip('Albums'));
-      await tester.pumpAndSettle();
-      expect(tester.getTopLeft(find.text('Kyoto')).dy, lessThan(550));
-      expect(find.text('Pinned'), findsOneWidget);
-      expect(find.byType(SliverGrid), findsNothing);
-      await tester.tap(find.byKey(const ValueKey('View all Smart albums')));
-      await tester.pumpAndSettle();
-      expect(find.byType(SliverGrid), findsOneWidget);
-      expect(find.text('Best days'), findsNothing);
-      expect(find.text('Pinned'), findsNothing);
-      await tester.tap(find.byTooltip('Back'));
-      await tester.pumpAndSettle();
-      expect(find.text('Pinned'), findsOneWidget);
-      await tester.tap(find.text('Favorites'));
-      await tester.pumpAndSettle();
-      expect(c.tab, 2);
-      expect(c.items.every((f) => f.favorite), isTrue);
-      expect(tester.takeException(), isNull);
-    },
-  );
+  testWidgets('Albums expand to one grid and pinned shortcuts open directly', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(412, 915);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final c = AppController(store: MemoryStore(), client: NextcloudClient());
+    await tester.pumpWidget(NcloudApp(controller: c));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Try demo'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Albums'));
+    await tester.pumpAndSettle();
+    expect(tester.getTopLeft(find.text('Kyoto')).dy, lessThan(550));
+    expect(find.text('Pinned'), findsOneWidget);
+    expect(find.byType(SliverGrid), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('View all Albums')));
+    await tester.pumpAndSettle();
+    expect(find.byType(SliverGrid), findsOneWidget);
+    expect(find.text('Best days'), findsOneWidget);
+    expect(find.text('Pinned'), findsNothing);
+    await tester.tap(find.byTooltip('Back'));
+    await tester.pumpAndSettle();
+    expect(find.text('Pinned'), findsOneWidget);
+    await tester.tap(find.text('Favorites'));
+    await tester.pumpAndSettle();
+    expect(c.tab, 2);
+    expect(c.items.every((f) => f.favorite), isTrue);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('timeline is content-first and view controls stay on demand', (
     tester,
