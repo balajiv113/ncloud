@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:ncloud/features/library/domain/browse_target.dart';
 import 'package:ncloud/app/app_controller.dart';
 import 'package:ncloud/core/cloud/cloud_backend.dart';
 import 'package:ncloud/core/storage/file_store.dart';
@@ -818,7 +819,7 @@ void main() {
       await tester.runAsync(() async {
         await controller.saveOffline(original);
         await controller.clearCache();
-        await controller.selectTab(6);
+        await controller.select(Destination.offline);
       });
       expect(controller.items.single.key, photo().key);
       expect(networkCalls, 1);

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:ncloud/features/library/domain/browse_target.dart';
 import 'package:ncloud/app/app_controller.dart';
 import 'package:ncloud/core/storage/local_cache.dart';
 import 'package:ncloud/features/library/domain/album_members.dart';
@@ -79,7 +80,7 @@ void main() {
   test(
     'timeline and favorites fetch only one page until scrolling requests another',
     () async {
-      for (final tab in [0, 2]) {
+      for (final destination in [Destination.timeline, Destination.favorites]) {
         final offsets = <int>[];
         final c =
             AppController(
@@ -111,12 +112,12 @@ void main() {
             sawFirstPage = true;
           }
         });
-        await c.selectTab(tab);
+        await c.select(destination);
         expect(offsets, [0]);
         expect(c.hasMore, isTrue);
         await c.loadNextPage();
         await c.loadNextPage();
-        expect(offsets, [0, 200, 400], reason: 'tab $tab');
+        expect(offsets, [0, 200, 400], reason: destination.name);
         expect(c.items, hasLength(401));
         expect(sawFirstPage, isTrue);
         expect(c.hasMore, isFalse);
@@ -157,10 +158,10 @@ void main() {
       while (!startedSecondPage) {
         await Future<void>.delayed(Duration.zero);
       }
-      await c.selectTab(1);
+      await c.select(Destination.drive);
       pending.complete(http.Response(page(200, 1), 207));
       await timeline;
-      expect(c.tab, 1);
+      expect(c.destination, Destination.drive);
       expect(c.items, isEmpty);
       expect(c.error, isNull);
       expect(c.loadingMore, isFalse);
@@ -483,7 +484,7 @@ void main() {
     expect(find.text('Pinned'), findsOneWidget);
     await tester.tap(find.text('Favorites'));
     await tester.pumpAndSettle();
-    expect(c.tab, 2);
+    expect(c.destination, Destination.favorites);
     expect(c.items.every((f) => f.favorite), isTrue);
     expect(tester.takeException(), isNull);
   });

@@ -21,6 +21,7 @@ import '../features/library/domain/original_transfers.dart';
 import '../features/library/domain/share_session.dart';
 import '../features/photos/photo_map_session.dart';
 import '../features/library/domain/preview_batcher.dart' show PreviewCancelled;
+import '../features/library/domain/browse_target.dart';
 import '../features/library/domain/cached_resource.dart';
 import '../features/library/domain/thumbnail_repository.dart';
 import '../core/cloud/cloud_backend.dart';
@@ -128,25 +129,16 @@ class AppController extends ChangeNotifier {
   int _catalogueVersion = 0;
   Future<void>? _catalogueTask;
   Account? _catalogueSession;
-  bool get albumHome =>
-      tab == 4 &&
-      !smartAlbumOpen &&
-      activeCloudAlbum == null &&
-      activePerson == null &&
-      activeMapBounds == null;
-  List<PhotoMapBounds>? activeMapBounds;
+  bool get albumHome => target is AlbumHomeTarget;
   List<RecognizedPerson> get people => _people.value;
   @visibleForTesting
   set people(List<RecognizedPerson> value) => _people.value = value;
-  RecognizedPerson? activePerson;
   bool get loadingPeople => _people.loading;
   bool? get peopleAvailable => _people.available;
   String? get peopleError => _people.error;
   List<TimelineDay> get indexedDays => _activeListing?.days ?? [];
   List<CloudFile> _libraryFiles = [];
   List<CloudAlbum> nativeAlbums = [];
-  CloudAlbum? activeCloudAlbum;
-  bool smartAlbumOpen = false;
   String? nativeAlbumError;
   String? catalogueError;
   List<SmartAlbum> get sharedAlbums => _shared.value;
@@ -165,8 +157,24 @@ class AppController extends ChangeNotifier {
       demo ? buildSmartAlbums(_libraryFiles, photoRoot) : _catalogue;
   int completed = 0;
   int total = 0;
-  int tab = 0;
-  List<String> directory = [];
+
+  /// What the library is showing. The fields below read it.
+  BrowseTarget target = const TimelineTarget();
+  Destination get destination => target.destination;
+  List<String> get directory => target.path;
+  bool get smartAlbumOpen => target is SmartAlbumTarget;
+  CloudAlbum? get activeCloudAlbum => switch (target) {
+    ServerAlbumTarget(:final album) => album,
+    _ => null,
+  };
+  RecognizedPerson? get activePerson => switch (target) {
+    PersonTarget(:final person) => person,
+    _ => null,
+  };
+  List<PhotoMapBounds>? get activeMapBounds => switch (target) {
+    MapAreaTarget(:final bounds) => bounds,
+    _ => null,
+  };
   List<CloudFile> items = [];
   String? error;
   String? notice;
@@ -368,8 +376,7 @@ class AppController extends ChangeNotifier {
     demo = true;
     _demo = demoFiles();
     _demoTrash.clear();
-    tab = 0;
-    directory = [];
+    target = const TimelineTarget();
     error = null;
     notice = null;
     unawaited(load());
@@ -466,8 +473,7 @@ class AppController extends ChangeNotifier {
       account = result;
       demo = false;
       setSyncForeground(true);
-      tab = 0;
-      directory = [];
+      target = const TimelineTarget();
       final preparation = _prepareLibrary();
       unawaited(_prepareAlbums());
       unawaited(loadPeople());
@@ -695,15 +701,11 @@ class AppController extends ChangeNotifier {
       _initialDays = null;
       _detectingTimelineIndex = null;
       nativeAlbums = [];
-      activeCloudAlbum = null;
-      activePerson = null;
-      activeMapBounds = null;
       _people.reset();
-      smartAlbumOpen = false;
       _demoPhotoRoot = null;
       _autoPhotoRoot = null;
       items = [];
-      directory = [];
+      target = const TimelineTarget();
       notice = null;
       loading = false;
     } catch (e) {
@@ -715,47 +717,25 @@ class AppController extends ChangeNotifier {
     }
   }
 
-  Future<void> selectTab(int value) async {
-    activeMapBounds = null;
-    tab = value;
-    directory = [];
-    activeCloudAlbum = null;
-    activePerson = null;
-    smartAlbumOpen = false;
-    await load(refresh: false);
+  /// Opens [next] and loads it.
+  Future<void> open(BrowseTarget next) {
+    target = next;
+    return load(refresh: false);
   }
 
-  Future<void> openFolder(CloudFile folder) async {
-    activeMapBounds = null;
-    tab = 1;
-    activeCloudAlbum = null;
-    activePerson = null;
-    smartAlbumOpen = false;
-    directory = [...folder.path];
-    await load(refresh: false);
-  }
+  /// Switches to the root of a destination.
+  Future<void> select(Destination destination) => open(rootTarget(destination));
 
-  Future<void> goTo(List<String> path) async {
-    activeMapBounds = null;
-    directory = [...path];
-    activeCloudAlbum = null;
-    activePerson = null;
-    smartAlbumOpen = false;
-    await load(refresh: false);
-  }
+  Future<void> openFolder(CloudFile folder) => open(DriveTarget(folder.path));
 
-  Future<void> openSmartAlbum(List<String> path) async {
-    activeMapBounds = null;
-    tab = 4;
-    directory = [...path];
-    activeCloudAlbum = null;
-    activePerson = null;
-    smartAlbumOpen = true;
-    await load(refresh: false);
-  }
+  /// Moves the current folder view to [path].
+  Future<void> goTo(List<String> path) => open(target.inFolder(path));
+
+  Future<void> openSmartAlbum(List<String> path) =>
+      open(SmartAlbumTarget(path));
 
   bool get albumIncludesSubfolders =>
-      tab != 4 || !listEquals(directory, photoRoot);
+      destination != Destination.albums || !listEquals(directory, photoRoot);
 
   /// The folder the current view shows, as a file for folder actions.
   CloudFile get currentFolder => CloudFile(
@@ -766,62 +746,36 @@ class AppController extends ChangeNotifier {
 
   /// The main timeline resolves paths on demand; albums need paths for their
   /// sub-folder chips.
-  bool _pathless(int currentTab) =>
+  bool _pathless(Destination currentDestination) =>
       (activeMapBounds != null ||
           activePerson != null ||
-          (pathlessTimeline && currentTab == 0)) &&
+          (pathlessTimeline && currentDestination == Destination.timeline)) &&
       activeCloudAlbum == null;
 
   /// Metadata-only batches are cheap, so the timeline asks for many more
   /// photos per request than views that must look up paths.
-  int _dayBatchLimit(int currentTab) => _pathless(currentTab) ? 1500 : 200;
+  int _dayBatchLimit(Destination currentDestination) =>
+      _pathless(currentDestination) ? 1500 : 200;
 
-  bool _recursiveMedia(int currentTab, List<String> path) =>
+  bool _recursiveMedia(Destination currentDestination, List<String> path) =>
       activeMapBounds != null ||
       activePerson != null ||
-      currentTab != 4 ||
+      currentDestination != Destination.albums ||
       !listEquals(path, photoRoot);
 
-  Future<void> openMapArea(List<PhotoMapBounds> bounds) async {
+  Future<void> openMapArea(List<PhotoMapBounds> bounds) {
     if (bounds.isEmpty) throw const FormatException('Choose a map area.');
-    activeMapBounds = List.unmodifiable(bounds);
-    activePerson = null;
-    activeCloudAlbum = null;
-    smartAlbumOpen = false;
-    tab = 4;
-    directory = [];
-    await load(refresh: false);
+    return open(MapAreaTarget(bounds));
   }
 
-  Future<void> openPerson(RecognizedPerson person) async {
-    activeMapBounds = null;
-    activePerson = person;
-    activeCloudAlbum = null;
-    smartAlbumOpen = false;
-    tab = 4;
-    directory = [];
-    await load(refresh: false);
-  }
+  Future<void> openPerson(RecognizedPerson person) =>
+      open(PersonTarget(person));
 
-  Future<void> openCloudAlbum(CloudAlbum album) async {
-    activeMapBounds = null;
-    activePerson = null;
-    activeCloudAlbum = album;
-    smartAlbumOpen = false;
-    tab = 4;
-    directory = [];
-    await load(refresh: false);
-  }
+  Future<void> openCloudAlbum(CloudAlbum album) =>
+      open(ServerAlbumTarget(album));
 
-  Future<void> openSharedAlbum(List<String> path) async {
-    activeMapBounds = null;
-    tab = 5;
-    directory = [...path];
-    activeCloudAlbum = null;
-    activePerson = null;
-    smartAlbumOpen = false;
-    await load(refresh: false);
-  }
+  Future<void> openSharedAlbum(List<String> path) =>
+      open(SharedFolderTarget(path));
 
   Future<void> setPhotoRoot(List<String> path) async {
     if (demo) {
@@ -837,14 +791,14 @@ class AppController extends ChangeNotifier {
       }
       account = updated;
     }
-    await selectTab(4);
+    await select(Destination.albums);
   }
 
   Future<void> load({bool refresh = true}) async {
     final version = ++_loadVersion;
     if (refresh) _initialDays = null;
     final session = account;
-    final currentTab = tab;
+    final currentDestination = destination;
     final path = [...directory];
     final native = activeCloudAlbum;
     final person = activePerson;
@@ -863,8 +817,11 @@ class AppController extends ChangeNotifier {
       final previous = _listings[listingKey];
       items = previous != null
           ? fileStore.resolve(previous.keys)
-          : _seed(currentTab, path, native);
-      if (currentTab == 1 && !FileStore.validChildren(path, items)) items = [];
+          : _seed(currentDestination, path, native);
+      if (currentDestination == Destination.drive &&
+          !FileStore.validChildren(path, items)) {
+        items = [];
+      }
     }
     _visibleListingKey = listingKey;
     notifyListeners();
@@ -874,21 +831,23 @@ class AppController extends ChangeNotifier {
             ? _demo.where((f) => f.isMedia && f.favorite).toList()
             : _demo
                   .where(
-                    (file) => switch (currentTab) {
-                      0 || 4 =>
+                    (file) => switch (currentDestination) {
+                      Destination.timeline || Destination.albums =>
                         file.isMedia &&
                             pathStartsWith(file.path, path) &&
-                            (_recursiveMedia(currentTab, path) ||
+                            (_recursiveMedia(currentDestination, path) ||
                                 file.path.length == path.length + 1),
-                      2 => file.favorite,
-                      5 || 6 => false,
-                      _ =>
+                      Destination.favorites => file.favorite,
+                      Destination.sharedFolder || Destination.offline => false,
+                      Destination.drive =>
                         file.path.length == path.length + 1 &&
                             pathStartsWith(file.path, path),
                     },
                   )
                   .toList();
-        if (currentTab == 0 || albumHome) _libraryFiles = items;
+        if (currentDestination == Destination.timeline || albumHome) {
+          _libraryFiles = items;
+        }
         if (albumHome) {
           nativeAlbums = [
             const CloudAlbum(
@@ -931,7 +890,7 @@ class AppController extends ChangeNotifier {
           known = fileStore.resolve(previous.keys);
         }
       }
-      if (currentTab == 1 &&
+      if (currentDestination == Destination.drive &&
           known != null &&
           !FileStore.validChildren(path, known)) {
         previous = null;
@@ -943,26 +902,28 @@ class AppController extends ChangeNotifier {
         refreshing = true;
         _hydrate(items.take(_hydrateLimit));
         notifyListeners();
-        if (!refresh && previous.fresh(fileStore) && currentTab != 6) {
+        if (!refresh &&
+            previous.fresh(fileStore) &&
+            currentDestination != Destination.offline) {
           if (previous.days != null) timelineIndexAvailable ??= true;
           _activeListing = previous;
           _listings[listingKey!] = previous;
           hasMore = previous.more;
-          if (currentTab == 0) _libraryFiles = items;
+          if (currentDestination == Destination.timeline) _libraryFiles = items;
           return;
         }
       } else if (listingKey != null) {
         final cached = await cache?.readListing(listingKey);
         if (version != _loadVersion) return;
         if (cached != null) fileStore.putAll(cached);
-        final seed = currentTab == 1 && cached != null
+        final seed = currentDestination == Destination.drive && cached != null
             ? {
                 for (final file in cached)
                   if (file.path.length == path.length + 1 &&
                       pathStartsWith(file.path, path))
                     file.key: file,
               }.values.toList()
-            : cached ?? _seed(currentTab, path, native);
+            : cached ?? _seed(currentDestination, path, native);
         if (seed.isNotEmpty && !keepItems) {
           items = seed;
           refreshing = true;
@@ -972,7 +933,7 @@ class AppController extends ChangeNotifier {
       }
       String? scopeEtag;
       if (cache != null &&
-          currentTab == 4 &&
+          currentDestination == Destination.albums &&
           smartAlbumOpen &&
           native == null &&
           person == null &&
@@ -999,7 +960,7 @@ class AppController extends ChangeNotifier {
         ..allowCachedDays =
             !refresh && (scopeEtag == null || scopeEtag == previous?.scopeEtag);
       listing.scopeEtag = scopeEtag;
-      if (currentTab == 6) {
+      if (currentDestination == Destination.offline) {
         final saved = await cache?.readOfflineListing(_offlineListingKey) ?? [];
         final available = <CloudFile>[];
         for (final file in saved) {
@@ -1011,7 +972,7 @@ class AppController extends ChangeNotifier {
         final members = await client.albumFiles(session, native);
         if (version != _loadVersion || account != session || _disposed) return;
         listing.add(fileStore, reconcileAlbumMembers(members, _libraryFiles));
-      } else if (currentTab == 1) {
+      } else if (currentDestination == Destination.drive) {
         final files = await _listFolder(
           session,
           path,
@@ -1021,7 +982,9 @@ class AppController extends ChangeNotifier {
         if (version != _loadVersion || account != session || _disposed) return;
         listing.add(fileStore, files);
       } else {
-        if (currentTab != 5) await _ensureTimelineIndex(session);
+        if (currentDestination != Destination.sharedFolder) {
+          await _ensureTimelineIndex(session);
+        }
         if (version != _loadVersion) return;
         if (person != null && timelineIndexAvailable != true) {
           throw const CloudException(
@@ -1033,16 +996,19 @@ class AppController extends ChangeNotifier {
             'This server does not support browsing the photo map.',
           );
         }
-        if (timelineIndexAvailable == true && currentTab != 5) {
+        if (timelineIndexAvailable == true &&
+            currentDestination != Destination.sharedFolder) {
           listing.days =
-              mapBounds == null && currentTab == 0 && _initialDays != null
+              mapBounds == null &&
+                  currentDestination == Destination.timeline &&
+                  _initialDays != null
               ? _initialDays
               : (await client.timeline(
                   session,
                   TimelineQuery(
                     path: path,
-                    favorites: currentTab == 2,
-                    recursive: _recursiveMedia(currentTab, path),
+                    favorites: currentDestination == Destination.favorites,
+                    recursive: _recursiveMedia(currentDestination, path),
                     person: person,
                     mapBounds: mapBounds,
                   ),
@@ -1081,7 +1047,12 @@ class AppController extends ChangeNotifier {
         }
         if (version != _loadVersion) return;
         if (listing.loaded.isEmpty) {
-          final page = await _nextPage(listing, session, currentTab, path);
+          final page = await _nextPage(
+            listing,
+            session,
+            currentDestination,
+            path,
+          );
           if (version != _loadVersion || account != session || _disposed) {
             return;
           }
@@ -1097,7 +1068,7 @@ class AppController extends ChangeNotifier {
         loading = false;
         refreshing = false;
         loadingMore = false;
-        if (tab == 0) _queueThumbnailWarmup(items);
+        if (destination == Destination.timeline) _queueThumbnailWarmup(items);
         notifyListeners();
       }
     }
@@ -1105,23 +1076,28 @@ class AppController extends ChangeNotifier {
 
   /// Files the shared store already knows for a view, shown instantly while
   /// the server confirms the authoritative list.
-  List<CloudFile> _seed(int tab, List<String> path, CloudAlbum? native) {
+  List<CloudFile> _seed(
+    Destination destination,
+    List<String> path,
+    CloudAlbum? native,
+  ) {
     if (native != null ||
         activePerson != null ||
         activeMapBounds != null ||
-        tab == 3 ||
-        tab == 6) {
+        destination == Destination.offline) {
       return [];
     }
-    if (tab == 1) return fileStore.folder(path, fresh: false) ?? [];
-    final recursive = _recursiveMedia(tab, path);
+    if (destination == Destination.drive) {
+      return fileStore.folder(path, fresh: false) ?? [];
+    }
+    final recursive = _recursiveMedia(destination, path);
     return fileStore.where(
       (f) =>
           f.isMedia &&
           f.albumReference == null &&
           pathStartsWith(f.path, path) &&
           (recursive || f.path.length == path.length + 1) &&
-          (tab != 2 || f.favorite),
+          (destination != Destination.favorites || f.favorite),
     );
   }
 
@@ -1256,16 +1232,16 @@ class AppController extends ChangeNotifier {
   Future<_Page> _nextPage(
     MediaListing listing,
     Account session,
-    int currentTab,
+    Destination currentDestination,
     List<String> path,
   ) async {
-    final recursive = _recursiveMedia(currentTab, path);
+    final recursive = _recursiveMedia(currentDestination, path);
     final person = activePerson;
     final mapBounds = activeMapBounds;
     if (listing.days case final days?) {
       final ids = <int>[];
       var count = 0;
-      final limit = _dayBatchLimit(currentTab);
+      final limit = _dayBatchLimit(currentDestination);
       for (final day in days) {
         if (listing.loaded.contains(day.id)) continue;
         if (ids.length >= 120 ||
@@ -1282,7 +1258,7 @@ class AppController extends ChangeNotifier {
         listing,
         session,
         ids,
-        currentTab,
+        currentDestination,
         path,
       );
       final files =
@@ -1292,9 +1268,9 @@ class AppController extends ChangeNotifier {
             TimelineQuery(
               dayIds: ids,
               path: path,
-              favorites: currentTab == 2,
+              favorites: currentDestination == Destination.favorites,
               recursive: recursive,
-              resolvePaths: mapBounds == null && !_pathless(currentTab),
+              resolvePaths: mapBounds == null && !_pathless(currentDestination),
               person: person,
               mapBounds: mapBounds,
             ),
@@ -1304,7 +1280,7 @@ class AppController extends ChangeNotifier {
     final page = (await client.timeline(
       session,
       TimelineQuery.page(
-        favorites: currentTab == 2,
+        favorites: currentDestination == Destination.favorites,
         path: path,
         cursor: listing.cursor,
         recursive: recursive,
@@ -1329,12 +1305,12 @@ class AppController extends ChangeNotifier {
     MediaListing listing,
     Account session,
     List<int> days,
-    int currentTab,
+    Destination currentDestination,
     List<String> path,
   ) async {
     if (cache == null ||
         !listing.allowCachedDays ||
-        currentTab != 0 ||
+        currentDestination != Destination.timeline ||
         path.isNotEmpty ||
         activeCloudAlbum != null ||
         activePerson != null ||
@@ -1365,7 +1341,7 @@ class AppController extends ChangeNotifier {
         for (final key in listing.keys)
           if (days.contains(fileStore[key]?.captureDay)) key,
       };
-      if (tab == 0 &&
+      if (destination == Destination.timeline &&
           directory.isEmpty &&
           activeCloudAlbum == null &&
           activePerson == null &&
@@ -1395,8 +1371,8 @@ class AppController extends ChangeNotifier {
     _activeListing = listing;
     items = fileStore.resolve(listing.keys);
     hasMore = listing.more;
-    if (tab == 0) _libraryFiles = items;
-    if (tab == 0) _queueThumbnailWarmup(items);
+    if (destination == Destination.timeline) _libraryFiles = items;
+    if (destination == Destination.timeline) _queueThumbnailWarmup(items);
     if (key != null) {
       _listings[key] = listing;
       if (_listings.length > 20) _listings.remove(_listings.keys.first);
@@ -1418,13 +1394,13 @@ class AppController extends ChangeNotifier {
       return;
     }
     final version = _loadVersion;
-    final currentTab = tab;
+    final currentDestination = destination;
     final path = [...directory];
     final key = _listingKey();
     loadingMore = true;
     notifyListeners();
     try {
-      final page = await _nextPage(listing, session, currentTab, path);
+      final page = await _nextPage(listing, session, currentDestination, path);
       if (version != _loadVersion || account != session || _disposed) return;
       _mergePage(listing, page);
       await _publishListing(listing, key);
@@ -1553,7 +1529,9 @@ class AppController extends ChangeNotifier {
       if (metadataSweep && !treeChanged) {
         listing?.staleDays.addAll(listing.loaded);
       }
-      if (tab != 0 || shown == null || activeCloudAlbum != null) {
+      if (destination != Destination.timeline ||
+          shown == null ||
+          activeCloudAlbum != null) {
         if (treeChanged || metadataSweep) await load(refresh: true);
         if (_disposed || account != session || error != null) return false;
         _changeEtag = etag;
@@ -1564,7 +1542,10 @@ class AppController extends ChangeNotifier {
       final path = [...directory];
       final days = (await client.timeline(
         session,
-        TimelineQuery(path: path, recursive: _recursiveMedia(0, path)),
+        TimelineQuery(
+          path: path,
+          recursive: _recursiveMedia(Destination.timeline, path),
+        ),
       ))?.days;
       if (days == null ||
           _disposed ||
@@ -1686,7 +1667,7 @@ class AppController extends ChangeNotifier {
         final counts = {for (final day in days) day.id: day.count};
         final batch = <int>[];
         var count = 0;
-        final limit = _dayBatchLimit(tab);
+        final limit = _dayBatchLimit(destination);
         for (final day in _pendingDays.toList().reversed) {
           final size = counts[day];
           if (size == null ||
@@ -1705,7 +1686,7 @@ class AppController extends ChangeNotifier {
         requestVersion = version;
         requestListing = listing;
         requestSession = session;
-        final currentTab = tab;
+        final currentDestination = destination;
         final path = [...directory];
         final key = _listingKey();
         final person = activePerson;
@@ -1714,7 +1695,7 @@ class AppController extends ChangeNotifier {
           listing,
           session,
           batch,
-          currentTab,
+          currentDestination,
           path,
         );
         final files =
@@ -1724,9 +1705,10 @@ class AppController extends ChangeNotifier {
               TimelineQuery(
                 dayIds: batch,
                 path: path,
-                favorites: currentTab == 2,
-                recursive: _recursiveMedia(currentTab, path),
-                resolvePaths: mapBounds == null && !_pathless(currentTab),
+                favorites: currentDestination == Destination.favorites,
+                recursive: _recursiveMedia(currentDestination, path),
+                resolvePaths:
+                    mapBounds == null && !_pathless(currentDestination),
                 person: person,
                 mapBounds: mapBounds,
               ),
@@ -1764,11 +1746,8 @@ class AppController extends ChangeNotifier {
 
   String? _listingKey() {
     final session = account;
-    if (demo || session == null || tab == 3) return null;
-    return 'browse-v5|${session.storageKey}|$tab|$smartAlbumOpen|'
-        '${directory.join('/')}|${activeCloudAlbum?.reference.join('/') ?? ''}'
-        '${activePerson == null ? '' : '|person:${Uri.encodeComponent(activePerson!.id)}'}'
-        '${activeMapBounds == null ? '' : '|map:${activeMapBounds!.map((b) => b.query).join(';')}'}';
+    if (demo || session == null) return null;
+    return 'browse-v6|${session.storageKey}|${target.cacheKey}';
   }
 
   Future<void> loadPeople({bool refresh = false}) =>
@@ -2077,7 +2056,7 @@ class AppController extends ChangeNotifier {
     fileStore.markStale();
     if (_activeListing case final listing?) {
       items = fileStore.resolve(listing.keys);
-      if (tab == 0) _libraryFiles = items;
+      if (destination == Destination.timeline) _libraryFiles = items;
     }
     final epoch = DateTime.fromMillisecondsSinceEpoch(0);
     if (_catalogueUpdated != null) _catalogueUpdated = epoch;
@@ -2325,7 +2304,7 @@ class AppController extends ChangeNotifier {
         !_browsingActive ||
         _warmingThumbnails ||
         _thumbnailWarmupQueue.isEmpty ||
-        tab != 0) {
+        destination != Destination.timeline) {
       return;
     }
     _thumbnailWarmupTimer?.cancel();
@@ -2336,7 +2315,12 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> _warmThumbnailBatch() async {
-    if (_disposed || !_browsingActive || tab != 0 || account == null) return;
+    if (_disposed ||
+        !_browsingActive ||
+        destination != Destination.timeline ||
+        account == null) {
+      return;
+    }
     if (busy || loading || loadingMore || fetchingDays) {
       _scheduleThumbnailWarmup();
       return;
@@ -2379,7 +2363,7 @@ class AppController extends ChangeNotifier {
     if (!result.listingsChanged) return result.file;
     if (_activeListing case final listing?) {
       items = fileStore.resolve(listing.keys);
-      if (tab == 0) _libraryFiles = items;
+      if (destination == Destination.timeline) _libraryFiles = items;
     }
     _persistStore();
     notifyListeners();

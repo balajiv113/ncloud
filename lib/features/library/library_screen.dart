@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 
 import '../../app/app_controller.dart';
 import 'domain/album_entries.dart';
+import 'domain/browse_target.dart';
 import 'domain/change_monitor.dart';
 import 'domain/library_view.dart';
 import 'domain/library_view_state.dart';
@@ -41,13 +42,17 @@ class LibraryScreen extends StatefulWidget {
 
 class _LibraryScreenState extends State<LibraryScreen>
     with WidgetsBindingObserver, SingleTickerProviderStateMixin {
-  static const _destinationOrder = [0, 4, 1];
+  static const _destinationOrder = [
+    Destination.timeline,
+    Destination.albums,
+    Destination.drive,
+  ];
   final _search = TextEditingController();
   final _scroll = ScrollController();
-  final Map<int, double> _destinationOffsets = {};
+  final Map<Destination, double> _destinationOffsets = {};
   late final AnimationController _destinationAnimation;
   late final CurvedAnimation _destinationCurve;
-  late int _lastTab;
+  late Destination _lastDestination;
   double _destinationDirection = 1;
   int _navigationRequest = 0;
   Offset? _navigationDragStart;
@@ -61,8 +66,8 @@ class _LibraryScreenState extends State<LibraryScreen>
   double _pinchStart = 0;
   int _prefetchBudget = 2;
   AppController get c => widget.controller;
-  bool get _album => c.tab == 4;
-  bool get _drive => c.tab == 1;
+  bool get _album => c.destination == Destination.albums;
+  bool get _drive => c.destination == Destination.drive;
   bool get _albumHome =>
       _album &&
       !c.smartAlbumOpen &&
@@ -70,9 +75,9 @@ class _LibraryScreenState extends State<LibraryScreen>
       c.activeCloudAlbum == null &&
       c.activePerson == null &&
       c.activeMapBounds == null;
-  bool get _collection => const [2, 5, 6].contains(c.tab);
+  bool get _collection => c.destination.isCollection;
   bool get _atNavigationRoot =>
-      c.tab == 0 ||
+      c.destination == Destination.timeline ||
       (_albumHome && !_view.albumsExpanded) ||
       (_drive && c.directory.isEmpty);
   bool get _canSwipeDestinations =>
@@ -95,7 +100,7 @@ class _LibraryScreenState extends State<LibraryScreen>
   @override
   void initState() {
     super.initState();
-    _lastTab = c.tab;
+    _lastDestination = c.destination;
     _destinationAnimation = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 280),
@@ -125,7 +130,7 @@ class _LibraryScreenState extends State<LibraryScreen>
   @override
   void didUpdateWidget(covariant LibraryScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
-    _transitionTo(c.tab);
+    _transitionTo(c.destination);
     _updateChangeMonitor(deferStart: true);
   }
 
@@ -161,12 +166,13 @@ class _LibraryScreenState extends State<LibraryScreen>
     }
   }
 
-  void _transitionTo(int tab) {
-    if (tab == _lastTab) return;
-    int index(int value) =>
-        _destinationOrder.indexOf(const [2, 5, 6].contains(value) ? 4 : value);
-    _destinationDirection = index(tab) >= index(_lastTab) ? 1 : -1;
-    _lastTab = tab;
+  void _transitionTo(Destination destination) {
+    if (destination == _lastDestination) return;
+    int index(Destination value) => _destinationOrder.indexOf(value.section);
+    _destinationDirection = index(destination) >= index(_lastDestination)
+        ? 1
+        : -1;
+    _lastDestination = destination;
     if (MediaQuery.disableAnimationsOf(context)) {
       _destinationAnimation.value = 1;
     } else {
@@ -199,7 +205,7 @@ class _LibraryScreenState extends State<LibraryScreen>
     final forward = Directionality.of(context) == TextDirection.ltr
         ? delta.dx < 0
         : delta.dx > 0;
-    final next = _destinationOrder.indexOf(c.tab) + (forward ? 1 : -1);
+    final next = _destinationOrder.indexOf(c.destination) + (forward ? 1 : -1);
     if (next >= 0 && next < _destinationOrder.length) {
       _navigate(_destinationOrder[next]);
     }
@@ -218,7 +224,7 @@ class _LibraryScreenState extends State<LibraryScreen>
     final changed = await c.checkForChanges(changedFileIds: ids, force: pushed);
     if (!mounted) return changed;
     if (changed &&
-        c.tab == 0 &&
+        c.destination == Destination.timeline &&
         (!_scroll.hasClients || _scroll.offset < 120)) {
       c.applyChanges();
     }
@@ -284,23 +290,23 @@ class _LibraryScreenState extends State<LibraryScreen>
     _tracker.clear();
   }
 
-  Future<void> _navigate(int tab) async {
+  Future<void> _navigate(Destination destination) async {
     _activity();
-    final previous = c.tab;
-    if (previous != tab && _atNavigationRoot && _scroll.hasClients) {
+    final previous = c.destination;
+    if (previous != destination && _atNavigationRoot && _scroll.hasClients) {
       _destinationOffsets[previous] = _scroll.offset;
     }
     final request = ++_navigationRequest;
     _resetView();
-    _transitionTo(tab);
-    await c.selectTab(tab);
-    if (!mounted || previous == tab) return;
-    final offset = _destinationOffsets[tab];
+    _transitionTo(destination);
+    await c.select(destination);
+    if (!mounted || previous == destination) return;
+    final offset = _destinationOffsets[destination];
     if (offset == null) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted ||
           request != _navigationRequest ||
-          c.tab != tab ||
+          c.destination != destination ||
           !_atNavigationRoot ||
           !_scroll.hasClients) {
         return;
@@ -314,11 +320,12 @@ class _LibraryScreenState extends State<LibraryScreen>
       setState(() => _view.selected.clear());
     } else if (_albumHome && _view.albumsExpanded) {
       _resetView();
-    } else if ((_album && !_albumHome) || c.tab == 5) {
+    } else if ((_album && !_albumHome) ||
+        c.destination == Destination.sharedFolder) {
       _resetView(keepAlbumSection: true);
-      c.selectTab(4);
+      c.select(Destination.albums);
     } else if (_collection) {
-      _navigate(4);
+      _navigate(Destination.albums);
     } else {
       _resetView();
       c.goTo(c.directory.sublist(0, c.directory.length - 1));
@@ -398,9 +405,9 @@ class _LibraryScreenState extends State<LibraryScreen>
         c.activePerson?.label ??
         c.activeCloudAlbum?.name ??
         (_collection
-            ? switch (c.tab) {
-                2 => 'Favorites',
-                5 => c.directory.last,
+            ? switch (c.destination) {
+                Destination.favorites => 'Favorites',
+                Destination.sharedFolder => c.directory.last,
                 _ => 'Offline',
               }
             : _album
@@ -597,7 +604,9 @@ class _LibraryScreenState extends State<LibraryScreen>
                                 ),
                               if (_drive && c.directory.isNotEmpty)
                                 SliverToBoxAdapter(child: _breadcrumbs()),
-                              if ((_album || c.tab == 5) &&
+                              if ((_album ||
+                                      c.destination ==
+                                          Destination.sharedFolder) &&
                                   !_albumHome &&
                                   c.activeCloudAlbum == null &&
                                   c.activePerson == null &&
@@ -648,7 +657,7 @@ class _LibraryScreenState extends State<LibraryScreen>
                                   actions: _albumActions,
                                 )
                               else ...[
-                                if (c.tab == 0 &&
+                                if (c.destination == Destination.timeline &&
                                     !_view.selecting &&
                                     _view.query.isEmpty &&
                                     _view.filter == MediaFilter.all)
@@ -715,7 +724,9 @@ class _LibraryScreenState extends State<LibraryScreen>
                           markers: _tracker.yearMarkers,
                         ),
                       ),
-                    if (c.tab == 0 && c.timelineChanged && !_view.selecting)
+                    if (c.destination == Destination.timeline &&
+                        c.timelineChanged &&
+                        !_view.selecting)
                       Positioned(
                         top: MediaQuery.paddingOf(context).top + 72,
                         left: 0,
@@ -757,10 +768,10 @@ class _LibraryScreenState extends State<LibraryScreen>
               )
             : NavigationDock(
                 active: _drive
-                    ? 1
+                    ? Destination.drive
                     : _album || _collection
-                    ? 4
-                    : 0,
+                    ? Destination.albums
+                    : Destination.timeline,
                 busy: c.busy,
                 onSelect: _navigate,
               ),
@@ -807,16 +818,10 @@ class _LibraryScreenState extends State<LibraryScreen>
     ),
   );
 
-  void _openCollection(int tab) {
-    if (tab == 3) {
-      Navigator.push(
-        context,
-        MaterialPageRoute<void>(builder: (_) => TrashScreen(controller: c)),
-      );
-    } else {
-      _navigate(tab);
-    }
-  }
+  void _openTrash() => Navigator.push(
+    context,
+    MaterialPageRoute<void>(builder: (_) => TrashScreen(controller: c)),
+  );
 
   void _openPerson(RecognizedPerson person) {
     _resetView(keepAlbumSection: true);
@@ -839,7 +844,8 @@ class _LibraryScreenState extends State<LibraryScreen>
     expandAlbums: () => _expandSection(),
     expandPeople: () => _expandSection(people: true),
     openMap: _openMap,
-    openCollection: _openCollection,
+    openCollection: _navigate,
+    openTrash: _openTrash,
   );
 
   void _openMap() {
@@ -947,9 +953,9 @@ class _LibraryScreenState extends State<LibraryScreen>
                 ? 'Your loaded items are kept. Pull to refresh and retry.'
                 : c.hasMore
                 ? 'More dates are available. Scroll to continue browsing.'
-                : c.tab == 6
+                : c.destination == Destination.offline
                 ? 'Save originals from a file menu or video player to access them offline.'
-                : c.tab == 5
+                : c.destination == Destination.sharedFolder
                 ? 'Photos you share from your cloud will appear here.'
                 : c.activePerson != null
                 ? 'This group has no photos here. Refresh People to check for changes.'

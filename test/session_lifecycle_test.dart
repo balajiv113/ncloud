@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ncloud/features/library/domain/browse_target.dart';
 import 'package:ncloud/app/app_controller.dart';
 import 'package:ncloud/core/cloud/cloud_backend.dart';
 import 'package:ncloud/models.dart';
@@ -94,7 +95,7 @@ void main() {
     final controller = AppController(store: _DelayedStore(), client: backend)
       ..account = account;
     addTearDown(controller.dispose);
-    final pending = controller.selectTab(1);
+    final pending = controller.select(Destination.drive);
     await backend.folderRequested.future;
     await controller.clearCache();
     backend.folderResult.complete(
@@ -144,7 +145,7 @@ void main() {
     await controller.load();
     controller.ensureDays([2]);
     await backend.dayRequested.future;
-    await controller.selectTab(2);
+    await controller.select(Destination.favorites);
     controller.ensureDays([1]);
     backend.dayResult.completeError(const CloudException('Old request failed'));
     await backend.nextDayRequested.future.timeout(const Duration(seconds: 5));

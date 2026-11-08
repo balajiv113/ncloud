@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
+import 'package:ncloud/features/library/domain/browse_target.dart';
 import 'package:ncloud/providers/nextcloud/nextcloud_client.dart';
 import 'package:ncloud/core/cloud/cloud_backend.dart';
 import 'package:ncloud/features/library/domain/album_members.dart';
@@ -81,7 +82,7 @@ void main() {
       final controller = AppController(store: MemoryStore(), client: client)
         ..account = session.withPhotoRoot(['ncloud-index']);
       addTearDown(controller.dispose);
-      await controller.selectTab(4);
+      await controller.select(Destination.albums);
       expect(controller.catalogueError, isNull);
       expect(controller.smartAlbums.map((a) => a.path), [
         ['ncloud-index'],
@@ -158,7 +159,7 @@ void main() {
         ..account = receiver
         ..timelineIndexAvailable = true;
       addTearDown(controller.dispose);
-      await controller.selectTab(5);
+      await controller.select(Destination.albums);
       expect(controller.sharedAlbumError, isNull);
       expect(controller.sharedAlbums.single.path, ['ncloud-index']);
       await controller.openSharedAlbum(['ncloud-index']);

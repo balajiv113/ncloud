@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:ncloud/features/library/domain/browse_target.dart';
 import 'package:ncloud/app/app_controller.dart';
 import 'package:ncloud/core/storage/file_store.dart';
 import 'package:ncloud/core/storage/local_cache.dart';
@@ -20,7 +21,7 @@ void main() {
   final session = account.withPhotoRoot(['Photos']);
   final owner = '${account.server}|${account.userId}';
   final catalogueKey = 'album-catalogue-v5|$owner|Photos';
-  final browseKey = 'browse-v5|$owner|4|true|Photos/Trip|';
+  final browseKey = 'browse-v6|$owner|smart:Photos/Trip';
   final file = CloudFile(
     path: const ['Photos', 'Trip', 'one.jpg'],
     name: 'one.jpg',
@@ -89,7 +90,7 @@ void main() {
         ),
       )..account = session;
       addTearDown(c.dispose);
-      final opening = c.selectTab(4);
+      final opening = c.select(Destination.albums);
       for (var i = 0; i < 100 && etagRequests == 0; i++) {
         await Future<void>.delayed(const Duration(milliseconds: 10));
       }
@@ -157,7 +158,7 @@ void main() {
         ),
       )..account = session;
       addTearDown(c.dispose);
-      await c.selectTab(4);
+      await c.select(Destination.albums);
       expect(c.catalogueError, isNull);
       expect(walks, 1);
       expect(c.smartAlbums.single.name, 'New album');
