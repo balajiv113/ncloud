@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../app/app_controller.dart';
+import 'domain/library_warm_up.dart';
 import '../../shared/ui/media_tile.dart';
 
 /// Library preparation for new and previously unprepared saved sessions.
@@ -15,8 +16,8 @@ class WarmStartScreen extends StatelessWidget {
     final colors = theme.colorScheme;
     final mosaic = c.items.where((f) => f.isMedia).take(12).toList();
     Widget step(int phase, String label, String detail) {
-      final done = c.warmPhase > phase;
-      final running = c.warmPhase == phase;
+      final done = c.warmUp.phase > phase;
+      final running = c.warmUp.phase == phase;
       final color = done
           ? Colors.green.shade700
           : running
@@ -90,7 +91,7 @@ class WarmStartScreen extends StatelessWidget {
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      'Preparing up to the last ${AppController.warmYears} years '
+                      'Preparing up to the last ${LibraryWarmUp.years} years '
                       'and recent thumbnails.\nYour cached library is reused '
                       'the next time you open the app.',
                       textAlign: TextAlign.center,
@@ -102,18 +103,20 @@ class WarmStartScreen extends StatelessWidget {
                     ClipRRect(
                       borderRadius: BorderRadius.circular(4),
                       child: TweenAnimationBuilder<double>(
-                        tween: Tween(end: c.warmProgress),
+                        tween: Tween(end: c.warmUp.progress),
                         duration: const Duration(milliseconds: 300),
                         builder: (context, value, _) =>
                             LinearProgressIndicator(value: value, minHeight: 6),
                       ),
                     ),
                     const SizedBox(height: 16),
-                    step(0, 'Day index', c.warmIndex),
+                    step(0, 'Day index', c.warmUp.index),
                     step(
                       1,
-                      'Recent ${AppController.warmYears} years',
-                      c.warmTotal == 0 ? '' : '${c.warmDone} / ${c.warmTotal}',
+                      'Recent ${LibraryWarmUp.years} years',
+                      c.warmUp.total == 0
+                          ? ''
+                          : '${c.warmUp.done} / ${c.warmUp.total}',
                     ),
                     step(2, 'First screens of thumbnails', ''),
                     if (mosaic.isNotEmpty) ...[
@@ -139,13 +142,13 @@ class WarmStartScreen extends StatelessWidget {
                     ],
                     const SizedBox(height: 24),
                     FilledButton(
-                      onPressed: c.skipWarmUp,
+                      onPressed: c.warmUp.skip,
                       child: const Text('Start browsing now'),
                     ),
                     const SizedBox(height: 8),
                     Text(
                       'Continues quietly in the background · '
-                      'at most ${AppController.warmBudget.inSeconds} s here',
+                      'at most ${LibraryWarmUp.defaultBudget.inSeconds} s here',
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: colors.outline,
                       ),
