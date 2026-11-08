@@ -21,13 +21,15 @@ import 'selection_bar.dart';
 import 'view_options_sheet.dart';
 import 'trash_screen.dart';
 import '../../shared/ui/folder_picker.dart';
-import '../../shared/ui/media_tile.dart';
 import '../../models.dart';
 import '../photos/photo_map_screen.dart';
 import '../../core/ui/messages.dart';
 import 'library_dialogs.dart';
-import '../photos/timeline_layout.dart';
 import '../photos/timeline_scrubber.dart';
+import 'drive_list.dart';
+import '../photos/memory_strip.dart';
+import '../photos/timeline_grid.dart';
+import '../photos/timeline_sections.dart';
 
 class LibraryScreen extends StatefulWidget {
   const LibraryScreen({super.key, required this.controller});
@@ -51,17 +53,15 @@ class _LibraryScreenState extends State<LibraryScreen>
   Offset _navigationDrag = Offset.zero;
   final Map<String, CloudFile> _selected = {};
   final Map<int, Offset> _pointers = {};
-  final List<({double offset, String label, DateTime? date})> _dateStops = [];
+  final _tracker = TimelineTracker();
   final Set<int> _wantedDays = {};
   bool _requestScheduled = false;
-  final List<({double offset, List<CloudFile> files})> _rowPositions = [];
   MediaFilter _filter = MediaFilter.all;
   LibrarySort _sort = LibrarySort.newest;
   List<String>? _subfolder;
   int _density = 3;
   int _pinchBase = 3;
   double _pinchStart = 0;
-  double _timelineStart = 0;
   bool _searching = false;
   bool _showPeople = false;
   bool _albumsExpanded = false;
@@ -246,32 +246,6 @@ class _LibraryScreenState extends State<LibraryScreen>
     }
   }
 
-  /// Month shown in the scrubber bubble for a scroll offset.
-  String? _labelAt(double offset) {
-    DateTime? date;
-    for (final stop in _dateStops) {
-      if (stop.offset > offset - _timelineStart + 56) break;
-      date = stop.date ?? date;
-    }
-    date ??= _dateStops.firstOrNull?.date;
-    return date == null
-        ? null
-        : MaterialLocalizations.of(context).formatMonthYear(date);
-  }
-
-  /// Year markers shown beside the scrubber track while dragging.
-  List<({double offset, String label})> _yearMarkers() {
-    final markers = <({double offset, String label})>[];
-    int? year;
-    for (final stop in _dateStops) {
-      final date = stop.date;
-      if (date == null || date.year == year) continue;
-      year = date.year;
-      markers.add((offset: _timelineStart + stop.offset, label: '$year'));
-    }
-    return markers;
-  }
-
   /// Queues indexed days whose placeholders became visible; the controller
   /// loads the most recently requested first.
   void _wantDays(Iterable<int> days) {
@@ -325,8 +299,7 @@ class _LibraryScreenState extends State<LibraryScreen>
     _filter = MediaFilter.all;
     _subfolder = null;
     _wantedDays.clear();
-    _dateStops.clear();
-    _rowPositions.clear();
+    _tracker.clear();
   }
 
   Future<void> _navigate(int tab) async {
@@ -441,27 +414,15 @@ class _LibraryScreenState extends State<LibraryScreen>
 
   void _changeDensity(int value) {
     if (value == _density) return;
-    String? anchor;
-    if (_scroll.hasClients && _scroll.offset > _timelineStart) {
-      for (final row in _rowPositions) {
-        if (row.offset > _scroll.offset - _timelineStart) break;
-        anchor = row.files.first.key;
-      }
-    }
+    final anchor = _scroll.hasClients
+        ? _tracker.anchorAt(_scroll.offset)
+        : null;
     setState(() => _density = value);
     if (anchor != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted || !_scroll.hasClients) return;
-        final row = _rowPositions
-            .where((r) => r.files.any((f) => f.key == anchor))
-            .firstOrNull;
-        if (row != null) {
-          _scroll.jumpTo(
-            (_timelineStart + row.offset).clamp(
-              0,
-              _scroll.position.maxScrollExtent,
-            ),
-          );
+        if (_tracker.offsetOf(anchor) case final offset?) {
+          _scroll.jumpTo(offset.clamp(0, _scroll.position.maxScrollExtent));
         }
       });
     }
@@ -739,17 +700,22 @@ class _LibraryScreenState extends State<LibraryScreen>
                                     !_selecting &&
                                     _query.isEmpty &&
                                     _filter == MediaFilter.all)
-                                  if (_memoryGroups(files).isNotEmpty)
+                                  if (memoryGroups(files) case final groups
+                                      when groups.isNotEmpty)
                                     SliverToBoxAdapter(
-                                      child: _memoryStrip(files),
+                                      child: MemoryStrip(
+                                        groups: groups,
+                                        controller: c,
+                                        onOpen: _open,
+                                      ),
                                     ),
                                 if (_drive)
-                                  _driveSliver(files)
+                                  _driveList(files)
                                 else ...[
                                   ..._timelineSlivers(files),
                                   if (_collection &&
                                       files.any((f) => !f.isMedia))
-                                    _driveSliver(
+                                    _driveList(
                                       files.where((f) => !f.isMedia).toList(),
                                     ),
                                 ],
@@ -790,8 +756,11 @@ class _LibraryScreenState extends State<LibraryScreen>
                         width: 240,
                         child: TimelineScrubber(
                           controller: _scroll,
-                          labelAt: _labelAt,
-                          markers: _yearMarkers,
+                          labelAt: (offset) => _tracker.labelAt(
+                            offset,
+                            MaterialLocalizations.of(context).formatMonthYear,
+                          ),
+                          markers: _tracker.yearMarkers,
                         ),
                       ),
                     if (c.tab == 0 && c.timelineChanged && !_selecting)
@@ -946,88 +915,6 @@ class _LibraryScreenState extends State<LibraryScreen>
     if (_scroll.hasClients) _scroll.jumpTo(0);
   }
 
-  Map<String, List<CloudFile>> _memoryGroups(List<CloudFile> files) {
-    final now = DateTime.now();
-    final result = <String, List<CloudFile>>{};
-    for (final file in files) {
-      final date = file.timelineDate?.toLocal();
-      if (!file.isMedia || date == null || date.year >= now.year) continue;
-      if (date.month == now.month && date.day == now.day) {
-        final years = now.year - date.year;
-        result
-            .putIfAbsent(
-              years == 1 ? '1 year ago' : '$years years ago',
-              () => [],
-            )
-            .add(file);
-      }
-    }
-    final favorites = files.where((f) => f.isMedia && f.favorite).toList();
-    if (favorites.isNotEmpty) result['A few favorites'] = favorites;
-    return result;
-  }
-
-  Widget _memoryStrip(List<CloudFile> files) => SizedBox(
-    height: 124,
-    child: ListView(
-      scrollDirection: Axis.horizontal,
-      padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
-      children: [
-        for (final entry in _memoryGroups(files).entries)
-          Padding(
-            padding: const EdgeInsets.only(right: 10),
-            child: Semantics(
-              button: true,
-              label: entry.key,
-              child: GestureDetector(
-                onTap: () => _open(entry.value.first, entry.value),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(15),
-                  child: SizedBox(
-                    width: 164,
-                    child: Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        ExcludeSemantics(
-                          child: MediaTile(
-                            file: entry.value.first,
-                            controller: c,
-                          ),
-                        ),
-                        const DecoratedBox(
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              begin: Alignment.center,
-                              end: Alignment.bottomCenter,
-                              colors: [Colors.transparent, Colors.black87],
-                            ),
-                          ),
-                        ),
-                        Positioned(
-                          left: 12,
-                          right: 10,
-                          bottom: 10,
-                          child: Text(
-                            entry.key,
-                            maxLines: 2,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w600,
-                              fontSize: 13,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-      ],
-    ),
-  );
-
   /// Whether the full day index can lay out the whole timeline up
   /// front, so scrolling and scrubbing never wait at the end of a page.
   bool get _indexedLayout =>
@@ -1040,338 +927,57 @@ class _LibraryScreenState extends State<LibraryScreen>
   List<Widget> _timelineSlivers(List<CloudFile> files) {
     final media = files.where((f) => f.isMedia).toList();
     if (media.isEmpty && !_indexedLayout) {
-      _dateStops.clear();
-      _rowPositions.clear();
-      return [];
+      _tracker.clear();
+      return const [];
     }
     final localizations = MaterialLocalizations.of(context);
-    String labelFor(DateTime? date) => date == null
-        ? 'Date unavailable'
-        : _density >= 5
-        ? localizations.formatMonthYear(date)
-        : _dayLabel(date);
-    final sections =
-        <
-          ({
-            String label,
-            DateTime? date,
-            List<CloudFile> files,
-            List<int> pending,
-            List<int> expected,
-          })
-        >[];
-    void addToSection(
-      DateTime? date,
-      List<CloudFile> files,
-      int expected,
-      int? pendingDay,
-    ) {
-      final label = labelFor(date);
-      var section = sections.lastOrNull;
-      if (section == null || section.label != label) {
-        section = (
-          label: label,
-          date: date,
-          files: <CloudFile>[],
-          pending: <int>[],
-          expected: [0],
-        );
-        sections.add(section);
-      }
-      section.files.addAll(files);
-      section.expected[0] += expected;
-      if (pendingDay != null) section.pending.add(pendingDay);
-    }
-
-    if (_indexedLayout) {
-      final byDay = <int, List<CloudFile>>{};
-      final other = <CloudFile>[];
-      for (final file in media) {
-        if (file.captureDay case final day?) {
-          byDay.putIfAbsent(day, () => []).add(file);
-        } else {
-          other.add(file);
-        }
-      }
-      for (final day in c.indexedDays) {
-        final utc = DateTime.fromMillisecondsSinceEpoch(
-          day.id * 86400000,
-          isUtc: true,
-        );
-        final loaded = c.dayLoaded(day.id);
-        final found = byDay.remove(day.id) ?? [];
-        addToSection(
-          DateTime(utc.year, utc.month, utc.day),
-          found,
-          loaded
-              ? found.length
-              : (day.count > found.length ? day.count : found.length),
-          loaded && !c.dayNeedsRefresh(day.id) ? null : day.id,
-        );
-      }
-      for (final file in [...byDay.values.expand((f) => f), ...other]) {
-        addToSection(file.timelineDate?.toLocal(), [file], 1, null);
-      }
-    } else {
-      for (final file in media) {
-        addToSection(file.timelineDate?.toLocal(), [file], 1, null);
-      }
-    }
-    double? layoutWidth;
-    late TimelineGridLayout layout;
-    final visibleSections = sections.where((s) => s.expected[0] > 0).toList();
     return [
-      SliverLayoutBuilder(
-        builder: (context, constraints) {
-          _timelineStart = constraints.precedingScrollExtent;
-          final columns = constraints.crossAxisExtent > 650
-              ? _density + 2
-              : _density;
-          final tileExtent =
-              (constraints.crossAxisExtent - (columns - 1) * 2) / columns;
-          final headerExtent =
-              44.0 + MediaQuery.textScalerOf(context).scale(13) - 13;
-          if (layoutWidth != constraints.crossAxisExtent) {
-            layoutWidth = constraints.crossAxisExtent;
-            layout = TimelineGridLayout(
-              counts: [
-                for (final section in visibleSections) section.expected[0],
-              ],
-              columns: columns,
-              tileExtent: tileExtent,
-              headerExtent: headerExtent,
-              reverseCrossAxis: Directionality.of(context) == TextDirection.rtl,
-            );
-            _dateStops.clear();
-            _rowPositions.clear();
-            for (final (index, section) in visibleSections.indexed) {
-              _dateStops.add((
-                offset: layout.offsets[index],
-                label: section.label,
-                date: section.date,
-              ));
-              for (
-                var start = 0;
-                start < section.files.length;
-                start += columns
-              ) {
-                final end = (start + columns).clamp(0, section.files.length);
-                _rowPositions.add((
-                  offset:
-                      layout.offsets[index] +
-                      headerExtent +
-                      (start ~/ columns) * (tileExtent + 2),
-                  files: section.files.sublist(start, end),
-                ));
-              }
-            }
-          }
-          final placeholder = Theme.of(
-            context,
-          ).colorScheme.surfaceContainerHighest;
-          return SliverGrid(
-            gridDelegate: TimelineGridDelegate(layout),
-            delegate: SliverChildBuilderDelegate((context, index) {
-              final sectionIndex = layout.sectionForIndex(index);
-              final section = visibleSections[sectionIndex];
-              final photoIndex = index - layout.starts[sectionIndex] - 1;
-              // Request a few sections ahead first so the visible section,
-              // requested last, is fetched first.
-              for (var next = sectionIndex + 3; next >= sectionIndex; next--) {
-                if (next < visibleSections.length &&
-                    visibleSections[next].pending.isNotEmpty) {
-                  _wantDays(visibleSections[next].pending);
-                }
-              }
-              if (photoIndex < 0) {
-                final all = section.files.every(
-                  (f) => _selected.containsKey(f.key),
-                );
-                return Padding(
-                  padding: const EdgeInsets.only(left: 16, right: 4),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          section.label,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                      IconButton(
-                        tooltip: 'Select ${section.label}',
-                        iconSize: 18,
-                        onPressed: section.files.every((f) => f.readOnly)
-                            ? null
-                            : () => setState(() {
-                                for (final file in section.files.where(
-                                  (f) => !f.readOnly,
-                                )) {
-                                  if (all) {
-                                    _selected.remove(file.key);
-                                  } else {
-                                    _selected[file.key] = file;
-                                  }
-                                }
-                              }),
-                        icon: Icon(
-                          all
-                              ? Icons.check_circle
-                              : Icons.radio_button_unchecked,
-                        ),
-                      ),
-                    ],
-                  ),
-                );
-              }
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 2),
-                child: photoIndex < section.files.length
-                    ? _mediaTile(section.files[photoIndex], media)
-                    : ColoredBox(color: placeholder),
-              );
-            }, childCount: layout.itemCount),
-          );
-        },
+      TimelineSlivers(
+        controller: c,
+        sections: buildTimelineSections(
+          media: media,
+          indexedDays: _indexedLayout ? c.indexedDays : null,
+          dayLoaded: c.dayLoaded,
+          dayNeedsRefresh: c.dayNeedsRefresh,
+          labelFor: (date) => timelineLabel(
+            date,
+            byMonth: _density >= 5,
+            formatMonth: localizations.formatMonthYear,
+            formatDate: localizations.formatMediumDate,
+          ),
+        ),
+        media: media,
+        density: _density,
+        tracker: _tracker,
+        selected: _selected.keys.toSet(),
+        selecting: _selecting,
+        onOpen: _open,
+        onToggle: _toggle,
+        onToggleSection: _toggleSection,
+        wantDays: _wantDays,
       ),
     ];
   }
 
-  String _dayLabel(DateTime date) {
-    final now = DateTime.now();
-    final day = DateTime(date.year, date.month, date.day);
-    final today = DateTime(now.year, now.month, now.day);
-    if (day == today) return 'Today';
-    if (day == today.subtract(const Duration(days: 1))) return 'Yesterday';
-    return MaterialLocalizations.of(context).formatMediumDate(date);
-  }
+  /// Selects every selectable file of a section, or clears them when all are
+  /// already selected.
+  void _toggleSection(List<CloudFile> files, bool all) => setState(() {
+    for (final file in files.where((f) => !f.readOnly)) {
+      if (all) {
+        _selected.remove(file.key);
+      } else {
+        _selected[file.key] = file;
+      }
+    }
+  });
 
-  Widget _mediaTile(CloudFile file, List<CloudFile> visible) {
-    final selected = _selected.containsKey(file.key);
-    return Semantics(
-      label: file.name,
-      button: true,
-      selected: selected,
-      child: GestureDetector(
-        onTap: () => _open(file, visible),
-        onLongPress: file.readOnly ? null : () => _toggle(file),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 150),
-          padding: EdgeInsets.all(selected ? 6 : 0),
-          color: Theme.of(context).colorScheme.primaryContainer,
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              Hero(
-                tag: 'asset:${file.key}',
-                child: MediaTile(
-                  key: ValueKey(file.key),
-                  file: file,
-                  controller: c,
-                ),
-              ),
-              if (_selecting && !file.readOnly)
-                Positioned(
-                  top: 5,
-                  left: 5,
-                  child: Icon(
-                    selected
-                        ? Icons.check_circle
-                        : Icons.radio_button_unchecked,
-                    color: selected
-                        ? Theme.of(context).colorScheme.primary
-                        : Colors.white,
-                    size: 22,
-                  ),
-                ),
-              if (file.favorite)
-                const Positioned(
-                  bottom: 6,
-                  right: 6,
-                  child: Icon(Icons.favorite, color: Colors.white, size: 14),
-                ),
-              if (file.isVideo)
-                const Positioned(
-                  bottom: 5,
-                  left: 5,
-                  child: Icon(
-                    Icons.play_arrow_rounded,
-                    color: Colors.white,
-                    size: 21,
-                  ),
-                ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _driveSliver(List<CloudFile> files) => SliverPadding(
-    padding: const EdgeInsets.symmetric(horizontal: 12),
-    sliver: SliverList.builder(
-      itemCount: files.length,
-      itemBuilder: (context, index) {
-        final file = files[index];
-        final colors = Theme.of(context).colorScheme;
-        return ListTile(
-          key: ValueKey('drive:${file.key}'),
-          contentPadding: const EdgeInsets.symmetric(horizontal: 4),
-          selected: _selected.containsKey(file.key),
-          selectedTileColor: colors.primaryContainer,
-          onTap: () => _open(file, files),
-          onLongPress: file.readOnly ? null : () => _toggle(file),
-          leading: _selecting
-              ? Icon(
-                  _selected.containsKey(file.key)
-                      ? Icons.check_circle
-                      : Icons.radio_button_unchecked,
-                )
-              : SizedBox(
-                  width: 40,
-                  height: 40,
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(11),
-                    child: file.isMedia
-                        ? MediaTile(file: file, controller: c)
-                        : ColoredBox(
-                            color: colors.surfaceContainerHigh,
-                            child: Icon(
-                              file.isDirectory
-                                  ? Icons.folder_outlined
-                                  : Icons.description_outlined,
-                              color: colors.primary,
-                              size: 22,
-                            ),
-                          ),
-                  ),
-                ),
-          title: Text(
-            file.name,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
-          ),
-          subtitle: Text(
-            file.isDirectory ? 'Folder' : formatBytes(file.size),
-            style: const TextStyle(fontSize: 11, height: 1.4),
-          ),
-          trailing: _selecting
-              ? null
-              : IconButton(
-                  tooltip: 'Actions for ${file.name}',
-                  onPressed: c.busy
-                      ? null
-                      : () => fileActions(context, c, file),
-                  icon: const Icon(Icons.more_vert, size: 20),
-                ),
-        );
-      },
-    ),
+  Widget _driveList(List<CloudFile> files) => DriveList(
+    files: files,
+    controller: c,
+    selected: _selected.keys.toSet(),
+    selecting: _selecting,
+    onOpen: _open,
+    onToggle: _toggle,
   );
 
   Widget _empty() => Center(
