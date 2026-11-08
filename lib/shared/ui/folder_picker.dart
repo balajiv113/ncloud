@@ -1,42 +1,42 @@
 import 'package:flutter/material.dart';
 
-import '../../app/app_controller.dart';
+import '../../core/ui/messages.dart';
 import '../../diagnostics.dart';
 import '../../models.dart';
-import '../../core/ui/messages.dart';
 
 Future<List<String>?> chooseFolder(
-  BuildContext context,
-  AppController c,
-  List<CloudFile> sources,
-) => showModalBottomSheet<List<String>>(
+  BuildContext context, {
+  required Future<List<CloudFile>> Function(List<String> path) loadFolders,
+  required List<CloudFile> sources,
+}) => showModalBottomSheet<List<String>>(
   context: context,
   isScrollControlled: true,
   showDragHandle: true,
-  builder: (_) => FolderPicker(controller: c, sources: sources),
+  builder: (_) => FolderPicker(loadFolders: loadFolders, sources: sources),
 );
 
 class FolderPicker extends StatefulWidget {
   const FolderPicker({
     super.key,
-    required this.controller,
+    required this.loadFolders,
     required this.sources,
   });
-  final AppController controller;
+  final Future<List<CloudFile>> Function(List<String> path) loadFolders;
   final List<CloudFile> sources;
+
   @override
   State<FolderPicker> createState() => _FolderPickerState();
 }
 
 class _FolderPickerState extends State<FolderPicker> {
   List<String> _path = [];
-  late Future<List<CloudFile>> _folders = widget.controller.folderContents(
-    _path,
-  );
+  late Future<List<CloudFile>> _folders = widget.loadFolders(_path);
+
   void _open(List<String> value) => setState(() {
     _path = value;
-    _folders = widget.controller.folderContents(_path);
+    _folders = widget.loadFolders(_path);
   });
+
   bool _blocked(List<String> path) =>
       widget.sources.any((f) => f.isDirectory && pathStartsWith(path, f.path));
 

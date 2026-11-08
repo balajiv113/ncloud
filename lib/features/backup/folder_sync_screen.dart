@@ -4,8 +4,8 @@ import 'package:flutter/material.dart';
 
 import '../../app/app_controller.dart';
 import 'folder_sync.dart';
-import '../library/folder_picker.dart' show chooseFolder;
 import '../../core/ui/messages.dart' show showError;
+import '../../shared/ui/folder_picker.dart' show chooseFolder;
 import 'sync_rules.dart';
 import 'sync_schedule.dart';
 
@@ -376,8 +376,8 @@ class _BackupSetupScreenState extends State<BackupSetupScreen> {
               : () => _perform(() async {
                   final selected = await chooseFolder(
                     context,
-                    widget.controller,
-                    [],
+                    loadFolders: widget.controller.folderContents,
+                    sources: const [],
                   );
                   if (mounted && selected != null) {
                     setState(() => _destination = selected);

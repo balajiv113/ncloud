@@ -10,9 +10,9 @@ import '../../diagnostics.dart';
 import '../backup/folder_sync_screen.dart';
 import '../../models.dart';
 import '../../core/ui/messages.dart';
-import 'folder_picker.dart';
 import 'library_dialogs.dart';
 import 'share_session.dart';
+import '../../shared/ui/folder_picker.dart';
 
 Future<bool> confirmDelete(BuildContext context, List<CloudFile> files) async =>
     await showDialog<bool>(
@@ -135,7 +135,11 @@ Future<void> fileActions(
         await c.organize([file], 'rename', newName: name);
       }
     case 'move' || 'copy':
-      final destination = await chooseFolder(context, c, [file]);
+      final destination = await chooseFolder(
+        context,
+        loadFolders: c.folderContents,
+        sources: [file],
+      );
       if (destination != null) {
         await c.organize([file], action, destination: destination);
       }

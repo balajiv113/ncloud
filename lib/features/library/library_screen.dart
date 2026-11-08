@@ -10,8 +10,8 @@ import 'change_monitor.dart';
 import 'asset_viewer.dart';
 import '../../discovery_models.dart';
 import 'library_actions.dart';
-import 'folder_picker.dart';
-import 'media_tile.dart';
+import '../../shared/ui/folder_picker.dart';
+import '../../shared/ui/media_tile.dart';
 import '../../models.dart';
 import '../photos/people_bubble.dart';
 import '../photos/photo_map_screen.dart';
@@ -1091,7 +1091,11 @@ class _LibraryScreenState extends State<LibraryScreen>
   }
 
   Future<void> _chooseSource() async {
-    final path = await chooseFolder(context, c, []);
+    final path = await chooseFolder(
+      context,
+      loadFolders: c.folderContents,
+      sources: const [],
+    );
     if (path != null && mounted) {
       setState(_reset);
       await c.setPhotoRoot(path);
@@ -2479,7 +2483,11 @@ class _LibraryScreenState extends State<LibraryScreen>
         .toList();
     List<String>? destination;
     if (operation == 'move' || operation == 'copy') {
-      destination = await chooseFolder(context, c, files);
+      destination = await chooseFolder(
+        context,
+        loadFolders: c.folderContents,
+        sources: files,
+      );
       if (destination == null) return;
     }
     if (!mounted) return;

@@ -12,7 +12,7 @@ import 'package:ncloud/core/cloud/cloud_backend.dart';
 import 'package:ncloud/core/storage/file_store.dart';
 import 'package:ncloud/core/storage/local_cache.dart';
 import 'package:ncloud/models.dart';
-import 'package:ncloud/features/library/media_tile.dart';
+import 'package:ncloud/shared/ui/media_tile.dart';
 import 'package:ncloud/providers/nextcloud/nextcloud_client.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 

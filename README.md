@@ -44,7 +44,7 @@ People discovery uses Memories' Recognize clusters directly. The list may includ
 
 People, face-cover and map-cluster identities are opaque strings in the shared model; Nextcloud validates and converts its numeric identifiers inside the adapter. Older disposable People metadata is rebuilt.
 
-`features/library/` owns the library screens, viewer, cached listing membership, paging and foreground change monitoring; `features/photos/timeline_scrubber.dart` owns scrolling gestures and accessibility. The scrubber remains available to screen readers while visually hidden, with date announcements and increase/decrease actions.
+`shared/ui/` contains reusable cross-feature media previews and folder selection; `core/ui/` contains generic messages and error presentation. Library-only screens, dialogs, viewer actions, cached listing membership, paging and foreground change monitoring stay in `features/library/`; `features/photos/timeline_scrubber.dart` owns scrolling gestures and accessibility. The scrubber remains available to screen readers while visually hidden, with date announcements and increase/decrease actions.
 
 Library screens receive an account-bound change monitor from the controller instead of accessing the provider. The monitor restarts when the account configuration changes and ignores hints from the previous session.
 

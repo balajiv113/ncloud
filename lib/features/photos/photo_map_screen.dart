@@ -8,7 +8,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../app/app_controller.dart';
 import '../../diagnostics.dart';
 import '../../discovery_models.dart';
-import '../library/media_tile.dart';
+import '../../shared/ui/media_tile.dart';
 import '../../models.dart';
 import '../../core/cloud/cloud_backend.dart';
 import '../../core/ui/messages.dart';
