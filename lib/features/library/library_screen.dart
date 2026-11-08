@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../app/app_controller.dart';
+import 'domain/album_entries.dart';
 import 'domain/change_monitor.dart';
 import 'domain/library_view.dart';
 import 'albums_home.dart';
@@ -62,7 +63,6 @@ class _LibraryScreenState extends State<LibraryScreen>
   double _pinchStart = 0;
   double _timelineStart = 0;
   bool _searching = false;
-  bool _showNative = false;
   bool _showPeople = false;
   bool _albumsExpanded = false;
   Object? _visibleKey;
@@ -80,7 +80,6 @@ class _LibraryScreenState extends State<LibraryScreen>
       c.activePerson == null &&
       c.activeMapBounds == null;
   bool get _collection => const [2, 5, 6].contains(c.tab);
-  bool get _sharedHome => c.sharedAlbumHome;
   bool get _selecting => _selected.isNotEmpty;
   bool get _atNavigationRoot =>
       c.tab == 0 ||
@@ -291,7 +290,6 @@ class _LibraryScreenState extends State<LibraryScreen>
   void _prefetch() {
     if (!_scroll.hasClients ||
         _albumHome ||
-        _sharedHome ||
         _drive ||
         _selecting ||
         _query.isNotEmpty ||
@@ -320,7 +318,6 @@ class _LibraryScreenState extends State<LibraryScreen>
     _query = '';
     _searching = false;
     if (!keepAlbumSection) {
-      _showNative = false;
       _showPeople = false;
       _albumsExpanded = false;
     }
@@ -362,12 +359,9 @@ class _LibraryScreenState extends State<LibraryScreen>
       setState(() => _selected.clear());
     } else if (_albumHome && _albumsExpanded) {
       _resetView();
-    } else if (_album && !_albumHome) {
+    } else if ((_album && !_albumHome) || c.tab == 5) {
       _resetView(keepAlbumSection: true);
       c.selectTab(4);
-    } else if (c.tab == 5 && !_sharedHome) {
-      _resetView();
-      c.selectTab(5);
     } else if (_collection) {
       _navigate(4);
     } else {
@@ -445,11 +439,6 @@ class _LibraryScreenState extends State<LibraryScreen>
     }
   }
 
-  void _openSmart(List<String> path) {
-    _resetView(keepAlbumSection: true);
-    c.openSmartAlbum(path);
-  }
-
   void _changeDensity(int value) {
     if (value == _density) return;
     String? anchor;
@@ -483,7 +472,7 @@ class _LibraryScreenState extends State<LibraryScreen>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _prefetch();
     });
-    final files = _albumHome || _sharedHome ? <CloudFile>[] : _visible;
+    final files = _albumHome ? <CloudFile>[] : _visible;
     final theme = Theme.of(context);
     final detail =
         (_albumHome && _albumsExpanded) ||
@@ -495,17 +484,13 @@ class _LibraryScreenState extends State<LibraryScreen>
         (_collection
             ? switch (c.tab) {
                 2 => 'Favorites',
-                5 => _sharedHome ? 'Shared with you' : c.directory.last,
+                5 => c.directory.last,
                 _ => 'Offline',
               }
             : _album
             ? (_albumHome
                   ? (_albumsExpanded
-                        ? (_showPeople
-                              ? 'People'
-                              : _showNative
-                              ? 'Cloud albums'
-                              : 'Smart albums')
+                        ? (_showPeople ? 'People' : 'Albums')
                         : 'Albums')
                   : c.directory.lastOrNull ?? 'Photos')
             : _drive
@@ -665,11 +650,7 @@ class _LibraryScreenState extends State<LibraryScreen>
                                 ),
                               ),
                               if ((c.error ??
-                                      (_albumHome
-                                          ? c.catalogueError
-                                          : _sharedHome
-                                          ? c.sharedAlbumError
-                                          : null))
+                                      (_albumHome ? c.catalogueError : null))
                                   case final error?)
                                 SliverToBoxAdapter(
                                   child: Padding(
@@ -703,7 +684,7 @@ class _LibraryScreenState extends State<LibraryScreen>
                                 ),
                               if (_drive && c.directory.isNotEmpty)
                                 SliverToBoxAdapter(child: _breadcrumbs()),
-                              if ((_album || (c.tab == 5 && !_sharedHome)) &&
+                              if ((_album || c.tab == 5) &&
                                   !_albumHome &&
                                   c.activeCloudAlbum == null &&
                                   c.activePerson == null &&
@@ -737,8 +718,7 @@ class _LibraryScreenState extends State<LibraryScreen>
                               if (c.loading &&
                                   c.items.isEmpty &&
                                   !_indexedLayout &&
-                                  !_albumHome &&
-                                  !_sharedHome)
+                                  !_albumHome)
                                 const SliverFillRemaining(
                                   hasScrollBody: false,
                                   child: Center(
@@ -751,14 +731,7 @@ class _LibraryScreenState extends State<LibraryScreen>
                                   query: _query,
                                   sort: _sort,
                                   expanded: _albumsExpanded,
-                                  showNative: _showNative,
                                   showPeople: _showPeople,
-                                  actions: _albumActions,
-                                )
-                              else if (_sharedHome)
-                                SharedAlbumSlivers(
-                                  controller: c,
-                                  query: _query,
                                   actions: _albumActions,
                                 )
                               else ...[
@@ -809,7 +782,7 @@ class _LibraryScreenState extends State<LibraryScreen>
                         ),
                       ),
                     ),
-                    if (!_albumHome && !_sharedHome && !_drive)
+                    if (!_albumHome && !_drive)
                       Positioned(
                         right: 0,
                         top: 64,
@@ -930,17 +903,19 @@ class _LibraryScreenState extends State<LibraryScreen>
   }
 
   late final _albumActions = AlbumHomeActions(
-    openSmart: _openSmart,
-    openNative: (album) {
+    openAlbum: (album) {
       _resetView(keepAlbumSection: true);
-      c.openCloudAlbum(album);
-    },
-    openShared: (path) {
-      _resetView();
-      c.openSharedAlbum(path);
+      switch (album.kind) {
+        case AlbumKind.smart:
+          c.openSmartAlbum(album.path);
+        case AlbumKind.shared:
+          c.openSharedAlbum(album.path);
+        case AlbumKind.server:
+          c.openCloudAlbum(album.server!);
+      }
     },
     openPerson: _openPerson,
-    expandAlbums: (native) => _expandSection(native: native),
+    expandAlbums: () => _expandSection(),
     expandPeople: () => _expandSection(people: true),
     openMap: _openMap,
     openCollection: _openCollection,
@@ -962,11 +937,10 @@ class _LibraryScreenState extends State<LibraryScreen>
     );
   }
 
-  void _expandSection({bool native = false, bool people = false}) {
+  void _expandSection({bool people = false}) {
     setState(() {
       _reset();
       _albumsExpanded = true;
-      _showNative = native;
       _showPeople = people;
     });
     if (_scroll.hasClients) _scroll.jumpTo(0);

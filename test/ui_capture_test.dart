@@ -94,7 +94,7 @@ void main() {
       await capture('albums-dark');
       tester.platformDispatcher.clearPlatformBrightnessTestValue();
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('View all Smart albums')));
+      await tester.tap(find.byKey(const ValueKey('View all Albums')));
       await tester.pumpAndSettle();
       await capture('albums-expanded');
       await tester.tap(find.text('Kyoto'));
@@ -104,9 +104,6 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byTooltip('Back'));
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('View all Cloud albums')));
-      await tester.pumpAndSettle();
-      await capture('nextcloud-albums-expanded');
       debugDisableShadows = oldShadows;
     },
     skip: !const bool.fromEnvironment('CAPTURE_UI'),

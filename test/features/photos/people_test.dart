@@ -499,80 +499,77 @@ void main() {
     },
   );
 
-  testWidgets(
-    'round People bubbles follow Smart albums and open the shared grid',
-    (tester) async {
-      final c =
-          AppController(
-              store: MemoryStore(),
-              client: NextcloudClient(
-                transport: MockClient((request) async {
-                  if (request.url.path.endsWith('/preview')) {
-                    return http.Response.bytes(png, 200);
-                  }
-                  if (request.url.path.endsWith('/days')) {
-                    return jsonResponse([
-                      {'dayid': 21000, 'count': 1},
-                    ]);
-                  }
-                  if (request.url.path.contains('/days/')) {
-                    return jsonResponse([
-                      {
-                        'fileid': 42,
-                        'dayid': 21000,
-                        'basename': 'portrait.jpg',
-                      },
-                    ]);
-                  }
-                  return http.Response('', 404);
-                }),
-              ),
-            )
-            ..account = account
-            ..tab = 4
-            ..timelineIndexAvailable = true
-            ..people = [
-              const RecognizedPerson(id: '12', name: 'Most', count: 30),
-              const RecognizedPerson(id: '13', name: 'Next', count: 20),
-            ];
-      await tester.pumpWidget(
-        MaterialApp(
-          home: ListenableBuilder(
-            listenable: c,
-            builder: (_, _) => LibraryScreen(controller: c),
-          ),
+  testWidgets('round People bubbles follow Albums and open the shared grid', (
+    tester,
+  ) async {
+    final c =
+        AppController(
+            store: MemoryStore(),
+            client: NextcloudClient(
+              transport: MockClient((request) async {
+                if (request.url.path.endsWith('/preview')) {
+                  return http.Response.bytes(png, 200);
+                }
+                if (request.url.path.endsWith('/days')) {
+                  return jsonResponse([
+                    {'dayid': 21000, 'count': 1},
+                  ]);
+                }
+                if (request.url.path.contains('/days/')) {
+                  return jsonResponse([
+                    {'fileid': 42, 'dayid': 21000, 'basename': 'portrait.jpg'},
+                  ]);
+                }
+                return http.Response('', 404);
+              }),
+            ),
+          )
+          ..account = account
+          ..tab = 4
+          ..timelineIndexAvailable = true
+          ..people = [
+            const RecognizedPerson(id: '12', name: 'Most', count: 30),
+            const RecognizedPerson(id: '13', name: 'Next', count: 20),
+          ];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ListenableBuilder(
+          listenable: c,
+          builder: (_, _) => LibraryScreen(controller: c),
         ),
-      );
-      await tester.pumpAndSettle();
-      expect(
-        tester.getTopLeft(find.text('People')).dy,
-        greaterThan(tester.getTopLeft(find.text('Smart albums')).dy),
-      );
-      expect(
-        find.descendant(
-          of: find.byType(PeopleBubble),
-          matching: find.byType(ClipOval),
-        ),
-        findsNWidgets(2),
-      );
-      expect(
-        tester.getTopLeft(find.text('Most')).dx,
-        lessThan(tester.getTopLeft(find.text('Next')).dx),
-      );
-      await tester.tap(find.byKey(const ValueKey('View all People')));
-      await tester.pumpAndSettle();
-      expect(find.text('People · most photos first'), findsOneWidget);
-      await tester.tap(find.bySemanticsLabel('Most, 30 photos'));
-      await tester.pumpAndSettle();
-      expect(c.activePerson!.id, '12');
-      expect(find.text('Most'), findsOneWidget);
-      expect(find.bySemanticsLabel('portrait.jpg'), findsOneWidget);
-      expect(find.byTooltip('Album actions'), findsNothing);
-      await tester.tap(find.byTooltip('Back'));
-      await tester.pumpAndSettle();
-      expect(find.text('People · most photos first'), findsOneWidget);
-      await tester.pumpWidget(const SizedBox.shrink());
-      c.dispose();
-    },
-  );
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      tester.getTopLeft(find.text('People')).dy,
+      greaterThan(
+        tester.getTopLeft(find.byKey(const ValueKey('View all Albums'))).dy,
+      ),
+    );
+    expect(
+      find.descendant(
+        of: find.byType(PeopleBubble),
+        matching: find.byType(ClipOval),
+      ),
+      findsNWidgets(2),
+    );
+    expect(
+      tester.getTopLeft(find.text('Most')).dx,
+      lessThan(tester.getTopLeft(find.text('Next')).dx),
+    );
+    await tester.tap(find.byKey(const ValueKey('View all People')));
+    await tester.pumpAndSettle();
+    expect(find.text('People · most photos first'), findsOneWidget);
+    await tester.tap(find.bySemanticsLabel('Most, 30 photos'));
+    await tester.pumpAndSettle();
+    expect(c.activePerson!.id, '12');
+    expect(find.text('Most'), findsOneWidget);
+    expect(find.bySemanticsLabel('portrait.jpg'), findsOneWidget);
+    expect(find.byTooltip('Album actions'), findsNothing);
+    await tester.tap(find.byTooltip('Back'));
+    await tester.pumpAndSettle();
+    expect(find.text('People · most photos first'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+    c.dispose();
+  });
 }

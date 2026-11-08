@@ -205,7 +205,7 @@ void main() {
         ..account = account
         ..timelineIndexAvailable = false;
       addTearDown(c.dispose);
-      await c.selectTab(5);
+      await c.selectTab(4);
       expect(c.sharedAlbums.map((a) => a.name), [
         'a',
         'b',

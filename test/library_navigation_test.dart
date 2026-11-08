@@ -94,7 +94,6 @@ void main() {
       (4, 'Albums'),
       (1, 'Drive'),
       (2, 'Favorites'),
-      (5, 'Shared with you'),
       (6, 'Offline'),
     ]) {
       await controller.selectTab(tab);
@@ -215,7 +214,7 @@ void main() {
           (widget) =>
               widget is ListView && widget.scrollDirection == Axis.horizontal,
         )
-        .at(1);
+        .first;
     await tester.drag(carousel, const Offset(-160, 0));
     await tester.pumpAndSettle();
     expect(controller.tab, 4);
@@ -268,11 +267,11 @@ void main() {
     final controller = await _library(tester);
     await tester.tap(find.byKey(const ValueKey('navigate-4')));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('View all Smart albums')));
+    await tester.tap(find.byKey(const ValueKey('View all Albums')));
     await tester.pumpAndSettle();
     await _swipe(tester, -140);
     expect(controller.tab, 4);
-    expect(_title(tester), 'Smart albums');
+    expect(_title(tester), 'Albums');
     await tester.tap(find.byTooltip('Back'));
     await tester.pumpAndSettle();
     expect(_title(tester), 'ncloud');

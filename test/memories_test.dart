@@ -1065,17 +1065,16 @@ void main() {
               ),
             )
             ..account = account.withPhotoRoot(['Photos'])
-            ..tab = 5
+            ..tab = 4
             ..timelineIndexAvailable = false;
       await tester.pumpWidget(NcloudApp(controller: c));
       await tester.pumpAndSettle();
       expect(searches, 2);
-      expect(c.items, isEmpty);
-      expect(c.hasMore, isFalse);
       expect(c.sharedAlbums.map((a) => a.name), ['Trip']);
-      expect(find.byType(SliverGrid), findsOneWidget);
       expect(find.text('Trip'), findsOneWidget);
       expect(find.text('Outgoing'), findsNothing);
+      expect(find.text('Shared with you'), findsNothing);
+      expect(find.byIcon(Icons.folder_shared_outlined), findsOneWidget);
       await tester.tap(find.text('Trip'));
       await tester.pumpAndSettle();
       expect(searches, 3);
@@ -1084,28 +1083,10 @@ void main() {
       expect(c.hasMore, isFalse);
       await tester.tap(find.byTooltip('Back'));
       await tester.pumpAndSettle();
-      expect(c.sharedAlbumHome, isTrue);
+      expect(c.tab, 4);
+      expect(c.directory, isEmpty);
       expect(find.text('Trip'), findsOneWidget);
       expect(searches, 3, reason: 'Shared album catalogue is hot cached');
-      await tester.tap(find.byTooltip('Back'));
-      await tester.pumpAndSettle();
-      expect(c.tab, 4);
-      expect(find.text('Shared'), findsNothing);
-      await tester.scrollUntilVisible(
-        find.byKey(const ValueKey('View all Shared with you')),
-        150,
-        scrollable: find.byType(Scrollable).first,
-      );
-      await tester.pumpAndSettle();
-      expect(find.text('Shared with you'), findsOneWidget);
-      expect(find.text('Trip'), findsOneWidget);
-      await tester.ensureVisible(
-        find.byKey(const ValueKey('View all Shared with you')),
-      );
-      await tester.tap(find.byKey(const ValueKey('View all Shared with you')));
-      await tester.pumpAndSettle();
-      expect(c.sharedAlbumHome, isTrue);
-      expect(searches, 3);
       expect(tester.takeException(), isNull);
     },
   );

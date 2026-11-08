@@ -152,7 +152,6 @@ class AppController extends ChangeNotifier {
   List<SmartAlbum> get sharedAlbums => _shared.value;
   String? get sharedAlbumError => _shared.error;
   bool get loadingSharedAlbums => _shared.loading;
-  bool get sharedAlbumHome => tab == 5 && directory.isEmpty;
   List<String>? _demoPhotoRoot;
   List<String>? _autoPhotoRoot;
   List<CloudFile> get libraryFiles => _libraryFiles;
@@ -902,10 +901,6 @@ class AppController extends ChangeNotifier {
         return;
       }
       if (session == null) return;
-      if (sharedAlbumHome) {
-        await _shared.load(refresh: refresh);
-        return;
-      }
       if (albumHome) {
         await Future.wait([
           _prepareAlbums(refresh: refresh),

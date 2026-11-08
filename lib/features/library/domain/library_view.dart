@@ -50,40 +50,6 @@ List<CloudFile> filterAndSortFiles(
   return visible;
 }
 
-/// Smart albums whose name or folder matches the search text, ordered by
-/// [sort]. Albums have no size, so that order keeps discovery order.
-List<SmartAlbum> filterSmartAlbums(
-  List<SmartAlbum> albums, {
-  required String query,
-  required LibrarySort sort,
-}) {
-  final matching = albums
-      .where(
-        (a) =>
-            query.isEmpty ||
-            '${a.name} ${a.path.join(' ')}'.toLowerCase().contains(
-              query.toLowerCase(),
-            ),
-      )
-      .toList();
-  if (sort == LibrarySort.newest || sort == LibrarySort.oldest) {
-    DateTime date(SmartAlbum album) => album.files
-        .map((f) => f.modified ?? DateTime(1970))
-        .reduce((a, b) => a.isAfter(b) ? a : b);
-    final dates = {for (final album in matching) album.key: date(album)};
-    matching.sort(
-      (a, b) => sort == LibrarySort.newest
-          ? dates[b.key]!.compareTo(dates[a.key]!)
-          : dates[a.key]!.compareTo(dates[b.key]!),
-    );
-  } else if (sort == LibrarySort.name) {
-    matching.sort(
-      (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
-    );
-  }
-  return matching;
-}
-
 /// The sub-folders of [directory] that hold [items]' media, in first-seen
 /// order, so an album can be narrowed to one of them.
 List<List<String>> subfolderPaths(
