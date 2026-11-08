@@ -28,7 +28,7 @@ On-demand file resolution is owned by `features/library/file_resolver.dart`, whi
 
 Share panels use a library-owned session bound to the account that opened them, rather than calling the provider from the widget. Account changes prevent stale share results or actions from crossing sessions.
 
-File actions resolve locations only when their operation needs them; share sessions and playback preparation handle their own lazy lookup and reject account changes before proceeding.
+File actions resolve locations only when their operation needs them. Share sessions and playback preparation reject account changes; providers prepare seekable playback directly from pathless items, while matching saved originals can be replayed without a path lookup.
 
 Multi-file mutations remain bound to their initiating account; a session change stops subsequent operations and prevents stale results from modifying the replacement account's cache.
 

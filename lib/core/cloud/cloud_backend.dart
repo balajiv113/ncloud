@@ -141,7 +141,8 @@ abstract interface class CloudBackend {
     String appPassword,
   );
 
-  PlaybackSource playbackSource(Account account, CloudFile file);
+  /// A seekable authenticated stream. Providers accept pathless timeline items.
+  Future<PlaybackSource> playbackSource(Account account, CloudFile file);
 
   /// Metadata-only inspection need not enumerate children. With [optional],
   /// an unsupported inspection returns a null revision; failures still throw.

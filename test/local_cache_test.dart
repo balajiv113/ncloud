@@ -847,6 +847,37 @@ void main() {
           );
     });
 
+    test('pathless playback reuses a matching offline original', () async {
+      var requests = 0;
+      final original = photo(size: png.length, etag: 'revision-a');
+      final controller = AppController(
+        store: MemoryStore(),
+        cache: cache,
+        client: NextcloudClient(
+          transport: MockClient((_) async {
+            requests++;
+            return http.Response.bytes(png, 200);
+          }),
+        ),
+      )..account = account;
+      addTearDown(controller.dispose);
+      final saved = await controller.saveOffline(original);
+      await controller.clearCache();
+      final pending = CloudFile(
+        path: [CloudFile.pendingRoot, original.id!],
+        name: original.name,
+        isDirectory: false,
+        contentType: original.contentType,
+        id: original.id,
+        size: original.size,
+        etag: original.etag,
+      );
+      final playback = await controller.preparePlayback(pending);
+      expect(playback.offline!.path, saved.path);
+      expect(playback.source, isNull);
+      expect(requests, 1);
+    });
+
     test(
       'offline download rejects a missing revision before network access',
       () async {

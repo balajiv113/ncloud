@@ -305,10 +305,21 @@ class NextcloudClient implements CloudBackend {
         ]);
 
   @override
-  PlaybackSource playbackSource(Account account, CloudFile file) => (
-    uri: fileUri(account, file),
-    headers: {'Authorization': account.authorization},
-  );
+  Future<PlaybackSource> playbackSource(Account account, CloudFile file) async {
+    if (file.pending) {
+      final id = file.id;
+      if (id == null) {
+        throw const CloudException('This item has no location reference.');
+      }
+      file =
+          (await resolveFileIds(account, [id]))[id] ??
+          (throw const CloudException('This item is no longer available.'));
+    }
+    return (
+      uri: fileUri(account, file),
+      headers: {'Authorization': account.authorization},
+    );
+  }
 
   @override
   Stream<Set<String>?> changes(Account account) =>

@@ -173,6 +173,26 @@ void main() {
   );
 
   test(
+    'provider prepares a pathless video without controller ID resolution',
+    () async {
+      final calls = <http.Request>[];
+      final c = AppController(
+        store: MemoryStore(),
+        client: NextcloudClient(transport: indexedTransport(calls)),
+        pathlessTimeline: true,
+      )..account = account;
+      addTearDown(c.dispose);
+      await c.load();
+      final first = c.items.first;
+      final prepared = await c.preparePlayback(first, preferStream: true);
+      expect(prepared.source!.uri.pathSegments.last, 'photo-${first.id}.jpg');
+      expect(prepared.source!.headers['Authorization'], account.authorization);
+      expect(c.items.first.pending, isTrue);
+      expect(calls.where((r) => r.method == 'SEARCH'), hasLength(1));
+    },
+  );
+
+  test(
     'server changes are detected from the day index and only changed days reload',
     () async {
       var counts = {for (var i = 0; i < 30; i++) 21000 - i: 60};

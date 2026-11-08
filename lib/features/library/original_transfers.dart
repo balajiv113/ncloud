@@ -26,6 +26,27 @@ class OriginalTransfers {
         : null;
   }
 
+  /// Resolve a pathless video against saved membership without a server lookup.
+  Future<File?> playbackCopy(Account account, CloudFile file) async {
+    if (!file.pending) return offlineCopy(account, file);
+    final storage = cache;
+    final id = file.id;
+    final revision = file.etag;
+    if (storage == null || id == null || revision == null || revision.isEmpty) {
+      return null;
+    }
+    final saved = await storage.readOfflineListing(
+      'offline|${account.storageKey}',
+    );
+    for (final item in saved) {
+      if (item.id == id && item.etag == revision && item.size == file.size) {
+        final copy = await offlineCopy(account, item);
+        if (copy != null) return copy;
+      }
+    }
+    return null;
+  }
+
   Future<File> download(
     Account account,
     CloudFile file, {

@@ -2799,18 +2799,19 @@ class AppController extends ChangeNotifier {
     if (demo || session == null) {
       throw const CloudException('Reconnect to stream this video.');
     }
-    file = await resolve(file);
+    final copy = preferStream
+        ? null
+        : await _originalTransfers.playbackCopy(session, file);
     if (_disposed || !identical(account, session) || demo) {
       throw const CloudException('The account changed. Open this video again.');
     }
-    final copy = preferStream ? null : await offlineCopy(file);
+    final source = copy == null
+        ? await client.playbackSource(session, file)
+        : null;
     if (_disposed || !identical(account, session) || demo) {
       throw const CloudException('The account changed. Open this video again.');
     }
-    return (
-      offline: copy,
-      source: copy == null ? client.playbackSource(session, file) : null,
-    );
+    return (offline: copy, source: source);
   }
 
   /// Explicitly saved original, outside the bounded browsing cache.

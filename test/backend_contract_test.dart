@@ -120,7 +120,10 @@ class _PortableBackend implements CloudBackend {
   }
 
   @override
-  PlaybackSource playbackSource(Account account, CloudFile file) => (
+  Future<PlaybackSource> playbackSource(
+    Account account,
+    CloudFile file,
+  ) async => (
     uri: Uri.parse('https://media.example/video/${file.id}'),
     headers: {'Authorization': 'Bearer media-token'},
   );
@@ -236,6 +239,17 @@ class _DelayedMoveBackend extends _PortableBackend {
     moved.add((account: account, file: file));
     if (!started.isCompleted) started.complete();
     await finished.future;
+  }
+}
+
+class _DelayedPlaybackBackend extends _PortableBackend {
+  final started = Completer<void>();
+  final result = Completer<PlaybackSource>();
+
+  @override
+  Future<PlaybackSource> playbackSource(Account account, CloudFile file) {
+    started.complete();
+    return result.future;
   }
 }
 
@@ -452,6 +466,29 @@ void main() {
       await failure;
     },
   );
+
+  test('late playback source is rejected after account change', () async {
+    final backend = _DelayedPlaybackBackend();
+    final controller = AppController(store: _SessionStore(), client: backend)
+      ..account = account;
+    addTearDown(controller.dispose);
+    const file = CloudFile(
+      path: [CloudFile.pendingRoot, 'opaque:1'],
+      name: 'video.mp4',
+      isDirectory: false,
+      contentType: 'video/mp4',
+      id: 'opaque:1',
+    );
+    final pending = controller.preparePlayback(file, preferStream: true);
+    final failure = expectLater(pending, throwsA(isA<CloudException>()));
+    await backend.started.future;
+    controller.account = const _PortableAccount('portable|other');
+    backend.result.complete((
+      uri: Uri.parse('https://media.example/video'),
+      headers: <String, String>{},
+    ));
+    await failure;
+  });
 
   test(
     'share panel operations are bound to their initiating account',
