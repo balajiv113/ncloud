@@ -7,7 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ncloud/app/app_controller.dart';
 import 'package:ncloud/core/cloud/cloud_backend.dart';
 import 'package:ncloud/core/storage/local_cache.dart';
-import 'package:ncloud/features/library/thumbnail_repository.dart';
+import 'package:ncloud/features/library/domain/thumbnail_repository.dart';
 import 'package:ncloud/models.dart';
 
 import 'app_test.dart' show MemoryStore;

@@ -1,7 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ncloud/features/library/preview_memory.dart';
+import 'package:ncloud/features/library/domain/preview_memory.dart';
 
 void main() {
   test('eviction honors recency and counts replacement bytes', () {

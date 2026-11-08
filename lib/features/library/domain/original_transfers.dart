@@ -2,9 +2,9 @@ import 'dart:io';
 
 import 'package:path_provider/path_provider.dart';
 
-import '../../core/cloud/cloud_backend.dart';
-import '../../core/storage/local_cache.dart';
-import '../../models.dart';
+import '../../../core/cloud/cloud_backend.dart';
+import '../../../core/storage/local_cache.dart';
+import '../../../models.dart';
 
 /// Downloads originals and publishes offline membership only after validation.
 class OriginalTransfers {

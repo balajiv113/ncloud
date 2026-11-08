@@ -1,5 +1,5 @@
-import '../../core/cloud/cloud_backend.dart';
-import '../../models.dart';
+import '../../../core/cloud/cloud_backend.dart';
+import '../../../models.dart';
 
 /// Reconciles sparse album metadata with already known account files.
 List<CloudFile> reconcileAlbumMembers(

@@ -3,7 +3,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ncloud/core/storage/local_cache.dart';
-import 'package:ncloud/features/library/cached_resource.dart';
+import 'package:ncloud/features/library/domain/cached_resource.dart';
 import 'package:ncloud/models.dart';
 
 import 'nextcloud_client_test.dart' show account;

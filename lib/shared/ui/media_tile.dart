@@ -4,7 +4,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 
 import '../../app/app_controller.dart';
-import '../../features/library/thumbnail_repository.dart';
+import '../../features/library/domain/thumbnail_repository.dart';
 import '../../models.dart';
 
 class MediaTile extends StatefulWidget {
