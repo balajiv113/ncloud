@@ -9,6 +9,7 @@ import '../../app/app_controller.dart';
 import 'domain/album_entries.dart';
 import 'domain/change_monitor.dart';
 import 'domain/library_view.dart';
+import 'domain/library_view_state.dart';
 import 'albums_home.dart';
 import 'album_context.dart';
 import 'asset_viewer.dart';
@@ -51,24 +52,14 @@ class _LibraryScreenState extends State<LibraryScreen>
   int _navigationRequest = 0;
   Offset? _navigationDragStart;
   Offset _navigationDrag = Offset.zero;
-  final Map<String, CloudFile> _selected = {};
   final Map<int, Offset> _pointers = {};
+  final _view = LibraryViewState();
   final _tracker = TimelineTracker();
   final Set<int> _wantedDays = {};
   bool _requestScheduled = false;
-  MediaFilter _filter = MediaFilter.all;
-  LibrarySort _sort = LibrarySort.newest;
-  List<String>? _subfolder;
-  int _density = 3;
   int _pinchBase = 3;
   double _pinchStart = 0;
-  bool _searching = false;
-  bool _showPeople = false;
-  bool _albumsExpanded = false;
-  Object? _visibleKey;
-  List<CloudFile> _visibleFiles = [];
   int _prefetchBudget = 2;
-  String _query = '';
   AppController get c => widget.controller;
   bool get _album => c.tab == 4;
   bool get _drive => c.tab == 1;
@@ -80,15 +71,14 @@ class _LibraryScreenState extends State<LibraryScreen>
       c.activePerson == null &&
       c.activeMapBounds == null;
   bool get _collection => const [2, 5, 6].contains(c.tab);
-  bool get _selecting => _selected.isNotEmpty;
   bool get _atNavigationRoot =>
       c.tab == 0 ||
-      (_albumHome && !_albumsExpanded) ||
+      (_albumHome && !_view.albumsExpanded) ||
       (_drive && c.directory.isEmpty);
   bool get _canSwipeDestinations =>
       _atNavigationRoot &&
-      !_selecting &&
-      !_searching &&
+      !_view.selecting &&
+      !_view.searching &&
       !c.busy &&
       !c.loading &&
       (ModalRoute.of(context)?.isCurrent ?? true);
@@ -224,7 +214,7 @@ class _LibraryScreenState extends State<LibraryScreen>
   void _activity() => _changes?.activity();
 
   Future<bool> _checkForChanges(Set<String>? ids, bool pushed) async {
-    if (!_foreground || _selecting) return false;
+    if (!_foreground || _view.selecting) return false;
     final changed = await c.checkForChanges(changedFileIds: ids, force: pushed);
     if (!mounted) return changed;
     if (changed &&
@@ -265,8 +255,8 @@ class _LibraryScreenState extends State<LibraryScreen>
     if (!_scroll.hasClients ||
         _albumHome ||
         _drive ||
-        _selecting ||
-        _query.isNotEmpty ||
+        _view.selecting ||
+        _view.query.isNotEmpty ||
         _prefetchBudget <= 0 ||
         c.loading ||
         c.loadingMore ||
@@ -288,16 +278,8 @@ class _LibraryScreenState extends State<LibraryScreen>
 
   void _reset({bool keepAlbumSection = false}) {
     _search.clear();
-    _selected.clear();
-    _query = '';
-    _searching = false;
-    if (!keepAlbumSection) {
-      _showPeople = false;
-      _albumsExpanded = false;
-    }
+    _view.reset(keepAlbumSection: keepAlbumSection);
     _prefetchBudget = 2;
-    _filter = MediaFilter.all;
-    _subfolder = null;
     _wantedDays.clear();
     _tracker.clear();
   }
@@ -328,9 +310,9 @@ class _LibraryScreenState extends State<LibraryScreen>
   }
 
   void _back() {
-    if (_selecting) {
-      setState(() => _selected.clear());
-    } else if (_albumHome && _albumsExpanded) {
+    if (_view.selecting) {
+      setState(() => _view.selected.clear());
+    } else if (_albumHome && _view.albumsExpanded) {
       _resetView();
     } else if ((_album && !_albumHome) || c.tab == 5) {
       _resetView(keepAlbumSection: true);
@@ -343,44 +325,17 @@ class _LibraryScreenState extends State<LibraryScreen>
     }
   }
 
-  List<CloudFile> get _visible {
-    final key = (
-      c.items,
-      _query,
-      _subfolder,
-      _filter,
-      _sort,
-      _drive,
-      _collection,
-    );
-    if (key == _visibleKey) return _visibleFiles;
-    _visibleKey = key;
-    final files = filterAndSortFiles(
-      c.items,
-      query: _query,
-      subfolder: _subfolder,
-      filter: _filter,
-      sort: _sort,
-      drive: _drive,
-      collection: _collection,
-    );
-    return _visibleFiles = files;
-  }
+  List<CloudFile> get _visible =>
+      _view.visibleFiles(c.items, drive: _drive, collection: _collection);
 
   void _toggle(CloudFile file) {
     if (file.readOnly) return;
     HapticFeedback.selectionClick();
-    setState(() {
-      if (_selected.containsKey(file.key)) {
-        _selected.remove(file.key);
-      } else {
-        _selected[file.key] = file;
-      }
-    });
+    setState(() => _view.toggle(file));
   }
 
   void _open(CloudFile file, List<CloudFile> visible) {
-    if (_selecting) {
+    if (_view.selecting) {
       _toggle(file);
     } else if (file.isDirectory) {
       _resetView();
@@ -413,11 +368,11 @@ class _LibraryScreenState extends State<LibraryScreen>
   }
 
   void _changeDensity(int value) {
-    if (value == _density) return;
+    if (value == _view.density) return;
     final anchor = _scroll.hasClients
         ? _tracker.anchorAt(_scroll.offset)
         : null;
-    setState(() => _density = value);
+    setState(() => _view.density = value);
     if (anchor != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted || !_scroll.hasClients) return;
@@ -436,7 +391,7 @@ class _LibraryScreenState extends State<LibraryScreen>
     final files = _albumHome ? <CloudFile>[] : _visible;
     final theme = Theme.of(context);
     final detail =
-        (_albumHome && _albumsExpanded) ||
+        (_albumHome && _view.albumsExpanded) ||
         (!_albumHome && (_album || _collection));
     final title =
         (c.activeMapBounds == null ? null : 'Photos in this area') ??
@@ -450,15 +405,15 @@ class _LibraryScreenState extends State<LibraryScreen>
               }
             : _album
             ? (_albumHome
-                  ? (_albumsExpanded
-                        ? (_showPeople ? 'People' : 'Albums')
+                  ? (_view.albumsExpanded
+                        ? (_view.showPeople ? 'People' : 'Albums')
                         : 'Albums')
                   : c.directory.lastOrNull ?? 'Photos')
             : _drive
             ? (c.directory.lastOrNull ?? 'Drive')
             : 'Timeline');
     return PopScope(
-      canPop: !_selecting && !detail && c.directory.isEmpty && !c.busy,
+      canPop: !_view.selecting && !detail && c.directory.isEmpty && !c.busy,
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop && !c.busy) _back();
       },
@@ -493,7 +448,7 @@ class _LibraryScreenState extends State<LibraryScreen>
                     RefreshIndicator(
                       onRefresh: () async {
                         setState(() {
-                          _selected.clear();
+                          _view.selected.clear();
                           _prefetchBudget = 2;
                         });
                         await c.load();
@@ -504,7 +459,7 @@ class _LibraryScreenState extends State<LibraryScreen>
                           _pointers[event.pointer] = event.position;
                           if (_pointers.length == 2) {
                             _navigationDragStart = null;
-                            _pinchBase = _density;
+                            _pinchBase = _view.density;
                             _pinchStart = _span;
                           }
                         },
@@ -522,7 +477,7 @@ class _LibraryScreenState extends State<LibraryScreen>
                               ? (_pinchBase - 1).clamp(2, 6)
                               : scale < .75
                               ? (_pinchBase + 1).clamp(2, 6)
-                              : _density;
+                              : _view.density;
                           _changeDensity(next);
                         },
                         onPointerUp: (event) => _pointers.remove(event.pointer),
@@ -547,22 +502,22 @@ class _LibraryScreenState extends State<LibraryScreen>
                             cacheExtent: 1200,
                             slivers: [
                               LibraryAppBar(
-                                title: _selecting
-                                    ? '${_selected.length} selected'
+                                title: _view.selecting
+                                    ? '${_view.selected.length} selected'
                                     : c.directory.isNotEmpty ||
                                           c.activeCloudAlbum != null ||
                                           c.activePerson != null ||
                                           c.activeMapBounds != null ||
-                                          (_albumHome && _albumsExpanded)
+                                          (_albumHome && _view.albumsExpanded)
                                     ? title
                                     : 'ncloud',
                                 showBack:
-                                    _selecting ||
+                                    _view.selecting ||
                                     detail ||
                                     c.directory.isNotEmpty,
-                                selecting: _selecting,
+                                selecting: _view.selecting,
                                 busy: c.busy,
-                                searching: _searching,
+                                searching: _view.searching,
                                 searchController: _search,
                                 demo: c.demo,
                                 initial: c.demo
@@ -577,13 +532,10 @@ class _LibraryScreenState extends State<LibraryScreen>
                                 showSettings: !detail,
                                 onBack: _back,
                                 onQueryChanged: (value) =>
-                                    setState(() => _query = value),
+                                    setState(() => _view.query = value),
                                 onToggleSearch: () => setState(() {
-                                  _searching = !_searching;
-                                  if (!_searching) {
-                                    _query = '';
-                                    _search.clear();
-                                  }
+                                  _view.toggleSearch();
+                                  if (!_view.searching) _search.clear();
                                 }),
                                 onViewOptions: _viewOptions,
                                 onSettings: () => Navigator.push(
@@ -661,10 +613,10 @@ class _LibraryScreenState extends State<LibraryScreen>
                                       c.items,
                                       c.directory,
                                     ),
-                                    selected: _subfolder,
+                                    selected: _view.subfolder,
                                     canManageFolder: c.directory.isNotEmpty,
                                     onSelect: (path) =>
-                                        setState(() => _subfolder = path),
+                                        setState(() => _view.subfolder = path),
                                     onOpenInDrive: () {
                                       setState(_reset);
                                       c.openFolder(c.currentFolder);
@@ -689,17 +641,17 @@ class _LibraryScreenState extends State<LibraryScreen>
                               else if (_albumHome)
                                 AlbumHomeSlivers(
                                   controller: c,
-                                  query: _query,
-                                  sort: _sort,
-                                  expanded: _albumsExpanded,
-                                  showPeople: _showPeople,
+                                  query: _view.query,
+                                  sort: _view.sort,
+                                  expanded: _view.albumsExpanded,
+                                  showPeople: _view.showPeople,
                                   actions: _albumActions,
                                 )
                               else ...[
                                 if (c.tab == 0 &&
-                                    !_selecting &&
-                                    _query.isEmpty &&
-                                    _filter == MediaFilter.all)
+                                    !_view.selecting &&
+                                    _view.query.isEmpty &&
+                                    _view.filter == MediaFilter.all)
                                   if (memoryGroups(files) case final groups
                                       when groups.isNotEmpty)
                                     SliverToBoxAdapter(
@@ -763,7 +715,7 @@ class _LibraryScreenState extends State<LibraryScreen>
                           markers: _tracker.yearMarkers,
                         ),
                       ),
-                    if (c.tab == 0 && c.timelineChanged && !_selecting)
+                    if (c.tab == 0 && c.timelineChanged && !_view.selecting)
                       Positioned(
                         top: MediaQuery.paddingOf(context).top + 72,
                         left: 0,
@@ -790,18 +742,18 @@ class _LibraryScreenState extends State<LibraryScreen>
             ),
           ),
         ),
-        floatingActionButton: _drive && !_selecting
+        floatingActionButton: _drive && !_view.selecting
             ? FloatingActionButton(
                 tooltip: 'Add files',
                 onPressed: c.busy ? null : _add,
                 child: const Icon(Icons.add),
               )
             : null,
-        bottomNavigationBar: _selecting
+        bottomNavigationBar: _view.selecting
             ? SelectionBar(
                 busy: c.busy,
                 onAction: _bulk,
-                onDone: () => setState(() => _selected.clear()),
+                onDone: () => setState(() => _view.selected.clear()),
               )
             : NavigationDock(
                 active: _drive
@@ -909,8 +861,8 @@ class _LibraryScreenState extends State<LibraryScreen>
   void _expandSection({bool people = false}) {
     setState(() {
       _reset();
-      _albumsExpanded = true;
-      _showPeople = people;
+      _view.albumsExpanded = true;
+      _view.showPeople = people;
     });
     if (_scroll.hasClients) _scroll.jumpTo(0);
   }
@@ -918,11 +870,7 @@ class _LibraryScreenState extends State<LibraryScreen>
   /// Whether the full day index can lay out the whole timeline up
   /// front, so scrolling and scrubbing never wait at the end of a page.
   bool get _indexedLayout =>
-      c.indexedDays.isNotEmpty &&
-      _filter == MediaFilter.all &&
-      _query.isEmpty &&
-      _sort == LibrarySort.newest &&
-      _subfolder == null;
+      c.indexedDays.isNotEmpty && _view.showsFullTimeline;
 
   List<Widget> _timelineSlivers(List<CloudFile> files) {
     final media = files.where((f) => f.isMedia).toList();
@@ -941,16 +889,16 @@ class _LibraryScreenState extends State<LibraryScreen>
           dayNeedsRefresh: c.dayNeedsRefresh,
           labelFor: (date) => timelineLabel(
             date,
-            byMonth: _density >= 5,
+            byMonth: _view.density >= 5,
             formatMonth: localizations.formatMonthYear,
             formatDate: localizations.formatMediumDate,
           ),
         ),
         media: media,
-        density: _density,
+        density: _view.density,
         tracker: _tracker,
-        selected: _selected.keys.toSet(),
-        selecting: _selecting,
+        selected: _view.selected.keys.toSet(),
+        selecting: _view.selecting,
         onOpen: _open,
         onToggle: _toggle,
         onToggleSection: _toggleSection,
@@ -961,21 +909,14 @@ class _LibraryScreenState extends State<LibraryScreen>
 
   /// Selects every selectable file of a section, or clears them when all are
   /// already selected.
-  void _toggleSection(List<CloudFile> files, bool all) => setState(() {
-    for (final file in files.where((f) => !f.readOnly)) {
-      if (all) {
-        _selected.remove(file.key);
-      } else {
-        _selected[file.key] = file;
-      }
-    }
-  });
+  void _toggleSection(List<CloudFile> files, bool all) =>
+      setState(() => _view.toggleAll(files, all));
 
   Widget _driveList(List<CloudFile> files) => DriveList(
     files: files,
     controller: c,
-    selected: _selected.keys.toSet(),
-    selecting: _selecting,
+    selected: _view.selected.keys.toSet(),
+    selecting: _view.selecting,
     onOpen: _open,
     onToggle: _toggle,
   );
@@ -1014,7 +955,7 @@ class _LibraryScreenState extends State<LibraryScreen>
                 ? 'This group has no photos here. Refresh People to check for changes.'
                 : c.activeMapBounds != null
                 ? 'No photos with saved coordinates in this area. Try a wider map view.'
-                : _query.isNotEmpty || _filter != MediaFilter.all
+                : _view.query.isNotEmpty || _view.filter != MediaFilter.all
                 ? 'Try another search or view option.'
                 : 'Add files in Drive to start your collection.',
             textAlign: TextAlign.center,
@@ -1026,26 +967,26 @@ class _LibraryScreenState extends State<LibraryScreen>
 
   Future<void> _viewOptions() => showViewOptions(
     context,
-    options: (filter: _filter, sort: _sort, density: _density),
+    options: (filter: _view.filter, sort: _view.sort, density: _view.density),
     onChanged: (options) {
       setState(() {
-        _filter = options.filter;
-        _sort = options.sort;
+        _view.filter = options.filter;
+        _view.sort = options.sort;
       });
       _changeDensity(options.density);
     },
     drive: _drive,
     albumHome: _albumHome,
-    showPeople: _showPeople,
+    showPeople: _view.showPeople,
     captureDates: c.timelineIndexAvailable == true,
     photoRoot: c.photoRoot,
     onChooseSource: _chooseSource,
   );
 
   Future<void> _bulk(String operation) async {
-    final files = _selected.values
+    final files = _view.selected.values
         .where(
-          (f) => !_selected.values.any(
+          (f) => !_view.selected.values.any(
             (parent) =>
                 parent.isDirectory &&
                 parent.key != f.key &&
@@ -1065,7 +1006,7 @@ class _LibraryScreenState extends State<LibraryScreen>
     if (!mounted) return;
     if (operation == 'delete' && !await confirmDelete(context, files)) return;
     await c.organize(files, operation, destination: destination);
-    if (mounted) setState(() => _selected.clear());
+    if (mounted) setState(() => _view.selected.clear());
   }
 
   Future<void> _add() async {
