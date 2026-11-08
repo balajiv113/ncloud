@@ -19,6 +19,15 @@ sealed class BrowseTarget {
   /// Stable text identifying this view, used to key its cached listing.
   String get cacheKey;
 
+  /// The server album shown, if this is one.
+  CloudAlbum? get serverAlbum => null;
+
+  /// The person shown, if this is a person's photos.
+  RecognizedPerson? get person => null;
+
+  /// The map area shown, if this is one.
+  List<PhotoMapBounds>? get mapBounds => null;
+
   /// This target at another folder. Only folder views move in place; any other
   /// target becomes a Drive folder.
   BrowseTarget inFolder(List<String> folder) => DriveTarget(folder);
@@ -122,6 +131,9 @@ final class ServerAlbumTarget extends BrowseTarget {
   final CloudAlbum album;
 
   @override
+  CloudAlbum get serverAlbum => album;
+
+  @override
   Destination get destination => Destination.albums;
 
   @override
@@ -132,6 +144,7 @@ final class ServerAlbumTarget extends BrowseTarget {
 final class PersonTarget extends BrowseTarget {
   const PersonTarget(this.person);
 
+  @override
   final RecognizedPerson person;
 
   @override
@@ -148,6 +161,9 @@ final class MapAreaTarget extends BrowseTarget {
     : bounds = List.unmodifiable(bounds);
 
   final List<PhotoMapBounds> bounds;
+
+  @override
+  List<PhotoMapBounds> get mapBounds => bounds;
 
   @override
   Destination get destination => Destination.albums;
