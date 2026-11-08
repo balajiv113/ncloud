@@ -49,7 +49,6 @@ class CloudFile {
     this.modified,
     this.id,
     this.favorite = false,
-    this.demoColor,
     this.albumReference,
     this.taken,
     this.captureDay,
@@ -64,7 +63,6 @@ class CloudFile {
   final DateTime? modified;
   final String? id;
   final bool favorite;
-  final int? demoColor;
 
   /// Backend-owned location for an album member without an account file path.
   final List<String>? albumReference;
@@ -93,7 +91,6 @@ class CloudFile {
     'modified': modified?.toUtc().toIso8601String(),
     'id': id,
     'favorite': favorite,
-    'color': demoColor,
     'albumReference': albumReference,
     'taken': taken?.toIso8601String(),
     'captureDay': captureDay,
@@ -111,7 +108,6 @@ class CloudFile {
         : DateTime.parse(json['modified'] as String),
     id: json['id'] as String?,
     favorite: json['favorite'] as bool,
-    demoColor: json['color'] as int?,
     albumReference: (json['albumReference'] as List<dynamic>?)?.cast<String>(),
     taken: json['taken'] == null
         ? null
@@ -139,7 +135,6 @@ class CloudFile {
     modified: modified,
     id: id,
     favorite: value,
-    demoColor: demoColor,
     albumReference: albumReference,
     taken: taken,
     captureDay: captureDay,
@@ -155,7 +150,6 @@ class CloudFile {
     modified: modified,
     id: id,
     favorite: favorite,
-    demoColor: demoColor,
     albumReference: albumReference,
     taken: taken,
     captureDay: captureDay,
@@ -171,7 +165,6 @@ class CloudFile {
     modified: modified,
     id: id,
     favorite: favorite,
-    demoColor: demoColor,
     albumReference: albumReference,
     taken: taken,
     captureDay: captureDay,
@@ -191,7 +184,6 @@ class CloudFile {
     modified: modified,
     id: id,
     favorite: favorite,
-    demoColor: demoColor,
     albumReference: albumReference,
     taken: date,
     captureDay: day,
@@ -267,50 +259,6 @@ class PhotoFolder {
   const PhotoFolder(this.path, this.previews);
   final List<String> path;
   final List<CloudFile> previews;
-}
-
-/// The first folder with its own media on each branch becomes an album that
-/// includes everything below it; grouping-only folders are walked through.
-/// Loose media directly in [root] forms a separate album and never hides the
-/// albums inside the root.
-List<SmartAlbum> buildSmartAlbums(List<CloudFile> files, List<String> root) {
-  final media = files
-      .where((f) => f.isMedia && pathStartsWith(f.path, root))
-      .toList();
-  final parents = <String, SmartAlbum>{};
-  for (final file in media) {
-    final path = file.path.sublist(0, file.path.length - 1);
-    parents.putIfAbsent(
-      path.map(Uri.encodeComponent).join('/'),
-      () => SmartAlbum(path: path, files: []),
-    );
-  }
-  final candidates = parents.values
-      .where((a) => a.path.length > root.length)
-      .toList();
-  parents.removeWhere(
-    (key, album) =>
-        album.path.length > root.length &&
-        candidates.any(
-          (parent) =>
-              parent.path.length < album.path.length &&
-              pathStartsWith(album.path, parent.path),
-        ),
-  );
-  for (final file in media) {
-    if (file.path.length == root.length + 1) {
-      parents[root.map(Uri.encodeComponent).join('/')]?.files.add(file);
-      continue;
-    }
-    for (var depth = root.length + 1; depth < file.path.length; depth++) {
-      final key = file.path.take(depth).map(Uri.encodeComponent).join('/');
-      parents[key]?.files.add(file);
-    }
-  }
-  return parents.values.toList()..sort((a, b) {
-    final name = a.name.toLowerCase().compareTo(b.name.toLowerCase());
-    return name == 0 ? a.key.compareTo(b.key) : name;
-  });
 }
 
 class TrashEntry {

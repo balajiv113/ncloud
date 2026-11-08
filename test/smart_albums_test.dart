@@ -9,12 +9,12 @@ import 'package:ncloud/features/library/domain/browse_target.dart';
 import 'package:ncloud/app/app_controller.dart';
 import 'package:ncloud/core/storage/local_cache.dart';
 import 'package:ncloud/features/library/domain/album_members.dart';
-import 'package:ncloud/main.dart';
 import 'package:ncloud/models.dart';
 import 'package:ncloud/providers/nextcloud/nextcloud_client.dart';
 import 'package:ncloud/core/cloud/cloud_backend.dart';
 
 import 'app_test.dart' show MemoryStore;
+import 'support/sample_library.dart';
 import 'nextcloud_client_test.dart' show account, multistatus, responseEntry;
 
 String page(int offset, int count) => multistatus(
@@ -408,11 +408,7 @@ void main() {
   testWidgets(
     'first folders with media become Smart albums listed with server albums',
     (tester) async {
-      final c = AppController(store: MemoryStore(), client: NextcloudClient());
-      await tester.pumpWidget(NcloudApp(controller: c));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Try demo'));
-      await tester.pumpAndSettle();
+      final c = await pumpSampleLibrary(tester);
       await tester.tap(find.byTooltip('Albums'));
       await tester.pumpAndSettle();
       expect(find.byTooltip('Library'), findsNothing);
@@ -464,11 +460,7 @@ void main() {
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
-    final c = AppController(store: MemoryStore(), client: NextcloudClient());
-    await tester.pumpWidget(NcloudApp(controller: c));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Try demo'));
-    await tester.pumpAndSettle();
+    final c = await pumpSampleLibrary(tester);
     await tester.tap(find.byTooltip('Albums'));
     await tester.pumpAndSettle();
     expect(tester.getTopLeft(find.text('Kyoto')).dy, lessThan(550));
@@ -496,17 +488,7 @@ void main() {
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
-    await tester.pumpWidget(
-      NcloudApp(
-        controller: AppController(
-          store: MemoryStore(),
-          client: NextcloudClient(),
-        ),
-      ),
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Try demo'));
-    await tester.pumpAndSettle();
+    await pumpSampleLibrary(tester);
     final first = find.bySemanticsLabel('Alpine morning.jpg');
     expect(tester.getTopLeft(first).dy, lessThan(915 * .30));
     expect(find.textContaining('Load more'), findsNothing);

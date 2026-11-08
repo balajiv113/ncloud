@@ -5,11 +5,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ncloud/app/app_controller.dart';
 import 'package:ncloud/main.dart';
-import 'package:ncloud/providers/nextcloud/nextcloud_client.dart';
 
-import 'app_test.dart' show MemoryStore;
+import 'support/sample_library.dart';
 
 void main() {
   testWidgets(
@@ -43,12 +41,7 @@ void main() {
       await tester.pumpWidget(
         RepaintBoundary(
           key: key,
-          child: NcloudApp(
-            controller: AppController(
-              store: MemoryStore(),
-              client: NextcloudClient(),
-            ),
-          ),
+          child: NcloudApp(controller: sampleController()),
         ),
       );
       await tester.pumpAndSettle();
@@ -67,8 +60,6 @@ void main() {
         expect(tester.takeException(), isNull);
       }
 
-      await tester.tap(find.text('Try demo'));
-      await tester.pumpAndSettle();
       for (final (label, name) in [
         ('Timeline', 'timeline'),
         ('Albums', 'albums'),

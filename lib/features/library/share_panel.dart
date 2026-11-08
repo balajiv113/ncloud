@@ -27,13 +27,11 @@ class _SharePanelState extends State<SharePanel> {
   @override
   void initState() {
     super.initState();
-    if (!widget.controller.demo) {
-      try {
-        _session = widget.controller.shareSession(widget.file);
-      } catch (e) {
-        _error = errorMessage(e);
-        return;
-      }
+    try {
+      _session = widget.controller.shareSession(widget.file);
+    } catch (e) {
+      _error = errorMessage(e);
+      return;
     }
     _load();
   }
@@ -59,10 +57,6 @@ class _SharePanelState extends State<SharePanel> {
   }
 
   Future<void> _load() => _run(() async {
-    if (widget.controller.demo) {
-      if (mounted) setState(() => _links = []);
-      return;
-    }
     final links = await _shareSession.list();
     if (mounted) setState(() => _links = links);
   });
@@ -100,11 +94,6 @@ class _SharePanelState extends State<SharePanel> {
               message: _error!,
               isError: true,
               onRetry: _busy ? null : _load,
-            ),
-          if (widget.controller.demo)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 20),
-              child: Text('Connect a server to create real share links.'),
             ),
           for (final link in _links)
             Card(
@@ -183,7 +172,7 @@ class _SharePanelState extends State<SharePanel> {
           const SizedBox(height: 16),
           TextField(
             controller: _password,
-            enabled: !_busy && !widget.controller.demo,
+            enabled: !_busy,
             obscureText: true,
             decoration: const InputDecoration(
               labelText: 'Link password (optional)',
@@ -191,7 +180,7 @@ class _SharePanelState extends State<SharePanel> {
           ),
           const SizedBox(height: 8),
           TextButton.icon(
-            onPressed: _busy || widget.controller.demo
+            onPressed: _busy
                 ? null
                 : () async {
                     final now = DateTime.now();
@@ -218,7 +207,7 @@ class _SharePanelState extends State<SharePanel> {
               child: const Text('Remove expiry'),
             ),
           FilledButton.icon(
-            onPressed: _busy || widget.controller.demo
+            onPressed: _busy
                 ? null
                 : () => _run(() async {
                     final result = await _shareSession.create(

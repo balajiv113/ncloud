@@ -1,11 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ncloud/features/library/domain/browse_target.dart';
 import 'package:ncloud/app/app_controller.dart';
 import 'package:ncloud/features/library/library_screen.dart';
-import 'package:ncloud/providers/nextcloud/nextcloud_client.dart';
 
-import 'app_test.dart' show MemoryStore;
+import 'support/sample_library.dart';
 
 Future<AppController> _library(
   WidgetTester tester, {
@@ -16,13 +17,9 @@ Future<AppController> _library(
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
-  final controller = AppController(
-    store: MemoryStore(),
-    client: NextcloudClient(),
-  );
+  final controller = sampleController();
   addTearDown(controller.dispose);
-  await controller.initialize();
-  controller.enterDemo();
+  unawaited(controller.load());
   await tester.pumpWidget(
     MaterialApp(
       builder: (context, child) => MediaQuery(

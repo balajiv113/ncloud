@@ -11,7 +11,6 @@ class LibraryAppBar extends StatelessWidget {
     required this.busy,
     required this.searching,
     required this.searchController,
-    required this.demo,
     required this.initial,
     required this.showSettings,
     required this.onBack,
@@ -29,7 +28,6 @@ class LibraryAppBar extends StatelessWidget {
   final bool busy;
   final bool searching;
   final TextEditingController searchController;
-  final bool demo;
 
   /// Letter shown on the settings avatar.
   final String initial;
@@ -80,17 +78,6 @@ class LibraryAppBar extends StatelessWidget {
               ),
             ),
       actions: [
-        if (demo && !searching && !selecting)
-          Center(
-            child: Text(
-              'DEMO',
-              style: TextStyle(
-                fontSize: 9,
-                letterSpacing: 1,
-                color: colors.primary,
-              ),
-            ),
-          ),
         if (!selecting) ...[
           IconButton(
             tooltip: 'Search loaded items',

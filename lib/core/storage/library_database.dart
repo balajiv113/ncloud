@@ -18,7 +18,7 @@ class LibraryDatabase {
   }) : path = File(path).absolute.path,
        _factory = factory ?? databaseFactory;
 
-  static const schemaVersion = 5;
+  static const schemaVersion = 6;
   final String path;
   final DatabaseFactory _factory;
   final void Function(String) onError;
@@ -76,7 +76,7 @@ class LibraryDatabase {
         account TEXT NOT NULL, file_key TEXT NOT NULL, path_key TEXT NOT NULL,
         path TEXT NOT NULL, name TEXT NOT NULL, is_directory INTEGER NOT NULL,
         content_type TEXT NOT NULL, size INTEGER NOT NULL, modified TEXT,
-        file_id TEXT, favorite INTEGER NOT NULL, color INTEGER, album_path TEXT,
+        file_id TEXT, favorite INTEGER NOT NULL, album_path TEXT,
         taken TEXT, capture_day INTEGER, etag TEXT,
         observed_at INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY (account, file_key)
@@ -180,7 +180,6 @@ class LibraryDatabase {
       'modified': value['modified'],
       'file_id': file.id,
       'favorite': file.favorite ? 1 : 0,
-      'color': file.demoColor,
       'album_path': file.albumReference == null
           ? null
           : jsonEncode(file.albumReference),
@@ -199,7 +198,6 @@ class LibraryDatabase {
     'modified': row['modified'],
     'id': row['file_id'],
     'favorite': row['favorite'] == 1,
-    'color': row['color'],
     'albumReference': row['album_path'] == null
         ? null
         : jsonDecode(row['album_path'] as String),

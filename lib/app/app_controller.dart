@@ -5,7 +5,6 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
-import '../features/library/demo.dart';
 import '../features/library/domain/album_members.dart';
 import '../features/library/domain/change_monitor.dart';
 import '../diagnostics.dart';
@@ -68,14 +67,14 @@ class AppController extends ChangeNotifier {
     final journal = SyncJournal();
     return FolderSyncController(
       client: client,
-      account: () => demo ? null : account,
+      account: () => account,
       journal: journal,
       scheduler: Platform.isAndroid
           ? AndroidBackupScheduler()
           : Platform.isIOS
           ? IosAlbumScheduler(
               journal: journal,
-              readAccount: () async => demo ? null : account,
+              readAccount: () async => account,
               initialize: initializeBackupDispatcher,
             )
           : UnsupportedBackupScheduler(),
@@ -84,10 +83,7 @@ class AppController extends ChangeNotifier {
 
   void setSyncForeground(bool active) {
     _folderSync?.setForeground(active);
-    if (active &&
-        connected &&
-        !demo &&
-        (Platform.isAndroid || Platform.isIOS)) {
+    if (active && connected && (Platform.isAndroid || Platform.isIOS)) {
       unawaited(folderSync.load());
     }
   }
@@ -95,7 +91,6 @@ class AppController extends ChangeNotifier {
   /// True while showing locally cached results that are being refreshed.
   bool refreshing = false;
   Account? account;
-  bool demo = false;
   bool starting = true;
   bool signingIn = false;
   bool _savingAccount = false;
@@ -144,17 +139,15 @@ class AppController extends ChangeNotifier {
   List<SmartAlbum> get sharedAlbums => _shared.value;
   String? get sharedAlbumError => _shared.error;
   bool get loadingSharedAlbums => _shared.loading;
-  List<String>? _demoPhotoRoot;
   List<String>? _autoPhotoRoot;
   List<CloudFile> get libraryFiles => _libraryFiles;
   List<String> get photoRoot =>
-      (demo ? _demoPhotoRoot : account?.photoRoot) ??
+      account?.photoRoot ??
       _autoPhotoRoot ??
       (_libraryFiles.any((f) => f.path.firstOrNull == 'Photos')
           ? ['Photos']
           : []);
-  List<SmartAlbum> get smartAlbums =>
-      demo ? buildSmartAlbums(_libraryFiles, photoRoot) : _catalogue;
+  List<SmartAlbum> get smartAlbums => _catalogue;
   int completed = 0;
   int total = 0;
 
@@ -173,7 +166,6 @@ class AppController extends ChangeNotifier {
   int _cacheGeneration = 0;
   int _loginVersion = 0;
   bool _disposed = false;
-  List<CloudFile> _demo = [];
 
   /// Every screen's photo and face thumbnails: memory, then disk, then server.
   late final ThumbnailRepository _thumbnails = ThumbnailRepository(
@@ -300,8 +292,8 @@ class AppController extends ChangeNotifier {
     Future<bool> Function(Set<String>? ids, bool pushed) check,
   ) {
     final session = account;
-    if (session == null || demo || _disposed) return null;
-    bool current() => !_disposed && !demo && identical(account, session);
+    if (session == null || _disposed) return null;
+    bool current() => !_disposed && identical(account, session);
     return ChangeMonitor(
       client: client,
       account: session,
@@ -317,9 +309,8 @@ class AppController extends ChangeNotifier {
   }
 
   final Map<String, Future<CloudFile?>> _covers = {};
-  final Map<String, List<CloudFile>> _demoTrash = {};
 
-  bool get connected => account != null || demo;
+  bool get connected => account != null;
   bool get canCancelLogin => signingIn && !_savingAccount;
 
   Future<void> initialize() async {
@@ -359,18 +350,6 @@ class AppController extends ChangeNotifier {
         notifyListeners();
       }
     }
-  }
-
-  void enterDemo() {
-    if (_savingAccount) return;
-    cancelLogin();
-    demo = true;
-    _demo = demoFiles();
-    _demoTrash.clear();
-    target = const TimelineTarget();
-    error = null;
-    notice = null;
-    unawaited(load());
   }
 
   Future<void> passwordLogin(
@@ -459,10 +438,9 @@ class AppController extends ChangeNotifier {
     _savingAccount = true;
     notifyListeners();
     try {
-      if (account != null && !demo) await folderSync.disconnect();
+      if (account != null) await folderSync.disconnect();
       await store.write(result.encode());
       account = result;
-      demo = false;
       setSyncForeground(true);
       target = const TimelineTarget();
       final preparation = _prepareLibrary();
@@ -645,16 +623,14 @@ class AppController extends ChangeNotifier {
     notifyListeners();
     try {
       await _folderSync?.disconnect();
-      if (!demo) {
-        await store.clear();
-        final cache = Directory(
-          '${(await getTemporaryDirectory()).path}/ncloud-downloads',
-        );
-        if (await cache.exists()) await cache.delete(recursive: true);
-        _storeOwner = null;
-        await _storeWrite;
-        await this.cache?.clearAll();
-      }
+      await store.clear();
+      final downloads = Directory(
+        '${(await getTemporaryDirectory()).path}/ncloud-downloads',
+      );
+      if (await downloads.exists()) await downloads.delete(recursive: true);
+      _storeOwner = null;
+      await _storeWrite;
+      await cache?.clearAll();
       _loadVersion++;
       _loginVersion++;
       _changeOwner = null;
@@ -664,13 +640,10 @@ class AppController extends ChangeNotifier {
       _pendingChangeIds = {};
       _clearPreviews();
       _covers.clear();
-      _demoTrash.clear();
       _warmVersion++;
       warming = false;
       account = null;
       Diagnostics.session.clear();
-      demo = false;
-      _demo = [];
       _libraryFiles = [];
       _listings.clear();
       fileStore.clear();
@@ -693,7 +666,6 @@ class AppController extends ChangeNotifier {
       _detectingTimelineIndex = null;
       nativeAlbums = [];
       _people.reset();
-      _demoPhotoRoot = null;
       _autoPhotoRoot = null;
       items = [];
       target = const TimelineTarget();
@@ -769,9 +741,7 @@ class AppController extends ChangeNotifier {
       open(SharedFolderTarget(path));
 
   Future<void> setPhotoRoot(List<String> path) async {
-    if (demo) {
-      _demoPhotoRoot = [...path];
-    } else if (account case final session?) {
+    if (account case final session?) {
       final updated = session.withPhotoRoot(path);
       try {
         await store.write(updated.encode());
@@ -798,10 +768,6 @@ class AppController extends ChangeNotifier {
         run.listingKey != null && run.listingKey == _visibleListingKey;
     _startLoad(run, keepItems: keepItems);
     try {
-      if (demo) {
-        _loadDemo(run);
-        return;
-      }
       final session = run.session;
       if (session == null) return;
       if (run.view is AlbumHomeTarget) {
@@ -875,40 +841,6 @@ class AppController extends ChangeNotifier {
     }
     _visibleListingKey = run.listingKey;
     notifyListeners();
-  }
-
-  void _loadDemo(_LoadRun run) {
-    final path = run.path;
-    items = run.view.serverAlbum != null
-        ? _demo.where((f) => f.isMedia && f.favorite).toList()
-        : _demo
-              .where(
-                (file) => switch (run.destination) {
-                  Destination.timeline || Destination.albums =>
-                    file.isMedia &&
-                        pathStartsWith(file.path, path) &&
-                        (_recursiveMedia(run.destination, path) ||
-                            file.path.length == path.length + 1),
-                  Destination.favorites => file.favorite,
-                  Destination.sharedFolder || Destination.offline => false,
-                  Destination.drive =>
-                    file.path.length == path.length + 1 &&
-                        pathStartsWith(file.path, path),
-                },
-              )
-              .toList();
-    if (run.destination == Destination.timeline || albumHome) {
-      _libraryFiles = items;
-    }
-    if (albumHome) {
-      nativeAlbums = [
-        const CloudAlbum(
-          name: 'Best days',
-          reference: ['demo-album'],
-          count: 3,
-        ),
-      ];
-    }
   }
 
   /// Reads the view's remembered listing from memory or disk and shows it. A
@@ -1179,7 +1111,7 @@ class AppController extends ChangeNotifier {
   /// Saves the shared store, coalescing bursts of updates into one write.
   void _persistStore() {
     final session = account;
-    if (cache == null || session == null || demo) return;
+    if (cache == null || session == null) return;
     if (_storeWrite != null) {
       _storeDirty = true;
       return;
@@ -1505,7 +1437,6 @@ class AppController extends ChangeNotifier {
     final session = account;
     final shown = listing?.days;
     if (_checkingChanges ||
-        demo ||
         session == null ||
         loading ||
         loadingMore ||
@@ -1798,12 +1729,12 @@ class AppController extends ChangeNotifier {
 
   String? _listingKey() {
     final session = account;
-    if (demo || session == null) return null;
+    if (session == null) return null;
     return 'browse-v6|${session.storageKey}|${target.cacheKey}';
   }
 
   Future<void> loadPeople({bool refresh = false}) =>
-      demo ? Future.value() : _people.load(refresh: refresh);
+      _people.load(refresh: refresh);
 
   Uint8List? cachedPersonPreview(RecognizedPerson person) =>
       _thumbnails.cachedFace(person);
@@ -1816,7 +1747,7 @@ class AppController extends ChangeNotifier {
 
   Future<void> _prepareAlbums({bool refresh = false}) async {
     final session = account;
-    if (demo || session == null || _disposed) return;
+    if (session == null || _disposed) return;
     final pending = _catalogueTask;
     if (!refresh && pending != null && _catalogueSession == session) {
       return pending;
@@ -2124,25 +2055,11 @@ class AppController extends ChangeNotifier {
   }
 
   Future<List<CloudFile>> folderContents(List<String> path) async {
-    if (demo) {
-      return _demo
-          .where(
-            (f) =>
-                f.path.length == path.length + 1 &&
-                pathStartsWith(f.path, path),
-          )
-          .toList();
-    }
     return _listFolder(account!, path);
   }
 
   Future<CloudFile?> albumCover(CloudFile folder) =>
       _covers.putIfAbsent(folder.key, () async {
-        if (demo) {
-          return _demo
-              .where((f) => f.isMedia && pathStartsWith(f.path, folder.path))
-              .firstOrNull;
-        }
         final known = fileStore
             .where((f) => f.isMedia && pathStartsWith(f.path, folder.path))
             .firstOrNull;
@@ -2163,9 +2080,7 @@ class AppController extends ChangeNotifier {
   }) async {
     if (busy || files.isEmpty) return false;
     final session = account;
-    final wasDemo = demo;
-    bool current() =>
-        !_disposed && demo == wasDemo && identical(account, session);
+    bool current() => !_disposed && identical(account, session);
     void checkSession() {
       if (!current()) {
         throw const CloudException(
@@ -2195,9 +2110,6 @@ class AppController extends ChangeNotifier {
         files,
         operation,
         account: session,
-        demo: wasDemo,
-        demoFiles: _demo,
-        demoTrash: _demoTrash,
         destination: destination,
         newName: newName,
         favorite: favorite,
@@ -2224,37 +2136,14 @@ class AppController extends ChangeNotifier {
     }
   }
 
-  Future<List<TrashEntry>> trash() async {
-    if (!demo) return client.trash(account!);
-    return _demoTrash.entries
-        .map(
-          (entry) => TrashEntry(
-            key: entry.key,
-            name: entry.value.first.name,
-            originalPath: entry.value.first.path.join('/'),
-            deleted: DateTime.now(),
-          ),
-        )
-        .toList();
-  }
+  Future<List<TrashEntry>> trash() => client.trash(account!);
 
   Future<void> restore(TrashEntry entry) async {
     if (busy) throw const CloudException('Wait for the current operation.');
     busy = true;
     notifyListeners();
     try {
-      if (demo) {
-        final files = _demoTrash[entry.key]!;
-        if (_demo.any((f) => f.key == files.first.key)) {
-          throw const CloudException(
-            'An item already exists at the original location.',
-          );
-        }
-        _demo.addAll(files);
-        _demoTrash.remove(entry.key);
-      } else {
-        await client.restore(account!, entry);
-      }
+      await client.restore(account!, entry);
       _covers.clear();
       await _invalidateBrowse();
       await load();
@@ -2287,35 +2176,18 @@ class AppController extends ChangeNotifier {
 
   Future<void> favorite(CloudFile file) => _action(() async {
     file = await resolve(file);
-    if (demo) {
-      _demo = _demo
-          .map((f) => f.key == file.key ? f.withFavorite(!file.favorite) : f)
-          .toList();
-    } else {
-      await client.setFavorite(account!, file, !file.favorite);
-      fileStore.update(file.key, (f) => f.withFavorite(!file.favorite));
-    }
+    await client.setFavorite(account!, file, !file.favorite);
+    fileStore.update(file.key, (f) => f.withFavorite(!file.favorite));
   }, file.favorite ? 'Removed from favorites' : 'Added to favorites');
 
   Future<void> createFolder(String name) => _action(() async {
     validateName(name);
-    if (demo) {
-      final path = [...directory, name];
-      if (_demo.any((f) => listEquals(f.path, path))) {
-        throw const CloudException('An item with that name already exists.');
-      }
-      _demo.add(CloudFile(path: path, name: name, isDirectory: true));
-    } else {
-      await client.createFolder(account!, [...directory, name]);
-      fileStore.invalidateFolder(directory);
-    }
+    await client.createFolder(account!, [...directory, name]);
+    fileStore.invalidateFolder(directory);
   }, 'Folder created');
 
   Future<void> upload(String name, Stream<List<int>> bytes, int size) =>
       _action(() async {
-        if (demo) {
-          throw const CloudException('Connect a server to upload files.');
-        }
         await client.uploadNew(account!, [...directory, name], bytes, size);
         fileStore.invalidateFolder(directory);
       }, 'Upload complete');
@@ -2331,7 +2203,7 @@ class AppController extends ChangeNotifier {
   /// Prime disk-backed thumbnails beyond the viewport in small batches.
   /// Visible tiles share these requests and still take priority in the queue.
   void _queueThumbnailWarmup(List<CloudFile> files) {
-    if (cache == null || !pathlessTimeline || demo || _disposed) return;
+    if (cache == null || !pathlessTimeline || _disposed) return;
     final today = DateTime.now().toUtc().millisecondsSinceEpoch ~/ 86400000;
     for (final file in files) {
       if (_thumbnailWarmupKnown.length >= FileStore.maxFiles) break;
@@ -2427,27 +2299,27 @@ class AppController extends ChangeNotifier {
 
   ShareSession shareSession(CloudFile file) {
     final session = account;
-    if (session == null || demo || _disposed) {
+    if (session == null || _disposed) {
       throw const CloudException('Sign in to manage share links.');
     }
     return ShareSession(
       client: client,
       account: session,
       file: file,
-      isCurrent: () => !_disposed && !demo && identical(account, session),
+      isCurrent: () => !_disposed && identical(account, session),
       resolve: resolve,
     );
   }
 
   PhotoMapSession photoMapSession() {
     final session = account;
-    if (session == null || demo || _disposed) {
+    if (session == null || _disposed) {
       throw const CloudException('Sign in to browse your photo map.');
     }
     return PhotoMapSession(
       client: client,
       account: session,
-      isCurrent: () => !_disposed && !demo && identical(account, session),
+      isCurrent: () => !_disposed && identical(account, session),
     );
   }
 
@@ -2496,19 +2368,19 @@ class AppController extends ChangeNotifier {
     bool preferStream = false,
   }) async {
     final session = account;
-    if (demo || session == null) {
+    if (session == null) {
       throw const CloudException('Reconnect to stream this video.');
     }
     final copy = preferStream
         ? null
         : await _originalTransfers.playbackCopy(session, file);
-    if (_disposed || !identical(account, session) || demo) {
+    if (_disposed || !identical(account, session)) {
       throw const CloudException('The account changed. Open this video again.');
     }
     final source = copy == null
         ? await client.playbackSource(session, file)
         : null;
-    if (_disposed || !identical(account, session) || demo) {
+    if (_disposed || !identical(account, session)) {
       throw const CloudException('The account changed. Open this video again.');
     }
     return (offline: copy, source: source);
@@ -2556,11 +2428,6 @@ class AppController extends ChangeNotifier {
     final session = account;
     if (session == null || (offline && cache == null)) {
       throw const CloudException('Downloads need a connected server.');
-    }
-    if (demo) {
-      throw const CloudException(
-        'Demo files are illustrations. Connect a server to download.',
-      );
     }
     if (busy) {
       throw const CloudException('Wait for the current transfer to finish.');

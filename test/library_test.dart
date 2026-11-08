@@ -6,24 +6,20 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:ncloud/features/library/domain/browse_target.dart';
 import 'package:ncloud/app/app_controller.dart';
-import 'package:ncloud/main.dart';
 import 'package:ncloud/models.dart';
 import 'package:ncloud/providers/nextcloud/nextcloud_client.dart';
 import 'package:ncloud/core/cloud/cloud_backend.dart';
 import 'package:ncloud/features/library/asset_viewer.dart';
 
 import 'app_test.dart' show MemoryStore;
+import 'support/sample_library.dart';
 import 'nextcloud_client_test.dart' show account, multistatus, responseEntry;
 
 void main() {
   testWidgets(
     'photo opening uses a brief fade without a stretching hero flight',
     (tester) async {
-      final c = AppController(store: MemoryStore(), client: NextcloudClient());
-      await tester.pumpWidget(NcloudApp(controller: c));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Try demo'));
-      await tester.pumpAndSettle();
+      await pumpSampleLibrary(tester);
       await tester.tap(find.bySemanticsLabel('Alpine morning.jpg'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 16));
@@ -136,11 +132,7 @@ void main() {
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
-      final c = AppController(store: MemoryStore(), client: NextcloudClient());
-      await tester.pumpWidget(NcloudApp(controller: c));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Try demo'));
-      await tester.pumpAndSettle();
+      await pumpSampleLibrary(tester);
       final dock = find.byKey(const ValueKey('navigation-dock'));
       expect(tester.getSize(dock).height, 60);
       expect(tester.getSize(dock).width, lessThanOrEqualTo(268));
@@ -190,17 +182,7 @@ void main() {
     tester.platformDispatcher.accessibilityFeaturesTestValue =
         const FakeAccessibilityFeatures(disableAnimations: true);
     addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
-    await tester.pumpWidget(
-      NcloudApp(
-        controller: AppController(
-          store: MemoryStore(),
-          client: NextcloudClient(),
-        ),
-      ),
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Try demo'));
-    await tester.pumpAndSettle();
+    await pumpSampleLibrary(tester);
     await tester.drag(find.byType(CustomScrollView), const Offset(0, -350));
     await tester.pumpAndSettle();
     final dock = tester.widget<AnimatedContainer>(
@@ -252,12 +234,10 @@ void main() {
     );
   });
   test(
-    'demo albums are actual folders and copy/move/rename/restore update paths',
+    'albums are actual folders and copy/move/rename/restore update paths',
     () async {
-      final c = AppController(store: MemoryStore(), client: NextcloudClient());
+      final c = sampleController();
       addTearDown(c.dispose);
-      await c.initialize();
-      c.enterDemo();
       await c.select(Destination.albums);
       final photos = (await c.folderContents(
         [],
@@ -452,11 +432,7 @@ void main() {
   testWidgets('albums open folders, selection favorites and viewer swipes', (
     tester,
   ) async {
-    final c = AppController(store: MemoryStore(), client: NextcloudClient());
-    await tester.pumpWidget(NcloudApp(controller: c));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Try demo'));
-    await tester.pumpAndSettle();
+    final c = await pumpSampleLibrary(tester);
     await tester.tap(find.byTooltip('Albums'));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('View all Albums')), findsOneWidget);
@@ -496,12 +472,7 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
-    final c = AppController(store: MemoryStore(), client: NextcloudClient());
-    await tester.pumpWidget(NcloudApp(controller: c));
-    await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('Try demo'));
-    await tester.tap(find.text('Try demo'));
-    await tester.pumpAndSettle();
+    await pumpSampleLibrary(tester);
     for (final label in ['Albums', 'Drive', 'Timeline']) {
       await tester.tap(find.byTooltip(label));
       await tester.pumpAndSettle();

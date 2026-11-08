@@ -203,9 +203,7 @@ class _AssetViewerState extends State<AssetViewer> with WidgetsBindingObserver {
                       child: Column(
                         children: [
                           Text(
-                            widget.controller.demo
-                                ? 'Demo illustration'
-                                : _file.isVideo
+                            _file.isVideo
                                 ? 'Video streams unless saved offline'
                                 : 'Server preview · original available below',
                             style: const TextStyle(
@@ -449,13 +447,6 @@ class _VideoAssetState extends State<VideoAsset> with WidgetsBindingObserver {
   }
 
   Future<void> _play({bool preferStream = false}) async {
-    if (widget.controller.demo) {
-      setState(
-        () =>
-            _error = 'Demo videos are illustrations. Connect a server to play.',
-      );
-      return;
-    }
     setState(() {
       _loading = true;
       _error = null;
@@ -698,16 +689,14 @@ class _VideoAssetState extends State<VideoAsset> with WidgetsBindingObserver {
                   textAlign: TextAlign.center,
                   style: const TextStyle(color: Colors.white),
                 ),
-                if (!widget.controller.demo) ...[
-                  const SizedBox(height: 12),
-                  FilledButton.tonalIcon(
-                    onPressed: _saving || widget.controller.busy
-                        ? null
-                        : _saveOffline,
-                    icon: const Icon(Icons.download_for_offline_outlined),
-                    label: Text(_saving ? 'Saving…' : 'Save offline & play'),
-                  ),
-                ],
+                const SizedBox(height: 12),
+                FilledButton.tonalIcon(
+                  onPressed: _saving || widget.controller.busy
+                      ? null
+                      : _saveOffline,
+                  icon: const Icon(Icons.download_for_offline_outlined),
+                  label: Text(_saving ? 'Saving…' : 'Save offline & play'),
+                ),
               ],
             ],
           ),

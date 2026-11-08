@@ -74,8 +74,7 @@ Keep previews labeled as previews and use the existing private preview distribut
 
 1. Sign in to GitHub with access to this private repository. Open **Releases** and choose the newest **ncloud Android preview**.
 2. Download `ncloud-android.apk` on your phone. Open it and allow installation from your browser/file manager when Android asks.
-3. Open **ncloud → Try demo** to explore immediately without an account. Demo illustrations and changes are local and reset when leaving demo.
-4. To use your own files, leave demo from Settings and enter your server's full **HTTPS** address (including any Nextcloud subfolder). Choose **Connect server**, approve access in your browser, then return to ncloud.
+3. Enter your server's full **HTTPS** address (including any Nextcloud subfolder). Choose **Connect server**, approve access in your browser, then return to ncloud.
 
 If browser login is unavailable, create an **app password** in Nextcloud → Personal settings → Security and use the alternative sign-in form. Do not enter your main password. Self-signed/untrusted certificates and plain HTTP are intentionally not supported; install a valid certificate.
 
@@ -117,7 +116,7 @@ Destination changes use directional fade/slide motion and retain each destinatio
 - **Nextcloud theme:** a blue palette seeded from Nextcloud's `#0082C9`, with accessible light/dark foreground and container variants. Photo colors remain unchanged.
 - **Compact dock:** a fixed compact floating dock where only the active destination shows its label. All destinations keep at least 48px tap targets. The active blue pill slides between tabs, with reduced-motion support. The viewer stays navigation-free.
 - **Hot album catalogue:** Smart/native and incoming-shared album metadata restores independently in the background at account startup or sign-in, so opening Albums joins the existing loads instead of starting another. Cached cards remain intact during refresh, then update as a complete snapshot. After the 15-minute catalogue freshness window, a matching source-folder etag reuses Smart albums without repeating the folder walk; native album memberships revalidate separately. Opened Smart albums also retain their folder etag, avoiding day/detail/path requests when an expired cached membership is unchanged. Servers without etags retain time-based revalidation and explicit refresh always reloads.
-- **Shared with you:** incoming shared folders containing photos/videos appear in Albums with a shared icon. Outgoing shares, single-file shares, duplicate or overlapping incoming mounts and media-empty folders do not appear. Each opens its folder recursively through paged DAV search, without scanning the entire account or requiring a recipient Memories index. Their catalogue restores from disk and is reused for 15 minutes. Covers load four at a time. Demo mode has no incoming shares.
+- **Shared with you:** incoming shared folders containing photos/videos appear in Albums with a shared icon. Outgoing shares, single-file shares, duplicate or overlapping incoming mounts and media-empty folders do not appear. Each opens its folder recursively through paged DAV search, without scanning the entire account or requiring a recipient Memories index. Their catalogue restores from disk and is reused for 15 minutes. Covers load four at a time. 
 - **Photo source:** Albums defaults to `Photos` when present, otherwise your drive root. Use **View options → Choose photo source** to choose a different root; the choice is stored securely with your account. The source is a wrapper, not a catch-all album. Loose media appears separately as **Photos at root**, containing only files directly in that source; folder albums remain visible and do not overlap with it. The timeline remains account-wide.
 - **Server albums:** owned and shared albums from the Nextcloud Photos WebDAV API appear in Albums like any other album, preserving their names and membership, including empty ones. These are not inferred from folders. Servers without this API still support Smart albums. External album members can be viewed/downloaded but are intentionally view-only in ncloud; album creation, membership edits and collaboration remain in Nextcloud.
 - **Collections inside Albums:** Favorites, Offline originals and Recently deleted, opened from the Pinned row. Settings and cache management are under the profile avatar. Offline originals can be saved from file menus or the video player and survive browsing-cache eviction and clearing.
@@ -191,7 +190,7 @@ Smart albums are warmed independently at startup: one Memories subfolder request
 
 Selection operations run sequentially and report how many completed if a later item fails; they are not atomic. Deletion affects server originals and folder contents, not just the current view. Trash recovery depends on server configuration/retention. Nextcloud handles restore conflicts by choosing a new name; if the original folder is unavailable, it may restore to your root folder. There is intentionally no permanent-delete or empty-trash button in this preview.
 
-Videos **stream immediately** from WebDAV through the native player (ExoPlayer/AVPlayer) with the Authorization header kept in request headers, never in the URL. The viewer shows buffering, elapsed/total time, scrubbing and mute. **Save offline** keeps a full copy in separate persistent app storage so later replays work without network; offline copies are used automatically. Codec support follows the device; if streaming fails, save offline or export the original. Slideshows operate on the loaded viewer collection and pause when the app backgrounds. Demo videos are illustrations, not playable files.
+Videos **stream immediately** from WebDAV through the native player (ExoPlayer/AVPlayer) with the Authorization header kept in request headers, never in the URL. The viewer shows buffering, elapsed/total time, scrubbing and mute. **Save offline** keeps a full copy in separate persistent app storage so later replays work without network; offline copies are used automatically. Codec support follows the device; if streaming fails, save offline or export the original. Slideshows operate on the loaded viewer collection and pause when the app backgrounds.
 
 **Still not full non-AI Immich parity:** automatic camera backup/background queues, two-way folder sync, maps, editing, Live Photos, archive/locked folders, partner libraries, shared-album collaboration/comments, and account switching remain future work. Memories supplies capture-date indexing; ncloud does not run its own indexer. There are no fake controls for missing capabilities. AI/face/semantic features are excluded from this milestone.
 
@@ -199,14 +198,14 @@ Videos **stream immediately** from WebDAV through the native player (ExoPlayer/A
 
 | Area | Preview functionality |
 |---|---|
-| Experience | Material 3, system light/dark theme, responsive photo grid, local demo |
+| Experience | Material 3, system light/dark theme, responsive photo grid |
 | Account | Nextcloud Login Flow v2, app-password alternative, secure credential storage, session restore, disconnect |
 | Files | Folder browsing/breadcrumbs, create folder, streamed foreground upload, download original via the system share/save sheet |
 | Photos | Memories capture-date browsing with on-scroll day batches; paged modification-date WebDAV fallback, server thumbnails, swipe/zoom viewer |
 | Favorites | Favorite files and folders, server-wide paginated favorites view |
 | Filtering | Case-insensitive name filtering of loaded items/current folder, pull-to-refresh |
 
-Photos use the installed Memories index and standard Nextcloud WebDAV, not an Immich API. Previews depend on your server's preview providers (especially HEIC and video); unavailable previews have a retry state. API errors are displayed, never replaced with fake demo data. Refreshing restarts a listing; concurrent index/file changes can shift batch boundaries. Name search, sort, filters, date jumps and slideshows operate on loaded items, not the entire remote library.
+Photos use the installed Memories index and standard Nextcloud WebDAV, not an Immich API. Previews depend on your server's preview providers (especially HEIC and video); unavailable previews have a retry state. API errors are displayed, never replaced with fake data. Refreshing restarts a listing; concurrent index/file changes can shift batch boundaries. Name search, sort, filters, date jumps and slideshows operate on loaded items, not the entire remote library.
 
 Single-thumbnail requests are limited to four concurrent transfers; Memories multipreview requests batch up to 48 previews. Grids request 384px previews and the viewer requests 1280px, with bounded decoding, a 64 MiB/4,000-entry encoded in-memory LRU cache and the persistent disk cache described above. Transient server overload is retried once; failed requests are not permanently cached. Images and video posters require working Nextcloud preview providers; missing previews never trigger automatic original downloads. The cache speeds up browsing; it is not two-way offline sync.
 
@@ -228,11 +227,11 @@ flutter build apk --release         # build/app/outputs/flutter-apk/app-release.
 flutter install --release -d <device-id>
 ```
 
-Android USB testing: enable Developer options → USB debugging and accept your computer's authorization prompt. Emulators can exercise demo mode without a Nextcloud server. These builds are mobile-only; Flutter web/desktop are not configured.
+Android USB testing: enable Developer options → USB debugging and accept your computer's authorization prompt. These builds are mobile-only; Flutter web/desktop are not configured.
 
 ## Architecture and APIs
 
-`lib/models.dart` contains typed account/file/share/trash models and URL validation. `lib/providers/nextcloud/` handles Login Flow v2, OCS user lookup (DAV user ID may differ from login email), WebDAV listing/search/transfers/organization, sharing links, trash restore and authenticated previews. `app/app_controller.dart` coordinates session storage, race-safe paged loading, demo data, and foreground transfers. `library_screen.dart` implements the four-space UX; `asset_viewer.dart` handles viewing/video/slideshows; `library_actions.dart` contains shared actions and destination/share/trash/account surfaces. `screens.dart` contains sign-in and shared forms.
+`lib/models.dart` contains typed account/file/share/trash models and URL validation. `lib/providers/nextcloud/` handles Login Flow v2, OCS user lookup (DAV user ID may differ from login email), WebDAV listing/search/transfers/organization, sharing links, trash restore and authenticated previews. `app/app_controller.dart` coordinates session storage, race-safe paged loading, and foreground transfers. `library_screen.dart` implements the four-space UX; `asset_viewer.dart` handles viewing/video/slideshows; `library_actions.dart` contains shared actions and destination/share/trash/account surfaces. `screens.dart` contains sign-in and shared forms.
 
 Credentials use iOS Keychain / Android encrypted storage. HTTPS is required, authenticated redirects are not followed, and login endpoints must remain on the configured origin. No certificate bypass, main-password persistence, analytics, or third-party image service is used. Explicit offline originals stay in app-support storage until disconnect or uninstall; share/save transfers use temporary storage. Thumbnails are held in bounded memory and disk caches.
 
@@ -244,7 +243,7 @@ This is the foundation, not a claim that core Nextcloud supplies all Immich and 
 2. Further Drive essentials: richer sharing permissions, offline files, server search, file previews/editing and multiple accounts.
 3. Further photo library: Live Photos/RAW/HEIC handling, maps, collaborative libraries and duplicate management.
 4. Intelligence: evaluate Nextcloud Photos/Memories/Recognize/Face Recognition APIs and compatibility. Face grouping, semantic search, memories and transcoding require suitable server apps or a separately designed indexing service; they cannot be promised from core WebDAV alone.
-5. Distribution: production signing, TestFlight, app-store privacy disclosures, accessibility/device testing, and release hardening.
+4. Distribution: production signing, TestFlight, app-store privacy disclosures, accessibility/device testing, and release hardening.
 
 CI checks API contracts with mocked HTTP responses, scroll/widget flows, mobile UI captures, and a real isolated Nextcloud 32 instance with Memories installed and indexed (day summaries, indexed folders, batched DAV path resolution, capture metadata, plus the core file/native-album APIs). Live tests are skipped by default locally; they use only a disposable loopback HTTP fixture, while app sign-in requires HTTPS. This does not prove compatibility with every Nextcloud deployment. Expand the server-version matrix and add real-device background-lifecycle tests before production use.
 
