@@ -117,4 +117,20 @@ void main() {
       isNull,
     );
   });
+
+  test('server albums round trip through their cached record', () {
+    const album = CloudAlbum(
+      name: 'Trip',
+      reference: ['photos', 'Trip'],
+      count: 4,
+      coverId: '43',
+      shared: true,
+    );
+    final copy = CloudAlbum.fromJson(album.toJson());
+    expect(copy.name, 'Trip');
+    expect(copy.reference, ['photos', 'Trip']);
+    expect(copy.count, 4);
+    expect(copy.coverId, '43');
+    expect(copy.shared, isTrue);
+  });
 }

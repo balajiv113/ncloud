@@ -5,6 +5,7 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
+import '../features/library/domain/album_catalogue.dart';
 import '../features/library/domain/album_members.dart';
 import '../features/library/domain/change_monitor.dart';
 import '../diagnostics.dart';
@@ -22,6 +23,7 @@ import '../features/photos/photo_map_session.dart';
 import '../features/library/domain/preview_batcher.dart' show PreviewCancelled;
 import '../features/library/domain/browse_target.dart';
 import '../features/library/domain/cached_resource.dart';
+import '../features/library/domain/thumbnail_prefetcher.dart';
 import '../features/library/domain/thumbnail_repository.dart';
 import '../core/cloud/cloud_backend.dart';
 import '../features/backup/workmanager_backup.dart';
@@ -114,16 +116,10 @@ class AppController extends ChangeNotifier {
   MediaListing? _activeListing;
   String? _visibleListingKey;
   bool? timelineIndexAvailable;
-  bool discoveringAlbums = false;
-  int discoveredFolders = 0;
-  final List<SmartAlbum> _catalogue = [];
-  DateTime? _catalogueUpdated;
-  String? _catalogueRoot;
+  bool get discoveringAlbums => _albums.discovering;
+  int get discoveredFolders => _albums.discovered;
   List<TimelineDay>? _initialDays;
   Future<void>? _detectingTimelineIndex;
-  int _catalogueVersion = 0;
-  Future<void>? _catalogueTask;
-  Account? _catalogueSession;
   bool get albumHome => target is AlbumHomeTarget;
   List<RecognizedPerson> get people => _people.value;
   @visibleForTesting
@@ -133,21 +129,20 @@ class AppController extends ChangeNotifier {
   String? get peopleError => _people.error;
   List<TimelineDay> get indexedDays => _activeListing?.days ?? [];
   List<CloudFile> _libraryFiles = [];
-  List<CloudAlbum> nativeAlbums = [];
-  String? nativeAlbumError;
-  String? catalogueError;
+  List<CloudAlbum> get nativeAlbums => _albums.server;
+  String? get nativeAlbumError => _albums.serverError;
+  String? get catalogueError => _albums.error;
   List<SmartAlbum> get sharedAlbums => _shared.value;
   String? get sharedAlbumError => _shared.error;
   bool get loadingSharedAlbums => _shared.loading;
-  List<String>? _autoPhotoRoot;
   List<CloudFile> get libraryFiles => _libraryFiles;
   List<String> get photoRoot =>
       account?.photoRoot ??
-      _autoPhotoRoot ??
+      _albums.autoRoot ??
       (_libraryFiles.any((f) => f.path.firstOrNull == 'Photos')
           ? ['Photos']
           : []);
-  List<SmartAlbum> get smartAlbums => _catalogue;
+  List<SmartAlbum> get smartAlbums => _albums.smart;
   int completed = 0;
   int total = 0;
 
@@ -223,6 +218,20 @@ class AppController extends ChangeNotifier {
         'The saved People list was damaged. Reloading from your server.',
   );
 
+  /// Smart and server albums.
+  late final AlbumCatalogue _albums = AlbumCatalogue(
+    client: client,
+    cache: cache,
+    account: () => account,
+    disposed: () => _disposed,
+    onChanged: notifyListeners,
+    photoRoot: () => photoRoot,
+    listFolder: _listFolder,
+    ensureIndex: _ensureTimelineIndex,
+    indexAvailable: () => timelineIndexAvailable == true,
+    hydrate: _hydrate,
+  );
+
   /// Albums from folders shared with this account, reused for 15 minutes.
   late final CachedResource<List<SmartAlbum>> _shared = CachedResource(
     empty: const [],
@@ -257,10 +266,24 @@ class AppController extends ChangeNotifier {
     client: client,
     cache: cache,
   );
-  Timer? _thumbnailWarmupTimer;
-  final List<CloudFile> _thumbnailWarmupQueue = [];
-  final Set<String> _thumbnailWarmupKnown = {};
-  bool _warmingThumbnails = false;
+  late final ThumbnailPrefetcher _prefetch = ThumbnailPrefetcher(
+    thumbnails: _thumbnails,
+    account: () => account,
+    enabled: () => cache != null && pathlessTimeline && !_disposed,
+    active: () =>
+        !_disposed && _browsingActive && destination == Destination.timeline,
+    idle: () => !(busy || loading || loadingMore || fetchingDays),
+    fetch: (file) => preview(file),
+    onFailure: () {
+      const message = 'Some previews could not be cached. Tap them to retry.';
+      if (notice != message) {
+        notice = message;
+        notifyListeners();
+      }
+    },
+    limit: FileStore.maxFiles,
+    recentDays: warmYears * 366,
+  );
   bool _browsingActive = true;
   Completer<void>? _loginResume;
 
@@ -268,11 +291,10 @@ class AppController extends ChangeNotifier {
     _browsingActive = active;
     if (active) _wakeLogin();
     if (!active) {
-      _thumbnailWarmupTimer?.cancel();
-      _thumbnailWarmupTimer = null;
+      _prefetch.pause();
       _thumbnails.pause();
     } else {
-      _scheduleThumbnailWarmup();
+      _prefetch.schedule();
       if (!_fetchingDays && _pendingDays.isNotEmpty && error == null) {
         unawaited(_drainDays());
       }
@@ -338,7 +360,7 @@ class AppController extends ChangeNotifier {
         notice = 'Could not restore saved offline files. ${errorMessage(e)}';
       }
       final preparation = _prepareLibrary();
-      unawaited(_prepareAlbums());
+      unawaited(_albums.load());
       unawaited(loadPeople());
       unawaited(_shared.load());
       await preparation;
@@ -444,7 +466,7 @@ class AppController extends ChangeNotifier {
       setSyncForeground(true);
       target = const TimelineTarget();
       final preparation = _prepareLibrary();
-      unawaited(_prepareAlbums());
+      unawaited(_albums.load());
       unawaited(loadPeople());
       unawaited(_shared.load());
       await preparation;
@@ -652,21 +674,12 @@ class AppController extends ChangeNotifier {
       _pendingDays.clear();
       _activeListing = null;
       _visibleListingKey = null;
-      _catalogue.clear();
-      _catalogueVersion++;
-      _catalogueUpdated = null;
-      _catalogueRoot = null;
-      _catalogueEtag = null;
-      _catalogueTask = null;
-      _catalogueSession = null;
+      _albums.reset();
       _shared.reset();
-      catalogueError = null;
       timelineIndexAvailable = null;
       _initialDays = null;
       _detectingTimelineIndex = null;
-      nativeAlbums = [];
       _people.reset();
-      _autoPhotoRoot = null;
       items = [];
       target = const TimelineTarget();
       notice = null;
@@ -772,7 +785,7 @@ class AppController extends ChangeNotifier {
       if (session == null) return;
       if (run.view is AlbumHomeTarget) {
         await Future.wait([
-          _prepareAlbums(refresh: refresh),
+          _albums.load(refresh: refresh),
           _shared.load(refresh: refresh),
           loadPeople(refresh: refresh),
         ]);
@@ -808,7 +821,7 @@ class AppController extends ChangeNotifier {
         loading = false;
         refreshing = false;
         loadingMore = false;
-        if (destination == Destination.timeline) _queueThumbnailWarmup(items);
+        if (destination == Destination.timeline) _prefetch.queue(items);
         notifyListeners();
       }
     }
@@ -1356,7 +1369,7 @@ class AppController extends ChangeNotifier {
     items = fileStore.resolve(listing.keys);
     hasMore = listing.more;
     if (destination == Destination.timeline) _libraryFiles = items;
-    if (destination == Destination.timeline) _queueThumbnailWarmup(items);
+    if (destination == Destination.timeline) _prefetch.queue(items);
     if (key != null) {
       _listings[key] = listing;
       if (_listings.length > 20) _listings.remove(_listings.keys.first);
@@ -1745,35 +1758,6 @@ class AppController extends ChangeNotifier {
   Future<Uint8List> personPreview(RecognizedPerson person) =>
       _thumbnails.face(person);
 
-  Future<void> _prepareAlbums({bool refresh = false}) async {
-    final session = account;
-    if (session == null || _disposed) return;
-    final pending = _catalogueTask;
-    if (!refresh && pending != null && _catalogueSession == session) {
-      return pending;
-    }
-    final generation = _catalogueVersion + 1;
-    final task = () async {
-      try {
-        await _loadCatalogue(session, refresh: refresh);
-      } catch (e) {
-        if (account == session &&
-            generation == _catalogueVersion &&
-            !_disposed) {
-          catalogueError = errorMessage(e);
-          notifyListeners();
-        }
-      }
-    }();
-    _catalogueTask = task;
-    _catalogueSession = session;
-    try {
-      await task;
-    } finally {
-      if (identical(_catalogueTask, task)) _catalogueTask = null;
-    }
-  }
-
   static const _coverLookups = 4;
 
   Future<List<SmartAlbum>> _fetchSharedAlbums(
@@ -1802,236 +1786,6 @@ class AppController extends ChangeNotifier {
       ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
   }
 
-  Future<void> _loadCatalogue(Account session, {required bool refresh}) async {
-    final generation = ++_catalogueVersion;
-    if (session.photoRoot == null && _autoPhotoRoot == null) {
-      final sourceKey = 'album-source|${session.storageKey}';
-      final saved = await cache?.readDocument(sourceKey);
-      if (account != session || generation != _catalogueVersion || _disposed) {
-        return;
-      }
-      if (saved != null) {
-        _autoPhotoRoot = (saved['path'] as List).cast<String>();
-      } else {
-        final roots = await _listFolder(
-          session,
-          [],
-          isCurrent: () => generation == _catalogueVersion,
-        );
-        if (account != session ||
-            generation != _catalogueVersion ||
-            _disposed) {
-          return;
-        }
-        _autoPhotoRoot = roots.any((f) => f.isDirectory && f.name == 'Photos')
-            ? ['Photos']
-            : [];
-        await cache?.writeDocument(sourceKey, {'path': _autoPhotoRoot});
-      }
-    }
-    if (account != session || generation != _catalogueVersion || _disposed) {
-      return;
-    }
-    final root = [...photoRoot];
-    final rootKey = '${session.storageKey}|${root.join('/')}';
-    if (!refresh &&
-        _catalogueRoot == rootKey &&
-        _catalogueUpdated != null &&
-        DateTime.now().difference(_catalogueUpdated!) <
-            const Duration(minutes: 15)) {
-      return;
-    }
-    final key = 'album-catalogue-v5|$rootKey';
-    if (_catalogueRoot != rootKey) {
-      _catalogue.clear();
-      _catalogueUpdated = null;
-      _catalogueEtag = null;
-      _catalogueRoot = rootKey;
-      nativeAlbums = [];
-    }
-    if (_catalogueUpdated == null) {
-      final saved = await cache?.readDocument(key);
-      if (generation != _catalogueVersion || account != session) return;
-      if (saved != null) {
-        _catalogue.clear();
-        _catalogue.addAll(
-          (saved['albums'] as List).map(
-            (value) =>
-                SmartAlbum.fromJson((value as Map).cast<String, dynamic>()),
-          ),
-        );
-        nativeAlbums = (saved['native'] as List).map((value) {
-          final item = (value as Map).cast<String, dynamic>();
-          return CloudAlbum(
-            name: item['name'] as String,
-            reference: (item['path'] as List).cast<String>(),
-            count: item['count'] as int,
-            coverId: item['coverId'] as String?,
-            shared: item['shared'] as bool,
-          );
-        }).toList();
-        _hydrate([
-          ..._catalogue.expand((album) => album.files.take(1)),
-          ...nativeAlbums.map((album) => album.cover).nonNulls,
-        ]);
-        notifyListeners();
-        final updated = DateTime.tryParse(saved['updated'] as String? ?? '');
-        _catalogueUpdated = updated;
-        _catalogueEtag = saved['etag'] as String?;
-        if (!refresh &&
-            updated != null &&
-            DateTime.now().difference(updated) < const Duration(minutes: 15)) {
-          _catalogueUpdated = updated;
-          return;
-        }
-      }
-    }
-    final etag = cache == null
-        ? null
-        : (await client.listFolder(
-            session,
-            root,
-            metadataOnly: true,
-            optional: true,
-          )).revision;
-    if (generation != _catalogueVersion || account != session || _disposed) {
-      return;
-    }
-    if (!refresh &&
-        _catalogueUpdated != null &&
-        etag != null &&
-        etag == _catalogueEtag) {
-      // Album memberships can change independently of the files' etags.
-      await _loadCloudAlbums(session, generation);
-      if (generation != _catalogueVersion || account != session || _disposed) {
-        return;
-      }
-      _catalogueUpdated = DateTime.now();
-      await _saveCatalogue(key);
-      return;
-    }
-    discoveringAlbums = true;
-    catalogueError = null;
-    discoveredFolders = 0;
-    final nativeLoad = _loadCloudAlbums(session, generation);
-    notifyListeners();
-    try {
-      await _ensureTimelineIndex(session);
-      if (generation != _catalogueVersion || account != session) return;
-      final queue = <PhotoFolder>[PhotoFolder(root, [])];
-      final found = <String, SmartAlbum>{};
-      while (queue.isNotEmpty) {
-        if (generation != _catalogueVersion ||
-            account != session ||
-            _disposed) {
-          return;
-        }
-        final folder = queue.removeAt(0);
-        // The first folder with its own media on each branch is an album
-        // (including everything below it); folders that only group other
-        // folders are walked through. Loose media at the source root never
-        // hides the albums inside it.
-        final atRoot = folder.path.length == root.length;
-        List<PhotoFolder> children;
-        List<CloudFile> covers;
-        if (timelineIndexAvailable == true) {
-          final result = await client.photoFolder(
-            session,
-            folder,
-            includeChildrenWithMedia: atRoot,
-          );
-          covers = result.covers;
-          children = result.children;
-        } else {
-          final contents = await _listFolder(
-            session,
-            folder.path,
-            force: refresh,
-            isCurrent: () => generation == _catalogueVersion,
-          );
-          covers = contents.where((f) => f.isMedia).take(1).toList();
-          children = covers.isNotEmpty && !atRoot
-              ? []
-              : contents
-                    .where((f) => f.isDirectory)
-                    .map((f) => PhotoFolder(f.path, []))
-                    .toList();
-        }
-        if (generation != _catalogueVersion ||
-            account != session ||
-            _disposed) {
-          return;
-        }
-        if (covers.isNotEmpty) {
-          final album = SmartAlbum(path: folder.path, files: covers);
-          found[album.key] = album;
-        }
-        queue.addAll(children);
-        discoveredFolders++;
-      }
-      _catalogue
-        ..clear()
-        ..addAll(found.values);
-      _catalogueUpdated = DateTime.now();
-      _catalogueEtag = etag;
-      notifyListeners();
-      await nativeLoad;
-      if (generation != _catalogueVersion || account != session || _disposed) {
-        return;
-      }
-      await _saveCatalogue(key);
-    } catch (e) {
-      if (generation == _catalogueVersion && account == session && !_disposed) {
-        catalogueError = errorMessage(e);
-      }
-      rethrow;
-    } finally {
-      if (generation == _catalogueVersion) {
-        discoveringAlbums = false;
-        notifyListeners();
-      }
-    }
-  }
-
-  String? _catalogueEtag;
-
-  Future<void> _saveCatalogue(String key) async {
-    await cache?.writeDocument(key, {
-      'updated': _catalogueUpdated!.toIso8601String(),
-      'etag': _catalogueEtag,
-      'albums': _catalogue.map((a) => a.toJson()).toList(),
-      'native': [
-        for (final album in nativeAlbums)
-          {
-            'name': album.name,
-            'path': album.reference,
-            'count': album.count,
-            'coverId': album.coverId,
-            'shared': album.shared,
-          },
-      ],
-    });
-  }
-
-  Future<void> _loadCloudAlbums(Account session, int generation) async {
-    nativeAlbumError = null;
-    try {
-      final own = await client.albums(session);
-      final shared = await client.albums(session, shared: true);
-      if (account == session && generation == _catalogueVersion && !_disposed) {
-        nativeAlbums = [...own, ...shared];
-      }
-    } catch (e) {
-      if (account == session && generation == _catalogueVersion && !_disposed) {
-        nativeAlbumError = 'Could not load server albums. ${errorMessage(e)}';
-      }
-    } finally {
-      if (account == session && generation == _catalogueVersion && !_disposed) {
-        notifyListeners();
-      }
-    }
-  }
-
   /// After a change, every view keeps showing its (already patched) files
   /// from the shared store and quietly revalidates when next shown.
   Future<void> _invalidateBrowse() async {
@@ -2041,14 +1795,9 @@ class AppController extends ChangeNotifier {
       items = fileStore.resolve(listing.keys);
       if (destination == Destination.timeline) _libraryFiles = items;
     }
-    final epoch = DateTime.fromMillisecondsSinceEpoch(0);
-    if (_catalogueUpdated != null) _catalogueUpdated = epoch;
-    _catalogueVersion++;
-    _catalogueTask = null;
-    _catalogueSession = null;
+    _albums.invalidate();
     _shared.invalidate();
     _people.invalidate();
-    discoveringAlbums = false;
     _initialDays = null;
     notifyListeners();
     _persistStore();
@@ -2193,88 +1942,9 @@ class AppController extends ChangeNotifier {
       }, 'Upload complete');
 
   void _clearPreviews() {
-    _thumbnailWarmupTimer?.cancel();
-    _thumbnailWarmupQueue.clear();
-    _thumbnailWarmupKnown.clear();
+    _prefetch.clear();
     _fileResolver.clear();
     _thumbnails.clear();
-  }
-
-  /// Prime disk-backed thumbnails beyond the viewport in small batches.
-  /// Visible tiles share these requests and still take priority in the queue.
-  void _queueThumbnailWarmup(List<CloudFile> files) {
-    if (cache == null || !pathlessTimeline || _disposed) return;
-    final today = DateTime.now().toUtc().millisecondsSinceEpoch ~/ 86400000;
-    for (final file in files) {
-      if (_thumbnailWarmupKnown.length >= FileStore.maxFiles) break;
-      if (!file.isMedia ||
-          file.captureDay == null ||
-          file.captureDay! < today - warmYears * 366) {
-        continue;
-      }
-      final key = _thumbnails.key(file, 384);
-      if (key != null &&
-          _thumbnailWarmupKnown.add(
-            '$key|${ThumbnailRepository.versionOf(file) ?? ''}',
-          )) {
-        _thumbnailWarmupQueue.add(file);
-      }
-    }
-    _scheduleThumbnailWarmup();
-  }
-
-  void _scheduleThumbnailWarmup() {
-    if (_disposed ||
-        !_browsingActive ||
-        _warmingThumbnails ||
-        _thumbnailWarmupQueue.isEmpty ||
-        destination != Destination.timeline) {
-      return;
-    }
-    _thumbnailWarmupTimer?.cancel();
-    _thumbnailWarmupTimer = Timer(
-      const Duration(milliseconds: 250),
-      _warmThumbnailBatch,
-    );
-  }
-
-  Future<void> _warmThumbnailBatch() async {
-    if (_disposed ||
-        !_browsingActive ||
-        destination != Destination.timeline ||
-        account == null) {
-      return;
-    }
-    if (busy || loading || loadingMore || fetchingDays) {
-      _scheduleThumbnailWarmup();
-      return;
-    }
-    _warmingThumbnails = true;
-    final session = account;
-    final batch = _thumbnailWarmupQueue.take(48).toList();
-    _thumbnailWarmupQueue.removeRange(0, batch.length);
-    try {
-      await Future.wait([
-        for (final file in batch)
-          preview(file).then<void>(
-            (_) {},
-            onError: (Object e) {
-              const message =
-                  'Some previews could not be cached. Tap them to retry.';
-              if (!_disposed &&
-                  account == session &&
-                  e is! PreviewCancelled &&
-                  notice != message) {
-                notice = message;
-                notifyListeners();
-              }
-            },
-          ),
-      ]);
-    } finally {
-      _warmingThumbnails = false;
-      if (!_disposed && account == session) _scheduleThumbnailWarmup();
-    }
   }
 
   CloudFile? _applyResolved(CloudFile original, CloudFile? real) {
@@ -2479,8 +2149,7 @@ class AppController extends ChangeNotifier {
     _disposed = true;
     _thumbnails.dispose();
     _warmTimer?.cancel();
-    _thumbnailWarmupTimer?.cancel();
-    _catalogueVersion++;
+    _prefetch.clear();
     _loadVersion++;
     _loginVersion++;
     _wakeLogin();
