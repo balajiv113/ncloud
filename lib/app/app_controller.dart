@@ -25,6 +25,7 @@ import '../core/cloud/cloud_backend.dart';
 import '../features/backup/workmanager_backup.dart';
 import '../features/backup/sync_schedule.dart';
 import '../features/account/session_store.dart';
+import '../features/account/browser_login.dart';
 import '../features/backup/ios_album_backup.dart';
 export '../features/account/session_store.dart';
 export '../features/library/preview_batcher.dart' show PreviewCancelled;
@@ -352,51 +353,23 @@ class AppController extends ChangeNotifier {
     notifyListeners();
     try {
       final uri = normalizeServer(server);
-      final flow = await client.startLogin(uri);
-      if (version != _loginVersion) return;
-      if (!await openBrowser(flow.login)) {
-        throw const CloudException(
-          'Could not open your browser. Try an app password instead.',
-        );
-      }
-      if (version != _loginVersion) return;
-      final deadline = DateTime.now().add(const Duration(minutes: 20));
-      var failures = 0;
-      while (version == _loginVersion && DateTime.now().isBefore(deadline)) {
-        if (!_browsingActive) {
+      final flow = BrowserLogin(
+        client: client,
+        isCurrent: () => version == _loginVersion,
+        isActive: () => _browsingActive,
+        waitForResume: (remaining) async {
           final resume = _loginResume ??= Completer<void>();
-          await resume.future.timeout(
-            deadline.difference(DateTime.now()),
-            onTimeout: () {},
-          );
-          if (version != _loginVersion) return;
-          if (!DateTime.now().isBefore(deadline)) break;
-        }
-        Account? result;
-        try {
-          result = await client.pollLogin(uri, flow);
-          failures = 0;
-        } on CloudException catch (e) {
-          if (version != _loginVersion) return;
-          // A request interrupted by leaving for browser approval must not
-          // consume the foreground retry budget.
-          if (!_browsingActive && e.retryable) continue;
-          if (!e.retryable || ++failures >= 5) rethrow;
+          await resume.future.timeout(remaining, onTimeout: () {});
+        },
+        onRetry: () {
           notice = 'Sign-in connection interrupted. Retrying…';
           notifyListeners();
-        }
-        if (version != _loginVersion) return;
-        if (result != null) {
-          notice = null;
-          await _saveAccount(result);
-          return;
-        }
-        await Future<void>.delayed(const Duration(seconds: 2));
-      }
-      if (version == _loginVersion) {
-        throw const CloudException(
-          'Sign-in timed out. Start again to get a new login link.',
-        );
+        },
+      );
+      final result = await flow.authenticate(uri, openBrowser);
+      if (version == _loginVersion && result != null) {
+        notice = null;
+        await _saveAccount(result);
       }
     } catch (e) {
       if (version == _loginVersion) error = errorMessage(e);

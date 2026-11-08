@@ -50,6 +50,8 @@ Library screens receive an account-bound change monitor from the controller inst
 
 The login screen belongs to `features/account/`; reusable error presentation lives in `core/ui/`, while library-specific dialogs and sharing stay in `features/library/`.
 
+The account feature owns browser-login polling, including pause/resume and bounded transient retries; the app coordinator owns session persistence and cancellation.
+
 Shared library metadata and offline-file storage live in `lib/core/storage/`; their on-disk locations and schemas are independent of their source-code paths.
 
 Provider accounts supply a stable, non-secret storage key with two `|`-separated components and no additional separators. These components scope cached collections and backup ownership; Nextcloud keeps its existing server/user key so current offline downloads remain accessible.
