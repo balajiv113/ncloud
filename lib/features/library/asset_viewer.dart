@@ -4,7 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 
 import '../../app/app_controller.dart';
-import 'library_actions.dart';
+import 'file_actions.dart';
+import 'share_panel.dart';
 import '../../shared/ui/media_tile.dart';
 import '../../models.dart';
 import '../../core/cloud/cloud_backend.dart';
