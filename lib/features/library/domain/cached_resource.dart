@@ -1,8 +1,8 @@
 import 'dart:async';
 
-import '../../core/storage/local_cache.dart';
-import '../../diagnostics.dart';
-import '../../models.dart';
+import '../../../core/storage/local_cache.dart';
+import '../../../diagnostics.dart';
+import '../../../models.dart';
 
 /// A collection that is shown from the device first and revalidated from the
 /// provider: restored from disk once, reused while fresh, refreshed on demand

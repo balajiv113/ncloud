@@ -1,8 +1,8 @@
 import 'package:flutter/foundation.dart';
 
-import '../../core/cloud/cloud_backend.dart';
-import '../../core/storage/file_store.dart';
-import '../../models.dart';
+import '../../../core/cloud/cloud_backend.dart';
+import '../../../core/storage/file_store.dart';
+import '../../../models.dart';
 
 /// Applies a batch of library mutations to the initiating account and cache.
 class LibraryMutations {

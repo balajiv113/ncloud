@@ -6,7 +6,7 @@ import '../../core/cloud/cloud_backend.dart';
 import '../../diagnostics.dart';
 import '../../models.dart';
 import '../../core/ui/messages.dart';
-import 'share_session.dart';
+import 'domain/share_session.dart';
 
 class SharePanel extends StatefulWidget {
   const SharePanel({super.key, required this.controller, required this.file});

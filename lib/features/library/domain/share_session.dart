@@ -1,5 +1,5 @@
-import '../../core/cloud/cloud_backend.dart';
-import '../../models.dart';
+import '../../../core/cloud/cloud_backend.dart';
+import '../../../models.dart';
 
 /// A share panel is bound to the account and file that opened it.
 class ShareSession {

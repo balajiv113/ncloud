@@ -4,7 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:ncloud/providers/nextcloud/nextcloud_client.dart';
 import 'package:ncloud/core/cloud/cloud_backend.dart';
-import 'package:ncloud/features/library/album_members.dart';
+import 'package:ncloud/features/library/domain/album_members.dart';
 import 'package:ncloud/models.dart';
 import 'package:ncloud/app/app_controller.dart';
 

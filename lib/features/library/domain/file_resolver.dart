@@ -1,6 +1,6 @@
-import '../../core/cloud/cloud_backend.dart';
-import '../../core/storage/file_store.dart';
-import '../../models.dart';
+import '../../../core/cloud/cloud_backend.dart';
+import '../../../core/storage/file_store.dart';
+import '../../../models.dart';
 import 'media_listing.dart';
 
 /// Replaces a pathless entry in the shared store and every loaded listing.
