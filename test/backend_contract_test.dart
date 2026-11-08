@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ncloud/app/app_controller.dart';
 import 'package:ncloud/features/library/change_monitor.dart';
 import 'package:ncloud/features/library/file_resolver.dart';
+import 'package:ncloud/features/library/library_mutations.dart';
 import 'package:ncloud/features/library/library_screen.dart';
 import 'package:ncloud/features/library/media_listing.dart';
 import 'package:ncloud/core/cloud/cloud_backend.dart';
@@ -255,6 +256,87 @@ class _DelayedPlaybackBackend extends _PortableBackend {
 
 void main() {
   const account = _PortableAccount('portable|account');
+
+  test('library mutations preserve demo trees and progress', () async {
+    final backend = _PortableBackend();
+    addTearDown(backend.close);
+    const folder = CloudFile(path: ['A'], name: 'A', isDirectory: true);
+    const child = CloudFile(
+      path: ['A', 'photo.jpg'],
+      name: 'photo.jpg',
+      isDirectory: false,
+    );
+    final files = [folder, child];
+    final trash = <String, List<CloudFile>>{};
+    var completed = 0;
+    final actions = LibraryMutations(
+      client: backend,
+      store: FileStore(),
+      resolve: (file) async => file,
+      checkSession: () {},
+      onCompleted: () => completed++,
+    );
+    await actions.run(
+      [folder],
+      'rename',
+      account: null,
+      demo: true,
+      demoFiles: files,
+      demoTrash: trash,
+      newName: 'B',
+    );
+    expect(files.map((file) => file.path), [
+      ['B'],
+      ['B', 'photo.jpg'],
+    ]);
+    await actions.run(
+      [files.first],
+      'delete',
+      account: null,
+      demo: true,
+      demoFiles: files,
+      demoTrash: trash,
+    );
+    expect(files, isEmpty);
+    expect(trash.values.single.length, 2);
+    expect(completed, 2);
+  });
+
+  test('library batch resolves all files before mutating any', () async {
+    final backend = _PortableBackend();
+    addTearDown(backend.close);
+    const file = CloudFile(
+      path: ['photo.jpg'],
+      name: 'photo.jpg',
+      isDirectory: false,
+    );
+    final files = [file];
+    final actions = LibraryMutations(
+      client: backend,
+      store: FileStore(),
+      resolve: (item) async {
+        if (item != file) throw const CloudException('Location unavailable.');
+        return item;
+      },
+      checkSession: () {},
+      onCompleted: () => fail('A partial batch was applied.'),
+    );
+    await expectLater(
+      actions.run(
+        [
+          file,
+          file.atPath(['missing.jpg']),
+        ],
+        'delete',
+        account: null,
+        demo: true,
+        demoFiles: files,
+        demoTrash: {},
+      ),
+      throwsA(isA<CloudException>()),
+    );
+    expect(files, [file]);
+  });
 
   test(
     'discovery identities round-trip without numeric provider assumptions',

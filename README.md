@@ -30,7 +30,7 @@ Share panels use a library-owned session bound to the account that opened them, 
 
 File actions resolve locations only when their operation needs them. Share sessions and playback preparation reject account changes; providers prepare seekable playback directly from pathless items, while matching saved originals can be replayed without a path lookup.
 
-Multi-file mutations remain bound to their initiating account; a session change stops subsequent operations and prevents stale results from modifying the replacement account's cache.
+`features/library/library_mutations.dart` applies batch mutations and reconciles the file cache. Batches remain bound to their initiating account; a session change stops subsequent operations and prevents stale results from modifying the replacement account's cache.
 
 Photo map requests are coordinated by a photo-feature session that merges wrapped viewport clusters and stops superseded or account-stale requests.
 

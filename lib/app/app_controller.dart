@@ -16,6 +16,7 @@ import '../core/storage/local_cache.dart';
 import '../models.dart';
 import '../features/library/media_listing.dart';
 import '../features/library/file_resolver.dart';
+import '../features/library/library_mutations.dart';
 import '../features/library/original_transfers.dart';
 import '../features/library/preview_memory.dart';
 import '../features/library/share_session.dart';
@@ -2328,91 +2329,26 @@ class AppController extends ChangeNotifier {
     notifyListeners();
     Object? failure;
     try {
-      if (!wasDemo && session == null) {
-        throw const CloudException('Sign in to manage files.');
-      }
-      final resolvedFiles = <CloudFile>[];
-      for (final file in files) {
-        checkSession();
-        resolvedFiles.add(await resolve(file));
-        checkSession();
-      }
-      files = resolvedFiles;
-      for (final file in files) {
-        checkSession();
-        if (file.readOnly) {
-          throw const CloudException(
-            'This album item is view-only. Manage its original on your server.',
-          );
-        }
-        final target = [...?destination, newName ?? file.name];
-        if (operation == 'move' ||
-            operation == 'copy' ||
-            operation == 'rename') {
-          if (operation == 'rename') {
-            target.clear();
-            target.addAll([...file.path.take(file.path.length - 1), newName!]);
-          }
-          validateName(target.last);
-          if (file.isDirectory && pathStartsWith(target, file.path)) {
-            throw const CloudException(
-              'A folder cannot be placed inside itself.',
-            );
-          }
-          if (wasDemo) {
-            if (_demo.any((f) => listEquals(f.path, target))) {
-              throw const CloudException(
-                'An item with that name already exists.',
-              );
-            }
-            final affected = _demo
-                .where((f) => pathStartsWith(f.path, file.path))
-                .toList();
-            final moved = affected
-                .map(
-                  (f) =>
-                      f.atPath([...target, ...f.path.skip(file.path.length)]),
-                )
-                .toList();
-            if (operation != 'copy') {
-              _demo.removeWhere((f) => pathStartsWith(f.path, file.path));
-            }
-            _demo.addAll(moved);
-          } else {
-            if (operation == 'copy') {
-              await client.copy(session!, file, target);
-            } else {
-              await client.move(session!, file, target);
-            }
-            checkSession();
-            fileStore.moveTree(file.path, target, copy: operation == 'copy');
-          }
-        } else if (operation == 'delete') {
-          if (wasDemo) {
-            _demoTrash['${file.key}:${DateTime.now().microsecondsSinceEpoch}'] =
-                _demo.where((f) => pathStartsWith(f.path, file.path)).toList();
-            _demo.removeWhere((f) => pathStartsWith(f.path, file.path));
-          } else {
-            await client.delete(session!, file);
-            checkSession();
-            fileStore.removeTree(file.path);
-          }
-        } else if (operation == 'favorite') {
-          if (wasDemo) {
-            _demo = _demo
-                .map((f) => f.key == file.key ? f.withFavorite(favorite) : f)
-                .toList();
-          } else {
-            await client.setFavorite(session!, file, favorite);
-            checkSession();
-            fileStore.update(file.key, (f) => f.withFavorite(favorite));
-          }
-        } else {
-          throw const CloudException('This action is not supported.');
-        }
-        completed++;
-        notifyListeners();
-      }
+      await LibraryMutations(
+        client: client,
+        store: fileStore,
+        resolve: resolve,
+        checkSession: checkSession,
+        onCompleted: () {
+          completed++;
+          notifyListeners();
+        },
+      ).run(
+        files,
+        operation,
+        account: session,
+        demo: wasDemo,
+        demoFiles: _demo,
+        demoTrash: _demoTrash,
+        destination: destination,
+        newName: newName,
+        favorite: favorite,
+      );
     } catch (e) {
       failure = e;
     }
