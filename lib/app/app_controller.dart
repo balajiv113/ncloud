@@ -758,6 +758,13 @@ class AppController extends ChangeNotifier {
   bool get albumIncludesSubfolders =>
       tab != 4 || !listEquals(directory, photoRoot);
 
+  /// The folder the current view shows, as a file for folder actions.
+  CloudFile get currentFolder => CloudFile(
+    path: [...directory],
+    name: directory.lastOrNull ?? 'My drive',
+    isDirectory: true,
+  );
+
   /// The main timeline resolves paths on demand; albums need paths for their
   /// sub-folder chips.
   bool _pathless(int currentTab) =>

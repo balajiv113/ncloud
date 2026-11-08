@@ -9,11 +9,15 @@ import '../../app/app_controller.dart';
 import 'domain/change_monitor.dart';
 import 'domain/library_view.dart';
 import 'albums_home.dart';
+import 'album_context.dart';
 import 'asset_viewer.dart';
 import '../../discovery_models.dart';
 import '../settings/settings_screen.dart';
 import 'file_actions.dart';
+import 'library_app_bar.dart';
 import 'navigation_dock.dart';
+import 'selection_bar.dart';
+import 'view_options_sheet.dart';
 import 'trash_screen.dart';
 import '../../shared/ui/folder_picker.dart';
 import '../../shared/ui/media_tile.dart';
@@ -304,6 +308,12 @@ class _LibraryScreenState extends State<LibraryScreen>
     }
   }
 
+  /// Leaves search, selection and filters behind and returns to the top.
+  void _resetView({bool keepAlbumSection = false}) {
+    setState(() => _reset(keepAlbumSection: keepAlbumSection));
+    if (_scroll.hasClients) _scroll.jumpTo(0);
+  }
+
   void _reset({bool keepAlbumSection = false}) {
     _search.clear();
     _selected.clear();
@@ -329,8 +339,7 @@ class _LibraryScreenState extends State<LibraryScreen>
       _destinationOffsets[previous] = _scroll.offset;
     }
     final request = ++_navigationRequest;
-    setState(_reset);
-    if (_scroll.hasClients) _scroll.jumpTo(0);
+    _resetView();
     _transitionTo(tab);
     await c.selectTab(tab);
     if (!mounted || previous == tab) return;
@@ -352,22 +361,18 @@ class _LibraryScreenState extends State<LibraryScreen>
     if (_selecting) {
       setState(() => _selected.clear());
     } else if (_albumHome && _albumsExpanded) {
-      setState(_reset);
-      if (_scroll.hasClients) _scroll.jumpTo(0);
+      _resetView();
     } else if (_album && !_albumHome) {
-      setState(() => _reset(keepAlbumSection: true));
-      if (_scroll.hasClients) _scroll.jumpTo(0);
+      _resetView(keepAlbumSection: true);
       c.selectTab(4);
     } else if (c.tab == 5 && !_sharedHome) {
-      setState(_reset);
-      if (_scroll.hasClients) _scroll.jumpTo(0);
+      _resetView();
       c.selectTab(5);
     } else if (_collection) {
       _navigate(4);
     } else {
-      setState(_reset);
+      _resetView();
       c.goTo(c.directory.sublist(0, c.directory.length - 1));
-      if (_scroll.hasClients) _scroll.jumpTo(0);
     }
   }
 
@@ -411,9 +416,8 @@ class _LibraryScreenState extends State<LibraryScreen>
     if (_selecting) {
       _toggle(file);
     } else if (file.isDirectory) {
-      setState(_reset);
+      _resetView();
       c.openFolder(file);
-      if (_scroll.hasClients) _scroll.jumpTo(0);
     } else if (file.isMedia) {
       final media = visible.where((f) => f.isMedia).toList();
       Navigator.push(
@@ -442,8 +446,7 @@ class _LibraryScreenState extends State<LibraryScreen>
   }
 
   void _openSmart(List<String> path) {
-    setState(() => _reset(keepAlbumSection: true));
-    if (_scroll.hasClients) _scroll.jumpTo(0);
+    _resetView(keepAlbumSection: true);
     c.openSmartAlbum(path);
   }
 
@@ -597,129 +600,53 @@ class _LibraryScreenState extends State<LibraryScreen>
                             // are painted before they scroll into view.
                             cacheExtent: 1200,
                             slivers: [
-                              SliverAppBar(
-                                floating: true,
-                                snap: true,
-                                automaticallyImplyLeading: false,
-                                leading:
+                              LibraryAppBar(
+                                title: _selecting
+                                    ? '${_selected.length} selected'
+                                    : c.directory.isNotEmpty ||
+                                          c.activeCloudAlbum != null ||
+                                          c.activePerson != null ||
+                                          c.activeMapBounds != null ||
+                                          (_albumHome && _albumsExpanded)
+                                    ? title
+                                    : 'ncloud',
+                                showBack:
                                     _selecting ||
-                                        detail ||
-                                        c.directory.isNotEmpty
-                                    ? IconButton(
-                                        tooltip: _selecting
-                                            ? 'Cancel selection'
-                                            : 'Back',
-                                        onPressed: c.busy ? null : _back,
-                                        icon: Icon(
-                                          _selecting
-                                              ? Icons.close
-                                              : Icons.arrow_back,
-                                        ),
-                                      )
-                                    : null,
-                                titleSpacing: 16,
-                                title: _searching
-                                    ? TextField(
-                                        controller: _search,
-                                        autofocus: true,
-                                        onChanged: (value) =>
-                                            setState(() => _query = value),
-                                        decoration: const InputDecoration(
-                                          hintText: 'Search',
-                                          isDense: true,
-                                          contentPadding: EdgeInsets.symmetric(
-                                            horizontal: 12,
-                                            vertical: 10,
-                                          ),
-                                        ),
-                                      )
-                                    : Text(
-                                        _selecting
-                                            ? '${_selected.length} selected'
-                                            : c.directory.isNotEmpty ||
-                                                  c.activeCloudAlbum != null ||
-                                                  c.activePerson != null ||
-                                                  c.activeMapBounds != null ||
-                                                  (_albumHome &&
-                                                      _albumsExpanded)
-                                            ? title
-                                            : 'ncloud',
-                                        key: const ValueKey('library-title'),
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: const TextStyle(
-                                          fontWeight: FontWeight.w700,
-                                          letterSpacing: -.7,
-                                        ),
-                                      ),
-                                actions: [
-                                  if (c.demo && !_searching && !_selecting)
-                                    Center(
-                                      child: Text(
-                                        'DEMO',
-                                        style: TextStyle(
-                                          fontSize: 9,
-                                          letterSpacing: 1,
-                                          color: theme.colorScheme.primary,
-                                        ),
-                                      ),
-                                    ),
-                                  if (!_selecting) ...[
-                                    IconButton(
-                                      tooltip: 'Search loaded items',
-                                      icon: Icon(
-                                        _searching ? Icons.close : Icons.search,
-                                      ),
-                                      onPressed: () => setState(() {
-                                        _searching = !_searching;
-                                        if (!_searching) {
-                                          _query = '';
-                                          _search.clear();
-                                        }
-                                      }),
-                                    ),
-                                    IconButton(
-                                      tooltip: 'View options',
-                                      onPressed: _viewOptions,
-                                      icon: const Icon(Icons.tune_rounded),
-                                    ),
-                                    if (!detail)
-                                      IconButton(
-                                        tooltip: 'Settings',
-                                        onPressed: () => Navigator.push(
-                                          context,
-                                          MaterialPageRoute<void>(
-                                            builder: (_) =>
-                                                SettingsScreen(controller: c),
-                                          ),
-                                        ),
-                                        icon: CircleAvatar(
-                                          radius: 15,
-                                          backgroundColor: theme
-                                              .colorScheme
-                                              .primaryContainer,
-                                          child: Text(
-                                            c.demo
-                                                ? 'N'
-                                                : (c
-                                                              .account
-                                                              ?.displayName
-                                                              .characters
-                                                              .firstOrNull ??
-                                                          'N')
-                                                      .toUpperCase(),
-                                            style: TextStyle(
-                                              fontSize: 11,
-                                              height: 1.4,
-                                              fontWeight: FontWeight.w700,
-                                              color: theme.colorScheme.primary,
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                  ],
-                                  const SizedBox(width: 4),
-                                ],
+                                    detail ||
+                                    c.directory.isNotEmpty,
+                                selecting: _selecting,
+                                busy: c.busy,
+                                searching: _searching,
+                                searchController: _search,
+                                demo: c.demo,
+                                initial: c.demo
+                                    ? 'N'
+                                    : (c
+                                                  .account
+                                                  ?.displayName
+                                                  .characters
+                                                  .firstOrNull ??
+                                              'N')
+                                          .toUpperCase(),
+                                showSettings: !detail,
+                                onBack: _back,
+                                onQueryChanged: (value) =>
+                                    setState(() => _query = value),
+                                onToggleSearch: () => setState(() {
+                                  _searching = !_searching;
+                                  if (!_searching) {
+                                    _query = '';
+                                    _search.clear();
+                                  }
+                                }),
+                                onViewOptions: _viewOptions,
+                                onSettings: () => Navigator.push(
+                                  context,
+                                  MaterialPageRoute<void>(
+                                    builder: (_) =>
+                                        SettingsScreen(controller: c),
+                                  ),
+                                ),
                               ),
                               SliverToBoxAdapter(
                                 child: SizedBox(
@@ -781,7 +708,32 @@ class _LibraryScreenState extends State<LibraryScreen>
                                   c.activeCloudAlbum == null &&
                                   c.activePerson == null &&
                                   c.activeMapBounds == null)
-                                SliverToBoxAdapter(child: _albumContext()),
+                                SliverToBoxAdapter(
+                                  child: AlbumContext(
+                                    itemCount: c.items
+                                        .where((f) => f.isMedia)
+                                        .length,
+                                    includesSubfolders:
+                                        c.albumIncludesSubfolders,
+                                    subfolders: subfolderPaths(
+                                      c.items,
+                                      c.directory,
+                                    ),
+                                    selected: _subfolder,
+                                    canManageFolder: c.directory.isNotEmpty,
+                                    onSelect: (path) =>
+                                        setState(() => _subfolder = path),
+                                    onOpenInDrive: () {
+                                      setState(_reset);
+                                      c.openFolder(c.currentFolder);
+                                    },
+                                    onFolderActions: () => fileActions(
+                                      context,
+                                      c,
+                                      c.currentFolder,
+                                    ),
+                                  ),
+                                ),
                               if (c.loading &&
                                   c.items.isEmpty &&
                                   !_indexedLayout &&
@@ -904,7 +856,11 @@ class _LibraryScreenState extends State<LibraryScreen>
               )
             : null,
         bottomNavigationBar: _selecting
-            ? _selectionBar()
+            ? SelectionBar(
+                busy: c.busy,
+                onAction: _bulk,
+                onDone: () => setState(() => _selected.clear()),
+              )
             : NavigationDock(
                 active: _drive
                     ? 1
@@ -968,36 +924,24 @@ class _LibraryScreenState extends State<LibraryScreen>
     }
   }
 
-  void _expandAlbums(bool native) {
-    setState(() {
-      _reset();
-      _albumsExpanded = true;
-      _showNative = native;
-    });
-    if (_scroll.hasClients) _scroll.jumpTo(0);
-  }
-
   void _openPerson(RecognizedPerson person) {
-    setState(() => _reset(keepAlbumSection: true));
-    if (_scroll.hasClients) _scroll.jumpTo(0);
+    _resetView(keepAlbumSection: true);
     c.openPerson(person);
   }
 
   late final _albumActions = AlbumHomeActions(
     openSmart: _openSmart,
     openNative: (album) {
-      setState(() => _reset(keepAlbumSection: true));
-      if (_scroll.hasClients) _scroll.jumpTo(0);
+      _resetView(keepAlbumSection: true);
       c.openCloudAlbum(album);
     },
     openShared: (path) {
-      setState(_reset);
-      if (_scroll.hasClients) _scroll.jumpTo(0);
+      _resetView();
       c.openSharedAlbum(path);
     },
     openPerson: _openPerson,
-    expandAlbums: _expandAlbums,
-    expandPeople: _expandPeople,
+    expandAlbums: (native) => _expandSection(native: native),
+    expandPeople: () => _expandSection(people: true),
     openMap: _openMap,
     openCollection: _openCollection,
   );
@@ -1010,8 +954,7 @@ class _LibraryScreenState extends State<LibraryScreen>
           controller: c,
           onOpenArea: (bounds) {
             Navigator.pop(mapContext);
-            setState(() => _reset(keepAlbumSection: true));
-            if (_scroll.hasClients) _scroll.jumpTo(0);
+            _resetView(keepAlbumSection: true);
             c.openMapArea(bounds);
           },
         ),
@@ -1019,103 +962,14 @@ class _LibraryScreenState extends State<LibraryScreen>
     );
   }
 
-  void _expandPeople() {
+  void _expandSection({bool native = false, bool people = false}) {
     setState(() {
       _reset();
       _albumsExpanded = true;
-      _showPeople = true;
+      _showNative = native;
+      _showPeople = people;
     });
     if (_scroll.hasClients) _scroll.jumpTo(0);
-  }
-
-  Widget _albumContext() {
-    final children = <String, List<String>>{};
-    for (final file in c.items.where((f) => f.isMedia)) {
-      if (file.path.length > c.directory.length + 1) {
-        final path = file.path.take(c.directory.length + 1).toList();
-        children[path.last] = path;
-      }
-    }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  '${c.items.where((f) => f.isMedia).length} items'
-                  '${c.albumIncludesSubfolders ? ', including subfolders' : ', in this folder only'}',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-              ),
-              PopupMenuButton<String>(
-                tooltip: 'Album actions',
-                onSelected: (action) {
-                  if (action == 'drive') {
-                    final folder = CloudFile(
-                      path: [...c.directory],
-                      name: c.directory.lastOrNull ?? 'My drive',
-                      isDirectory: true,
-                    );
-                    setState(_reset);
-                    c.openFolder(folder);
-                  } else {
-                    fileActions(
-                      context,
-                      c,
-                      CloudFile(
-                        path: [...c.directory],
-                        name: c.directory.last,
-                        isDirectory: true,
-                      ),
-                    );
-                  }
-                },
-                itemBuilder: (_) => [
-                  const PopupMenuItem(
-                    value: 'drive',
-                    child: Text('Open in Drive'),
-                  ),
-                  if (c.directory.isNotEmpty)
-                    const PopupMenuItem(
-                      value: 'actions',
-                      child: Text('Folder actions'),
-                    ),
-                ],
-              ),
-            ],
-          ),
-        ),
-        if (children.isNotEmpty)
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-            child: Row(
-              children: [
-                ChoiceChip(
-                  label: const Text('All photos'),
-                  selected: _subfolder == null,
-                  onSelected: (_) => setState(() => _subfolder = null),
-                ),
-                for (final entry in children.entries)
-                  Padding(
-                    padding: const EdgeInsets.only(left: 7),
-                    child: ChoiceChip(
-                      label: Text(entry.key),
-                      selected:
-                          _subfolder != null &&
-                          listEquals(_subfolder!, entry.value),
-                      onSelected: (_) =>
-                          setState(() => _subfolder = entry.value),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-      ],
-    );
   }
 
   Map<String, List<CloudFile>> _memoryGroups(List<CloudFile> files) {
@@ -1590,149 +1444,22 @@ class _LibraryScreenState extends State<LibraryScreen>
     ),
   );
 
-  Future<void> _viewOptions() async {
-    await showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      isScrollControlled: true,
-      builder: (sheetContext) => StatefulBuilder(
-        builder: (context, update) => SafeArea(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  'View options',
-                  style: Theme.of(context).textTheme.titleLarge,
-                ),
-                const SizedBox(height: 14),
-                if (!_drive && !_albumHome) ...[
-                  const Text('Show'),
-                  Wrap(
-                    spacing: 8,
-                    children: [
-                      for (final value in MediaFilter.values)
-                        ChoiceChip(
-                          label: Text(switch (value) {
-                            MediaFilter.all => 'All',
-                            MediaFilter.photos => 'Photos',
-                            MediaFilter.videos => 'Videos',
-                            MediaFilter.favorites => 'Favorites',
-                          }),
-                          selected: _filter == value,
-                          onSelected: (_) {
-                            setState(() => _filter = value);
-                            update(() {});
-                          },
-                        ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  const Text('Grid density'),
-                  Wrap(
-                    spacing: 8,
-                    children: [
-                      for (var value = 2; value <= 6; value++)
-                        ChoiceChip(
-                          label: Text('$value'),
-                          selected: value == _density,
-                          onSelected: (_) {
-                            _changeDensity(value);
-                            update(() {});
-                          },
-                        ),
-                    ],
-                  ),
-                ],
-                const SizedBox(height: 12),
-                const Text('Sort'),
-                if (_albumHome && _showPeople)
-                  const ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: Text('Most photos first'),
-                    trailing: Icon(Icons.check),
-                  ),
-                if (!(_albumHome && _showPeople))
-                  for (final (value, label) in [
-                    (LibrarySort.newest, 'Newest first'),
-                    (LibrarySort.oldest, 'Oldest first'),
-                    (LibrarySort.name, 'Name A-Z'),
-                    if (!_albumHome) (LibrarySort.size, 'Largest first'),
-                  ])
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: Text(label),
-                      trailing: _sort == value ? const Icon(Icons.check) : null,
-                      onTap: () {
-                        setState(() => _sort = value);
-                        update(() {});
-                      },
-                    ),
-                if (_albumHome)
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.folder_open_outlined),
-                    title: const Text('Choose photo source'),
-                    subtitle: Text(
-                      'My drive${c.photoRoot.isEmpty ? '' : ' / ${c.photoRoot.join(' / ')}'}',
-                    ),
-                    onTap: () {
-                      Navigator.pop(sheetContext);
-                      _chooseSource();
-                    },
-                  ),
-                if (!_albumHome)
-                  Text(
-                    c.timelineIndexAvailable == true
-                        ? 'Capture dates. Photos load as you scroll.'
-                        : 'Modification dates. Photos load as you scroll.',
-                    style: const TextStyle(fontSize: 11),
-                  ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _selectionBar() => SafeArea(
-    top: false,
-    child: Material(
-      color: Theme.of(context).colorScheme.surfaceContainer,
-      child: Padding(
-        padding: const EdgeInsets.all(8),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-          children: [
-            for (final (action, label, icon) in [
-              ('favorite', 'Favorite selected', Icons.favorite_border),
-              (
-                'move',
-                'Move selected to album',
-                Icons.drive_file_move_outlined,
-              ),
-              ('copy', 'Copy selected to album', Icons.copy_outlined),
-              ('delete', 'Delete selected', Icons.delete_outline),
-            ])
-              IconButton(
-                tooltip: label,
-                onPressed: c.busy ? null : () => _bulk(action),
-                icon: Icon(icon),
-              ),
-            IconButton(
-              tooltip: 'Done',
-              onPressed: c.busy
-                  ? null
-                  : () => setState(() => _selected.clear()),
-              icon: const Icon(Icons.check),
-            ),
-          ],
-        ),
-      ),
-    ),
+  Future<void> _viewOptions() => showViewOptions(
+    context,
+    options: (filter: _filter, sort: _sort, density: _density),
+    onChanged: (options) {
+      setState(() {
+        _filter = options.filter;
+        _sort = options.sort;
+      });
+      _changeDensity(options.density);
+    },
+    drive: _drive,
+    albumHome: _albumHome,
+    showPeople: _showPeople,
+    captureDates: c.timelineIndexAvailable == true,
+    photoRoot: c.photoRoot,
+    onChooseSource: _chooseSource,
   );
 
   Future<void> _bulk(String operation) async {

@@ -121,4 +121,19 @@ void main() {
     expect(list('photos/ca', LibrarySort.name), isEmpty);
     expect(list('cab', LibrarySort.name), ['Cabin']);
   });
+
+  test('sub-folder chips list each child that holds media, once', () {
+    final items = [
+      file('a.jpg', parent: ['Photos', 'Trip', 'Day1']),
+      file('b.jpg', parent: ['Photos', 'Trip', 'Day1']),
+      file('c.jpg', parent: ['Photos', 'Trip', 'Day2']),
+      file('d.jpg', parent: ['Photos', 'Trip']),
+      file('notes.txt', type: 'text/plain', parent: ['Photos', 'Trip', 'Docs']),
+    ];
+    expect(subfolderPaths(items, ['Photos', 'Trip']), [
+      ['Photos', 'Trip', 'Day1'],
+      ['Photos', 'Trip', 'Day2'],
+    ]);
+    expect(subfolderPaths(items, ['Photos', 'Trip', 'Day1']), isEmpty);
+  });
 }
