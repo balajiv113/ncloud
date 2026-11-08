@@ -17,6 +17,7 @@ import '../models.dart';
 import '../features/library/media_listing.dart';
 import '../features/library/file_resolver.dart';
 import '../features/library/original_transfers.dart';
+import '../features/library/preview_memory.dart';
 import '../features/library/share_session.dart';
 import '../features/photos/photo_map_session.dart';
 import '../features/library/preview_batcher.dart';
@@ -181,9 +182,10 @@ class AppController extends ChangeNotifier {
   /// Decoded-ready thumbnails keyed by file id and size, each tagged with
   /// the file version it was rendered from. Survives revisions so a stale
   /// thumbnail stays on screen until its replacement arrives.
-  final Map<String, ({Uint8List bytes, String version})> _thumbs = {};
-  int _thumbBytes = 0;
   static const thumbnailMemoryBudget = 64 * 1024 * 1024;
+  final PreviewMemory _thumbs = PreviewMemory(
+    byteBudget: thumbnailMemoryBudget,
+  );
   final Map<String, Future<Uint8List>> _previewLoads = {};
   final Map<String, int> _previewInterest = {};
   int _previewGeneration = 0;
@@ -1798,8 +1800,7 @@ class AppController extends ChangeNotifier {
               _personPreviewVersion(previous) !=
                   _personPreviewVersion(replacement)) {
             final faceKey = _personPreviewKey(previous)!;
-            final removed = _thumbs.remove(faceKey);
-            if (removed != null) _thumbBytes -= removed.bytes.length;
+            _thumbs.remove(faceKey);
             _facePreviewGenerations.remove(faceKey);
             await cache?.removeThumbnail(faceKey);
             if (!current()) return;
@@ -1839,7 +1840,7 @@ class AppController extends ChangeNotifier {
       '${Uri.encodeComponent(person.cover ?? '')}|${person.coverEtag ?? ''}';
 
   Uint8List? cachedPersonPreview(RecognizedPerson person) {
-    final saved = _thumbs[_personPreviewKey(person)];
+    final saved = _thumbs.peek(_personPreviewKey(person));
     return saved?.version == _personPreviewVersion(person)
         ? saved?.bytes
         : null;
@@ -1870,7 +1871,7 @@ class AppController extends ChangeNotifier {
       throw const CloudException('Sign in to load people.');
     }
     final version = _personPreviewVersion(person);
-    if (_thumbs[key] case final saved?
+    if (_thumbs.peek(key) case final saved?
         when saved.version == version &&
             _facePreviewGenerations[key] == generation) {
       return saved.bytes;
@@ -1886,8 +1887,7 @@ class AppController extends ChangeNotifier {
             key == _personPreviewKey(person) &&
             !_disposed &&
             (error.statusCode == 404 || error.statusCode == 410)) {
-          final removed = _thumbs.remove(key);
-          if (removed != null) _thumbBytes -= removed.bytes.length;
+          _thumbs.remove(key);
           _facePreviewGenerations.remove(key);
           await cache?.removeThumbnail(key);
         }
@@ -2566,7 +2566,6 @@ class AppController extends ChangeNotifier {
     _fileResolver.clear();
     _thumbs.clear();
     _facePreviewGenerations.clear();
-    _thumbBytes = 0;
     _previewLoads.clear();
     _previewInterest.clear();
     _previewBatcher.clear();
@@ -2702,31 +2701,22 @@ class AppController extends ChangeNotifier {
   }
 
   void _rememberPreview(String key, Uint8List bytes, String version) {
-    final old = _thumbs.remove(key);
-    if (old != null) _thumbBytes -= old.bytes.length;
-    _thumbs[key] = (bytes: bytes, version: version);
-    _thumbBytes += bytes.length;
-    while ((_thumbBytes > thumbnailMemoryBudget || _thumbs.length > 4000) &&
-        _thumbs.length > 1) {
-      final oldest = _thumbs.keys.first;
-      _thumbBytes -= _thumbs.remove(oldest)!.bytes.length;
-    }
+    _thumbs.put(key, bytes, version);
   }
 
   /// Thumbnail already in memory, possibly from an older file revision, so
   /// tiles can paint on their first frame without a loading state.
   Uint8List? cachedPreview(CloudFile file, {int size = 384}) {
     final key = _previewKey(file, size);
-    final entry = key == null ? null : _thumbs.remove(key);
+    final entry = _thumbs.get(key);
     if (entry == null) return null;
-    _thumbs[key!] = entry;
     return entry.bytes;
   }
 
   /// Whether [cachedPreview] matches the file's current revision.
   bool previewCurrent(CloudFile file, {int size = 384}) {
     final key = _previewKey(file, size);
-    return key != null && _thumbs[key]?.version == _previewVersion(file);
+    return key != null && _thumbs.peek(key)?.version == _previewVersion(file);
   }
 
   /// Current thumbnail for [file]: memory, then disk, then the server.
@@ -2754,7 +2744,7 @@ class AppController extends ChangeNotifier {
       }
     }
 
-    final memory = _thumbs[key];
+    final memory = _thumbs.peek(key);
     if (!retry && memory?.version == version) {
       cachedPreview(file, size: size);
       return Future.value(memory!.bytes);

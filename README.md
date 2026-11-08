@@ -18,6 +18,8 @@ Folder inspection supports metadata-only revision checks without enumerating chi
 
 Preview requests use one batch-friendly backend operation with positional partial results. `features/library/preview_batcher.dart` prioritizes visible requests, retries missing entries individually and preserves session cancellation; the Nextcloud adapter chooses the relevant preview endpoints.
 
+`features/library/preview_memory.dart` shares the bounded in-memory LRU between photo and face previews, independently of provider batching.
+
 Async file resolution and previews are scoped to their initiating session. Clearing the preview cache invalidates in-flight results as well as stored entries; late responses cannot refill it. Resuming browsing starts a current change check instead of publishing a failure from the previous inactive session.
 
 On-demand file resolution is owned by `features/library/file_resolver.dart`, which shares concurrent requests and invalidates them on cache or session changes. The cloud contract still exposes ID-based resolution; moving location handling fully inside provider operations remains future work.
