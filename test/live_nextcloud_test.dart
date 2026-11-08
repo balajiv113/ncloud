@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:ncloud/providers/nextcloud/nextcloud_client.dart';
 import 'package:ncloud/core/cloud/cloud_backend.dart';
+import 'package:ncloud/features/library/album_members.dart';
 import 'package:ncloud/models.dart';
 import 'package:ncloud/app/app_controller.dart';
 
@@ -309,7 +310,10 @@ void main() {
       final added = await nativeTransport.send(addMember);
       await added.stream.drain<void>();
       expect(added.statusCode, anyOf(201, 204));
-      final nativeFiles = await client.albumFiles(account, emptyNative, photos);
+      final nativeFiles = reconcileAlbumMembers(
+        await client.albumFiles(account, emptyNative),
+        photos,
+      );
       expect(nativeFiles, hasLength(1));
       expect(nativeFiles.single.key, photo.key);
       expect(await client.preview(account, photo), isNotEmpty);

@@ -33,6 +33,32 @@ class FolderListing {
   final String? revision;
 }
 
+/// Sparse provider metadata for an album member. Missing fields are unknown,
+/// rather than zero, false or empty, and can be reconciled with cached files.
+class CloudAlbumMember {
+  const CloudAlbumMember({
+    required this.reference,
+    this.id,
+    this.originalName,
+    this.displayName,
+    this.contentType,
+    this.size,
+    this.modified,
+    this.revision,
+    this.favorite,
+  });
+
+  final List<String> reference;
+  final String? id;
+  final String? originalName;
+  final String? displayName;
+  final String? contentType;
+  final int? size;
+  final DateTime? modified;
+  final String? revision;
+  final bool? favorite;
+}
+
 /// A timeline request. A null [dayIds] requests the day index; otherwise only
 /// the specified days are loaded. Use [TimelineQuery.page] for unindexed
 /// browsing. [optional] applies to index requests; [resolvePaths] applies to
@@ -132,11 +158,7 @@ abstract interface class CloudBackend {
   );
 
   Future<List<CloudAlbum>> albums(Account account, {bool shared = false});
-  Future<List<CloudFile>> albumFiles(
-    Account account,
-    CloudAlbum album,
-    List<CloudFile> library,
-  );
+  Future<List<CloudAlbumMember>> albumFiles(Account account, CloudAlbum album);
   Future<List<List<String>>> incomingSharedFolders(Account account);
   Future<List<RecognizedPerson>?> people(
     Account account, {

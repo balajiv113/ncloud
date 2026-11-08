@@ -400,10 +400,9 @@ class NextcloudClient implements CloudBackend {
       .toList();
 
   @override
-  Future<List<CloudFile>> albumFiles(
+  Future<List<CloudAlbumMember>> albumFiles(
     Account account,
     CloudAlbum album,
-    List<CloudFile> library,
   ) async {
     final response = await _request(
       'PROPFIND',
@@ -421,11 +420,7 @@ class NextcloudClient implements CloudBackend {
       'dav',
       ...album.reference,
     ]).pathSegments;
-    final known = {
-      for (final file in library)
-        if (file.id != null) file.id!: file,
-    };
-    final result = <CloudFile>[];
+    final result = <CloudAlbumMember>[];
     for (final entry in XmlDocument.parse(
       response.body,
     ).findAllElements('response', namespace: 'DAV:')) {
@@ -448,38 +443,22 @@ class NextcloudClient implements CloudBackend {
               .firstOrNull ??
           '';
       final id = value('fileid', 'http://owncloud.org/ns');
-      final existing = known[id];
-      final type = value('getcontenttype').isEmpty
-          ? existing?.contentType ?? ''
-          : value('getcontenttype');
-      if (!type.startsWith('image/') && !type.startsWith('video/')) continue;
-      final filename = value('file-name', 'http://nextcloud.org/ns');
-      final name = filename.isEmpty
-          ? existing?.name ?? value('displayname')
-          : filename;
+      final name = value('file-name', 'http://nextcloud.org/ns');
+      final display = value('displayname');
+      final type = value('getcontenttype');
+      final revision = value('getetag');
+      final favorite = value('favorite', 'http://owncloud.org/ns');
       result.add(
-        CloudFile(
-          path: existing == null
-              ? ['Albums', ...album.reference, segments.last]
-              : name != existing.name && !existing.readOnly
-              ? [CloudFile.pendingRoot, id]
-              : existing.path,
-          name: name.isEmpty ? segments.last : name,
-          isDirectory: false,
-          contentType: type,
+        CloudAlbumMember(
+          reference: [...album.reference, segments.last],
           id: id.isEmpty ? null : id,
-          size: int.tryParse(value('getcontentlength')) ?? existing?.size ?? 0,
-          modified:
-              _parseModified(value('getlastmodified')) ?? existing?.modified,
-          etag: value('getetag').isEmpty ? existing?.etag : value('getetag'),
-          albumReference: existing == null
-              ? [...album.reference, segments.last]
-              : existing.albumReference,
-          favorite: value('favorite', 'http://owncloud.org/ns').isEmpty
-              ? existing?.favorite ?? false
-              : value('favorite', 'http://owncloud.org/ns') == '1',
-          taken: existing?.taken,
-          captureDay: existing?.captureDay,
+          originalName: name.isEmpty ? null : name,
+          displayName: display.isEmpty ? null : display,
+          contentType: type.isEmpty ? null : type,
+          size: int.tryParse(value('getcontentlength')),
+          modified: _parseModified(value('getlastmodified')),
+          revision: revision.isEmpty ? null : revision,
+          favorite: favorite.isEmpty ? null : favorite == '1',
         ),
       );
     }

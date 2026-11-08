@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:ncloud/app/app_controller.dart';
 import 'package:ncloud/core/storage/local_cache.dart';
+import 'package:ncloud/features/library/album_members.dart';
 import 'package:ncloud/main.dart';
 import 'package:ncloud/models.dart';
 import 'package:ncloud/providers/nextcloud/nextcloud_client.dart';
@@ -26,6 +27,55 @@ String page(int offset, int count) => multistatus(
 );
 
 void main() {
+  test(
+    'album reconciliation distinguishes missing metadata from zero values',
+    () {
+      final known = CloudFile(
+        path: const ['Photos', 'known.jpg'],
+        name: 'known.jpg',
+        isDirectory: false,
+        id: 'opaque-id',
+        contentType: 'image/jpeg',
+        size: 1024,
+        favorite: true,
+        etag: 'cached-revision',
+        taken: DateTime.utc(2020),
+        captureDay: 18262,
+      );
+      final files = reconcileAlbumMembers(
+        [
+          const CloudAlbumMember(
+            reference: ['opaque-album', 'opaque-item'],
+            id: 'opaque-id',
+            size: 0,
+            favorite: false,
+          ),
+          const CloudAlbumMember(
+            reference: ['opaque-album', 'unknown'],
+            contentType: 'video/mp4',
+            displayName: 'Shared.mp4',
+          ),
+        ],
+        [known],
+      );
+      expect(files.first.path, known.path);
+      expect(files.first.contentType, known.contentType);
+      expect(files.first.size, 0);
+      expect(files.first.favorite, isFalse);
+      expect(files.first.etag, 'cached-revision');
+      expect(files.first.captureDay, known.captureDay);
+      expect(files.last.name, 'Shared.mp4');
+      expect(files.last.readOnly, isTrue);
+      expect(files.last.albumReference, ['opaque-album', 'unknown']);
+      expect(
+        () => reconcileAlbumMembers([
+          const CloudAlbumMember(reference: []),
+        ], const []),
+        throwsFormatException,
+      );
+    },
+  );
+
   test(
     'timeline and favorites fetch only one page until scrolling requests another',
     () async {
@@ -275,7 +325,10 @@ void main() {
         size: 1024,
         favorite: true,
       );
-      final files = await client.albumFiles(account, albums.first, [photo]);
+      final files = reconcileAlbumMembers(
+        await client.albumFiles(account, albums.first),
+        [photo],
+      );
       expect(files.first.path, photo.path);
       expect(files.first.name, photo.name);
       expect(files.first.readOnly, isFalse);
@@ -310,12 +363,14 @@ void main() {
       ),
     );
     addTearDown(client.close);
-    final files = await client.albumFiles(
-      account,
-      const CloudAlbum(
-        name: 'Trip',
-        count: 1,
-        reference: ['photos', 'alice', 'albums', 'Trip'],
+    final files = reconcileAlbumMembers(
+      await client.albumFiles(
+        account,
+        const CloudAlbum(
+          name: 'Trip',
+          count: 1,
+          reference: ['photos', 'alice', 'albums', 'Trip'],
+        ),
       ),
       [
         const CloudFile(

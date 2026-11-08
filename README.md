@@ -12,6 +12,8 @@ Timeline and map browsing use one query for date counts, selected days or uninde
 
 Indexed Smart-album discovery asks the provider for a folder's direct media covers and descendant candidates, keeping protocol-specific existence and cover lookups inside the adapter.
 
+Server-album members return sparse provider metadata without sending the app's library cache to the provider. The library reconciles known files locally, preserving read-only shared members and detecting renamed originals.
+
 Folder inspection supports metadata-only revision checks without enumerating children. This keeps cache freshness and change monitoring inexpensive while avoiding a separate revision operation in the cloud interface.
 
 Preview requests use one batch-friendly backend operation with positional partial results. `features/library/preview_batcher.dart` prioritizes visible requests, retries missing entries individually and preserves session cancellation; the Nextcloud adapter chooses the relevant preview endpoints.

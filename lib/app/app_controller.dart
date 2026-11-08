@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../features/library/demo.dart';
+import '../features/library/album_members.dart';
 import '../diagnostics.dart';
 import '../discovery_models.dart';
 import '../core/storage/file_store.dart';
@@ -957,9 +958,9 @@ class AppController extends ChangeNotifier {
         if (version != _loadVersion || account != session || _disposed) return;
         listing.add(fileStore, available);
       } else if (native != null) {
-        final files = await client.albumFiles(session, native, _libraryFiles);
+        final members = await client.albumFiles(session, native);
         if (version != _loadVersion || account != session || _disposed) return;
-        listing.add(fileStore, files);
+        listing.add(fileStore, reconcileAlbumMembers(members, _libraryFiles));
       } else if (currentTab == 1) {
         final files = await _listFolder(
           session,
