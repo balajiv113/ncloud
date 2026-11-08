@@ -170,4 +170,20 @@ void main() {
       expect(client.restoreAccount(original.encode()).photoRoot, isNull);
     },
   );
+
+  test('a native album cover is an id-only file, absent without a cover', () {
+    const album = CloudAlbum(
+      name: 'Trip',
+      reference: ['photos', 'Trip'],
+      count: 2,
+      coverId: '43',
+    );
+    expect(album.cover?.id, '43');
+    expect(album.cover?.etag, isNull);
+    expect(album.cover?.modified, isNull);
+    expect(
+      const CloudAlbum(name: 'Empty', reference: ['Empty'], count: 0).cover,
+      isNull,
+    );
+  });
 }

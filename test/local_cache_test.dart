@@ -408,6 +408,23 @@ void main() {
     },
   );
 
+  test('a full thumbnail cache evicts to 80% instead of per write', () async {
+    cache = LocalCache(
+      () async => Directory('${root.path}/cache'),
+      budget: 1000,
+    );
+    for (var i = 0; i < 9; i++) {
+      await cache.writeThumbnail('t$i', Uint8List(100));
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+    expect(await cache.size(), lessThanOrEqualTo(800));
+    expect(await cache.readThumbnail('t0'), isNull);
+    expect(await cache.readThumbnail('t8'), isNotNull);
+    final before = await cache.size();
+    await cache.writeThumbnail('t9', Uint8List(100));
+    expect(await cache.size(), before + 105);
+  });
+
   test(
     'restart trims all browsing categories and removes interrupted writes',
     () async {
@@ -451,6 +468,13 @@ void main() {
       expect(await cache.readThumbnail('read'), isNotNull);
     },
   );
+
+  test('thumbnails without the current header are not read', () async {
+    await cache.writeThumbnail('k', Uint8List(10), version: 'v1');
+    final file = File('${root.path}/cache/thumbs/${cacheDigest('k')}');
+    await file.writeAsBytes(Uint8List.fromList([1, 2, 3, 4, 5, 6, 7, 8]));
+    expect(await cache.readThumbnail('k'), isNull);
+  });
 
   test(
     'legacy compressed JSON is ignored in favor of current SQLite cache',

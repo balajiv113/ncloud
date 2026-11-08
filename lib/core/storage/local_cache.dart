@@ -202,12 +202,19 @@ class LocalCache {
     unawaited(file.setLastModified(now).catchError((_) => file));
   }
 
+  /// Writes a thumbnail, first evicting the oldest ones down to 80% of the
+  /// budget when it would not leave the metadata reserve, so a full cache
+  /// does not evict on every write. A write that cannot fit at all is trimmed.
   Future<void> _write(File file, List<int> bytes) async {
     await _index();
-    await _reserveMetadataSpace(
-      incomingBytes: bytes.length - (_entries![file.path]?.size ?? 0),
-      protectedPath: file.path,
-    );
+    final incoming = bytes.length - (_entries![file.path]?.size ?? 0);
+    final used = _totalBytes + (await _database?.allocatedBytes() ?? 0);
+    if (used + incoming + _metadataReserve > budget) {
+      await _evictThumbnails(
+        used + incoming - (budget * 0.8).floor(),
+        protectedPath: file.path,
+      );
+    }
     final temp = File('${file.path}.part');
     try {
       await temp.writeAsBytes(bytes);
@@ -217,8 +224,7 @@ class LocalCache {
     }
     _totalBytes += bytes.length - (_entries![file.path]?.size ?? 0);
     _entries![file.path] = (size: bytes.length, accessed: DateTime.now());
-    await _reserveMetadataSpace();
-    await _trim();
+    if (used + incoming > budget) await _trim();
   }
 
   Future<Directory> _folder(String name) async {
@@ -235,8 +241,11 @@ class LocalCache {
     if (entry != null) _totalBytes -= entry.size;
   });
 
-  Future<File> _file(String folder, String key, [String suffix = '']) async =>
-      File('${(await _folder(folder)).path}/${cacheDigest(key)}$suffix');
+  Future<File> _file(String folder, String key) async =>
+      File('${(await _folder(folder)).path}/${cacheDigest(key)}');
+
+  Future<File> _existingFile(String folder, String key) async =>
+      File('${(await _root).path}/$folder/${cacheDigest(key)}');
 
   static const _thumbMagic = [0x4e, 0x43, 0x54, 0x31]; // NCT1
 
@@ -244,21 +253,19 @@ class LocalCache {
   /// it can be shown instantly and refreshed only if the file changed.
   Future<({Uint8List bytes, String version})?> readThumbnail(String key) async {
     try {
-      final file = await _file('thumbs', key);
-      if (!await file.exists()) return null;
+      final file = await _existingFile('thumbs', key);
       final data = await file.readAsBytes();
       _touch(file);
-      var version = '';
-      var start = 0;
-      if (data.length > 5 &&
-          List.generate(4, (i) => data[i]).join() == _thumbMagic.join()) {
-        final length = data[4];
-        if (data.length < 5 + length) return null;
-        version = utf8.decode(data.sublist(5, 5 + length));
-        start = 5 + length;
+      if (data.length < 5 ||
+          List.generate(4, (i) => data[i]).join() != _thumbMagic.join()) {
+        return null;
       }
+      final start = 5 + data[4];
       if (data.length <= start) return null;
-      return (bytes: Uint8List.sublistView(data, start), version: version);
+      return (
+        bytes: Uint8List.sublistView(data, start),
+        version: utf8.decode(data.sublist(5, start)),
+      );
     } on Object {
       return null;
     }

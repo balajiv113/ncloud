@@ -149,7 +149,6 @@ void main() {
     expect(c.people.single.id, '12');
 
     await cache.writeDocument(key, {'people': 'damaged'});
-    c.people = [];
     final other = AppController(
       store: MemoryStore(),
       cache: cache,
@@ -290,7 +289,9 @@ void main() {
                 ? http.Response('', 404)
                 : http.Response.bytes(png, 200);
           }
-          return jsonResponse([samplePersonResponse]);
+          return jsonResponse([
+            {...samplePersonResponse, if (gone) 'cover_etag': 'changed'},
+          ]);
         }),
       ),
     )..account = account;
@@ -319,8 +320,31 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  test('a late face response cannot replace a refreshed preview', () async {
+  test('an unchanged cover is not downloaded again after a refresh', () async {
+    var previews = 0;
+    final c = AppController(
+      store: MemoryStore(),
+      client: NextcloudClient(
+        transport: peopleTransport((request) async {
+          if (request.url.path.endsWith('/preview')) {
+            previews++;
+            return http.Response.bytes(png, 200);
+          }
+          return jsonResponse([samplePersonResponse]);
+        }),
+      ),
+    )..account = account;
+    addTearDown(c.dispose);
+    await c.loadPeople();
+    await c.personPreview(samplePerson);
+    await c.loadPeople(refresh: true);
+    expect(await c.personPreview(c.people.single), png);
+    expect(previews, 1);
+  });
+
+  test('a late response for an old cover is never shown as current', () async {
     final old = Completer<http.Response>();
+    var changed = false;
     var previews = 0;
     final c = AppController(
       store: MemoryStore(),
@@ -331,64 +355,67 @@ void main() {
                 ? old.future
                 : http.Response.bytes([4, 5, 6], 200);
           }
-          return jsonResponse([samplePersonResponse]);
+          return jsonResponse([
+            {...samplePersonResponse, if (changed) 'cover_etag': 'changed'},
+          ]);
         }),
       ),
     )..account = account;
     addTearDown(c.dispose);
     await c.loadPeople();
-    final cancelled = expectLater(
-      c.personPreview(samplePerson),
-      throwsA(isA<PreviewCancelled>()),
-    );
+    final late = c.personPreview(samplePerson);
     await Future<void>.delayed(Duration.zero);
+    changed = true;
     await c.loadPeople(refresh: true);
     expect(await c.personPreview(c.people.single), [4, 5, 6]);
     old.complete(http.Response.bytes(png, 200));
-    await cancelled;
-    expect(c.cachedPersonPreview(samplePerson), [4, 5, 6]);
-    expect(previews, 2);
+    await late;
+    expect(c.cachedPersonPreview(c.people.single), isNot(png));
   });
 
-  test('missing face previews also invalidate the disk thumbnail', () async {
-    final dir = await Directory.systemTemp.createTemp('ncloud-face-404-');
-    final cache = LocalCache(() async => dir);
-    var gone = false;
-    final c = AppController(
-      store: MemoryStore(),
-      cache: cache,
-      client: NextcloudClient(
-        transport: peopleTransport((request) async {
-          if (request.url.path.endsWith('/preview')) {
-            return gone
-                ? http.Response('', 404)
-                : http.Response.bytes(png, 200);
-          }
-          return jsonResponse([samplePersonResponse]);
-        }),
-      ),
-    )..account = account;
-    addTearDown(() async {
-      c.dispose();
-      await cache.close();
-      await dir.delete(recursive: true);
-    });
-    await c.loadPeople();
-    await c.personPreview(samplePerson);
-    gone = true;
-    await c.loadPeople(refresh: true);
-    await expectLater(
-      c.personPreview(samplePerson),
-      throwsA(isA<CloudException>()),
-    );
-    expect(
-      await cache.readThumbnail(
-        'face-v1|${account.server}|${account.userId}|12',
-      ),
-      isNull,
-    );
-    expect(c.cachedPersonPreview(samplePerson), isNull);
-  });
+  test(
+    'a changed cover drops the stored face before its replacement',
+    () async {
+      final dir = await Directory.systemTemp.createTemp('ncloud-face-cover-');
+      final cache = LocalCache(() async => dir);
+      var changed = false;
+      final c = AppController(
+        store: MemoryStore(),
+        cache: cache,
+        client: NextcloudClient(
+          transport: peopleTransport((request) async {
+            if (request.url.path.endsWith('/preview')) {
+              return http.Response('', 404);
+            }
+            return jsonResponse([
+              {...samplePersonResponse, if (changed) 'cover_etag': 'changed'},
+            ]);
+          }),
+        ),
+      )..account = account;
+      addTearDown(() async {
+        c.dispose();
+        await cache.close();
+        await dir.delete(recursive: true);
+      });
+      final key = 'face-v1|${account.server}|${account.userId}|12';
+      await c.loadPeople();
+      await cache.writeThumbnail(
+        key,
+        png,
+        version: '41|${samplePerson.coverEtag}',
+      );
+      expect(await c.restorePersonPreview(samplePerson), png);
+      changed = true;
+      await c.loadPeople(refresh: true);
+      expect(await cache.readThumbnail(key), isNull);
+      expect(c.cachedPersonPreview(samplePerson), isNull);
+      await expectLater(
+        c.personPreview(c.people.single),
+        throwsA(isA<CloudException>()),
+      );
+    },
+  );
 
   test(
     'person filters survive paging, scrubbing and cached navigation',
