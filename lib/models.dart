@@ -207,6 +207,22 @@ class CloudAlbum {
   final String? coverId;
   final bool shared;
 
+  Map<String, dynamic> toJson() => {
+    'name': name,
+    'path': reference,
+    'count': count,
+    'coverId': coverId,
+    'shared': shared,
+  };
+
+  factory CloudAlbum.fromJson(Map<String, dynamic> json) => CloudAlbum(
+    name: json['name'] as String,
+    reference: (json['path'] as List).cast<String>(),
+    count: json['count'] as int,
+    coverId: json['coverId'] as String?,
+    shared: json['shared'] as bool,
+  );
+
   /// The cover as a file known only by id; its revision and path are unknown
   /// until a listing provides them.
   CloudFile? get cover => coverId == null
