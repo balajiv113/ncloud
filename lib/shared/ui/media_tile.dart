@@ -67,7 +67,6 @@ class _MediaTileState extends State<MediaTile> {
   /// Paints any cached thumbnail immediately, then fetches only if it is
   /// missing or from an older revision of the file.
   void _load({bool retry = false, bool keep = false}) {
-    if (widget.file.demoColor != null) return;
     final generation = ++_generation;
     final thumbnails = widget.controller.thumbnails;
     final file = widget.file;
@@ -111,12 +110,6 @@ class _MediaTileState extends State<MediaTile> {
 
   @override
   Widget build(BuildContext context) {
-    if (widget.file.demoColor case final color?) {
-      return CustomPaint(
-        painter: LandscapePainter(Color(color), widget.file.name.hashCode),
-        child: const SizedBox.expand(),
-      );
-    }
     final placeholder = _placeholder(context);
     if (_failed) {
       return InkWell(
@@ -205,49 +198,4 @@ class _MediaTileState extends State<MediaTile> {
       },
     ),
   );
-}
-
-class LandscapePainter extends CustomPainter {
-  LandscapePainter(this.color, this.seed);
-  final Color color;
-  final int seed;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final rect = Offset.zero & size;
-    canvas.drawRect(
-      rect,
-      Paint()
-        ..shader = LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [Color.lerp(color, Colors.white, .55)!, color],
-        ).createShader(rect),
-    );
-    final sunX = size.width * (.25 + (seed.abs() % 40) / 100);
-    canvas.drawCircle(
-      Offset(sunX, size.height * .25),
-      size.shortestSide * .12,
-      Paint()..color = const Color(0xFFFFE6B8),
-    );
-    for (var layer = 0; layer < 3; layer++) {
-      final path = Path()..moveTo(0, size.height);
-      for (var i = 0; i <= 6; i++) {
-        final height = .45 + layer * .14 + ((seed.abs() + i * 7) % 17) / 100;
-        path.lineTo(size.width * i / 6, size.height * height);
-      }
-      path
-        ..lineTo(size.width, size.height)
-        ..close();
-      canvas.drawPath(
-        path,
-        Paint()
-          ..color = Color.lerp(color, const Color(0xFF102E30), layer * .23)!,
-      );
-    }
-  }
-
-  @override
-  bool shouldRepaint(LandscapePainter oldDelegate) =>
-      oldDelegate.color != color || oldDelegate.seed != seed;
 }

@@ -1,6 +1,8 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -9,6 +11,9 @@ import 'package:ncloud/app/app_controller.dart';
 import 'package:ncloud/main.dart';
 import 'package:ncloud/providers/nextcloud/nextcloud_client.dart';
 import 'package:ncloud/providers/nextcloud/nextcloud_account.dart';
+
+import 'nextcloud_client_test.dart' show account;
+import 'support/sample_library.dart';
 
 class MemoryStore implements SessionStore {
   String? value;
@@ -106,95 +111,101 @@ void main() {
     },
   );
 
-  test(
-    'demo supports folder creation, browsing, and favorites without a server',
-    () async {
-      final store = MemoryStore();
-      final controller = AppController(store: store, client: NextcloudClient());
-      addTearDown(controller.dispose);
-      await controller.initialize();
-      controller.enterDemo();
-      await controller.load();
-      expect(controller.items, hasLength(12));
-      expect(controller.items.every((f) => f.isMedia), isTrue);
-      await controller.select(Destination.drive);
-      expect(controller.items.any((f) => f.name == 'Photos'), isTrue);
-      await controller.createFolder('New folder');
-      expect(controller.items.any((f) => f.name == 'New folder'), isTrue);
-      await controller.createFolder('New folder');
-      expect(controller.error, contains('already exists'));
-      final photos = controller.items.firstWhere((f) => f.name == 'Photos');
-      await controller.openFolder(photos);
-      expect(controller.directory, ['Photos']);
-      final original = controller.items.first;
-      await controller.favorite(original);
-      expect(controller.items.first.favorite, !original.favorite);
-      await controller.signOut();
-      expect(controller.connected, isFalse);
-      expect(store.value, isNull);
-    },
-  );
+  test('a library supports folder creation, browsing and favorites', () async {
+    final controller = sampleController();
+    addTearDown(controller.dispose);
+    await controller.load();
+    expect(controller.items, hasLength(12));
+    expect(controller.items.every((f) => f.isMedia), isTrue);
+    await controller.select(Destination.drive);
+    expect(controller.items.any((f) => f.name == 'Photos'), isTrue);
+    await controller.createFolder('New folder');
+    expect(controller.items.any((f) => f.name == 'New folder'), isTrue);
+    await controller.createFolder('New folder');
+    expect(controller.error, contains('already exists'));
+    final photos = controller.items.firstWhere((f) => f.name == 'Photos');
+    await controller.openFolder(photos);
+    expect(controller.directory, ['Photos']);
+    final original = controller.items.first;
+    await controller.favorite(original);
+    expect(controller.items.first.favorite, !original.favorite);
+  });
 
-  testWidgets(
-    'demo opens on photos, filters, navigates folders and returns to login',
-    (tester) async {
-      await tester.pumpWidget(
-        NcloudApp(
-          controller: AppController(
-            store: MemoryStore(),
-            client: NextcloudClient(),
-          ),
-        ),
-      );
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Try demo'));
-      await tester.pumpAndSettle();
-      expect(find.byTooltip('Timeline'), findsOneWidget);
-      expect(find.text('DEMO'), findsOneWidget);
-      await tester.tap(find.byTooltip('Drive'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byTooltip('Search loaded items'));
-      await tester.pumpAndSettle();
-      await tester.enterText(find.byType(TextField), 'Documents');
-      await tester.pumpAndSettle();
-      expect(find.widgetWithText(ListTile, 'Documents'), findsOneWidget);
-      expect(find.widgetWithText(ListTile, 'Photos'), findsNothing);
-      await tester.tap(find.widgetWithText(ListTile, 'Documents'));
-      await tester.pumpAndSettle();
-      expect(find.text('Travel notes.pdf'), findsOneWidget);
-      await tester.tap(find.text('All files'));
-      await tester.pumpAndSettle();
-      await tester.drag(find.byType(CustomScrollView), const Offset(0, -300));
-      await tester.pumpAndSettle();
-      expect(find.text('Welcome to ncloud.txt'), findsOneWidget);
-      await tester.tap(find.byTooltip('Settings'));
-      await tester.pumpAndSettle();
-      await tester.drag(find.byType(ListView), const Offset(0, -600));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Leave demo & connect server'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Disconnect'));
-      await tester.pumpAndSettle();
-      expect(find.text('Try demo'), findsOneWidget);
-      expect(tester.takeException(), isNull);
-    },
-  );
+  testWidgets('signing out clears the account and returns to login', (
+    tester,
+  ) async {
+    final directory = (await tester.runAsync(
+      () => Directory.systemTemp.createTemp('ncloud-signout-'),
+    ))!;
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final messenger = tester.binding.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(
+      const MethodChannel('plugins.flutter.io/path_provider'),
+      (call) async => directory.path,
+    );
+    addTearDown(
+      () => messenger.setMockMethodCallHandler(
+        const MethodChannel('plugins.flutter.io/path_provider'),
+        null,
+      ),
+    );
+    final store = MemoryStore()..value = 'saved';
+    final c = AppController(store: store, client: SampleLibrary())
+      ..timelineIndexAvailable = false
+      ..account = account.withPhotoRoot(['Photos']);
+    await tester.pumpWidget(NcloudApp(controller: c));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Settings'));
+    await tester.pumpAndSettle();
+    await tester.drag(find.byType(ListView), const Offset(0, -600));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Disconnect account'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Disconnect'));
+    await tester.runAsync(() async {
+      for (var i = 0; i < 300 && c.connected; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+    });
+    await tester.pumpAndSettle();
+    expect(c.connected, isFalse);
+    expect(store.value, isNull);
+    expect(find.text('Connect server'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 
-  testWidgets('demo gallery works at small phone width without overflows', (
+  testWidgets('the library opens on photos, filters and navigates folders', (
+    tester,
+  ) async {
+    await pumpSampleLibrary(tester);
+    expect(find.byTooltip('Timeline'), findsOneWidget);
+    await tester.tap(find.byTooltip('Drive'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Search loaded items'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'Documents');
+    await tester.pumpAndSettle();
+    expect(find.widgetWithText(ListTile, 'Documents'), findsOneWidget);
+    expect(find.widgetWithText(ListTile, 'Photos'), findsNothing);
+    await tester.tap(find.widgetWithText(ListTile, 'Documents'));
+    await tester.pumpAndSettle();
+    expect(find.text('Travel notes.pdf'), findsOneWidget);
+    await tester.tap(find.text('All files'));
+    await tester.pumpAndSettle();
+    await tester.drag(find.byType(CustomScrollView), const Offset(0, -300));
+    await tester.pumpAndSettle();
+    expect(find.text('Welcome to ncloud.txt'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('the gallery works at small phone width without overflows', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(360, 800);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
-    final controller = AppController(
-      store: MemoryStore(),
-      client: NextcloudClient(),
-    );
-    await tester.pumpWidget(NcloudApp(controller: controller));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Try demo'));
-    await tester.pumpAndSettle();
+    await pumpSampleLibrary(tester);
     expect(tester.takeException(), isNull);
     await tester.tap(find.byTooltip('Drive'));
     await tester.pumpAndSettle();

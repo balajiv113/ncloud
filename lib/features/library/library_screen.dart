@@ -94,7 +94,6 @@ class _LibraryScreenState extends State<LibraryScreen>
   ChangeMonitor? _changes;
   Account? _monitorAccount;
   AppController? _monitorController;
-  bool? _monitorDemo;
   bool _foreground = true;
 
   @override
@@ -136,14 +135,12 @@ class _LibraryScreenState extends State<LibraryScreen>
 
   void _updateChangeMonitor({bool deferStart = false}) {
     if (identical(_monitorController, c) &&
-        identical(_monitorAccount, c.account) &&
-        _monitorDemo == c.demo) {
+        identical(_monitorAccount, c.account)) {
       return;
     }
     _changes?.dispose();
     _monitorController = c;
     _monitorAccount = c.account;
-    _monitorDemo = c.demo;
     final monitor = _changes = c.createChangeMonitor(_checkForChanges);
     void start() {
       if (mounted && _foreground && identical(_changes, monitor)) {
@@ -526,16 +523,14 @@ class _LibraryScreenState extends State<LibraryScreen>
                                 busy: c.busy,
                                 searching: _view.searching,
                                 searchController: _search,
-                                demo: c.demo,
-                                initial: c.demo
-                                    ? 'N'
-                                    : (c
-                                                  .account
-                                                  ?.displayName
-                                                  .characters
-                                                  .firstOrNull ??
-                                              'N')
-                                          .toUpperCase(),
+                                initial:
+                                    (c
+                                                .account
+                                                ?.displayName
+                                                .characters
+                                                .firstOrNull ??
+                                            'N')
+                                        .toUpperCase(),
                                 showSettings: !detail,
                                 onBack: _back,
                                 onQueryChanged: (value) =>
@@ -1045,14 +1040,6 @@ class _LibraryScreenState extends State<LibraryScreen>
         builder: (_) => const NameDialog(title: 'New folder'),
       );
       if (name != null) await c.createFolder(name);
-      return;
-    }
-    if (c.demo) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Connect your cloud to upload your files.'),
-        ),
-      );
       return;
     }
     try {

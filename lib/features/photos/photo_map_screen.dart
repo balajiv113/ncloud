@@ -66,9 +66,7 @@ class _PhotoMapScreenState extends State<PhotoMapScreen> {
     final controller = widget.controller;
     final session = controller.account;
     try {
-      if (controller.demo) {
-        setState(() => _position = null);
-      } else if (session == null) {
+      if (session == null) {
         throw const CloudException('Sign in to browse your photo map.');
       } else {
         final mapSession = controller.photoMapSession();

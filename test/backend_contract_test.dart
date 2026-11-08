@@ -258,51 +258,6 @@ class _DelayedPlaybackBackend extends _PortableBackend {
 void main() {
   const account = _PortableAccount('portable|account');
 
-  test('library mutations preserve demo trees and progress', () async {
-    final backend = _PortableBackend();
-    addTearDown(backend.close);
-    const folder = CloudFile(path: ['A'], name: 'A', isDirectory: true);
-    const child = CloudFile(
-      path: ['A', 'photo.jpg'],
-      name: 'photo.jpg',
-      isDirectory: false,
-    );
-    final files = [folder, child];
-    final trash = <String, List<CloudFile>>{};
-    var completed = 0;
-    final actions = LibraryMutations(
-      client: backend,
-      store: FileStore(),
-      resolve: (file) async => file,
-      checkSession: () {},
-      onCompleted: () => completed++,
-    );
-    await actions.run(
-      [folder],
-      'rename',
-      account: null,
-      demo: true,
-      demoFiles: files,
-      demoTrash: trash,
-      newName: 'B',
-    );
-    expect(files.map((file) => file.path), [
-      ['B'],
-      ['B', 'photo.jpg'],
-    ]);
-    await actions.run(
-      [files.first],
-      'delete',
-      account: null,
-      demo: true,
-      demoFiles: files,
-      demoTrash: trash,
-    );
-    expect(files, isEmpty);
-    expect(trash.values.single.length, 2);
-    expect(completed, 2);
-  });
-
   test('library batch resolves all files before mutating any', () async {
     final backend = _PortableBackend();
     addTearDown(backend.close);
@@ -311,7 +266,6 @@ void main() {
       name: 'photo.jpg',
       isDirectory: false,
     );
-    final files = [file];
     final actions = LibraryMutations(
       client: backend,
       store: FileStore(),
@@ -329,14 +283,10 @@ void main() {
           file.atPath(['missing.jpg']),
         ],
         'delete',
-        account: null,
-        demo: true,
-        demoFiles: files,
-        demoTrash: {},
+        account: account,
       ),
       throwsA(isA<CloudException>()),
     );
-    expect(files, [file]);
   });
 
   test(

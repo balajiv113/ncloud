@@ -26,17 +26,11 @@ class SettingsScreen extends StatelessWidget {
                   const Icon(Icons.cloud_done_outlined, size: 36),
                   const SizedBox(height: 16),
                   Text(
-                    controller.demo
-                        ? 'Welcome, explorer'
-                        : controller.account?.displayName ?? 'Disconnected',
+                    controller.account?.displayName ?? 'Disconnected',
                     style: Theme.of(context).textTheme.headlineSmall,
                   ),
                   const SizedBox(height: 8),
-                  Text(
-                    controller.demo
-                        ? 'Demo changes reset when you disconnect.'
-                        : controller.account?.serverLabel ?? '',
-                  ),
+                  Text(controller.account?.serverLabel ?? ''),
                 ],
               ),
             ),
@@ -55,7 +49,7 @@ class SettingsScreen extends StatelessWidget {
               'Dates use capture dates when available, otherwise file modification time. Albums group existing photos without duplicate uploads.',
             ),
           ),
-          if (!controller.demo && (Platform.isAndroid || Platform.isIOS))
+          if (Platform.isAndroid || Platform.isIOS)
             ListTile(
               leading: const Icon(Icons.sync),
               title: const Text('Folder backup'),
@@ -71,7 +65,7 @@ class SettingsScreen extends StatelessWidget {
                 ),
               ),
             ),
-          if (!controller.demo) _CacheTile(controller: controller),
+          _CacheTile(controller: controller),
           const ListTile(
             leading: Icon(Icons.construction_outlined),
             title: Text('Still on the roadmap'),
@@ -133,11 +127,7 @@ class SettingsScreen extends StatelessWidget {
           const SizedBox(height: 24),
           OutlinedButton.icon(
             icon: const Icon(Icons.logout),
-            label: Text(
-              controller.demo
-                  ? 'Leave demo & connect server'
-                  : 'Disconnect account',
-            ),
+            label: const Text('Disconnect account'),
             onPressed: controller.busy
                 ? null
                 : () async {

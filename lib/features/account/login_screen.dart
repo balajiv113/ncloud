@@ -116,15 +116,6 @@ class _LoginScreenState extends State<LoginScreen> {
                       onPressed: c.canCancelLogin ? c.cancelLogin : null,
                       child: const Text('Cancel sign-in'),
                     ),
-                  ] else ...[
-                    const SizedBox(height: 8),
-                    OutlinedButton(
-                      onPressed: c.enterDemo,
-                      child: const Padding(
-                        padding: EdgeInsets.all(12),
-                        child: Text('Try demo'),
-                      ),
-                    ),
                   ],
                   const SizedBox(height: 16),
                   ExpansionTile(

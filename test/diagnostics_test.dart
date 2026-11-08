@@ -11,6 +11,7 @@ import 'package:ncloud/features/settings/settings_screen.dart';
 import 'package:ncloud/providers/nextcloud/nextcloud_client.dart';
 
 import 'app_test.dart' show MemoryStore;
+import 'nextcloud_client_test.dart' show account;
 
 void main() {
   testWidgets('support information is visible and explicitly clearable', (
@@ -21,7 +22,7 @@ void main() {
     final controller = AppController(
       store: MemoryStore(),
       client: NextcloudClient(),
-    )..demo = true;
+    )..account = account;
     addTearDown(controller.dispose);
     errorMessage(const CloudException('private server body', statusCode: 403));
     await tester.pumpWidget(
@@ -32,7 +33,12 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.textContaining('permission HTTP 403'), findsOneWidget);
     expect(find.textContaining('private server body'), findsNothing);
-    await tester.tap(find.text('Clear'));
+    await tester.tap(
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.text('Clear'),
+      ),
+    );
     await tester.pumpAndSettle();
     expect(Diagnostics.session.events, isEmpty);
   });
