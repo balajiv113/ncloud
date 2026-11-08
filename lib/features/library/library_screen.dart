@@ -102,6 +102,9 @@ class _LibraryScreenState extends State<LibraryScreen>
       : 0;
 
   ChangeMonitor? _changes;
+  Account? _monitorAccount;
+  AppController? _monitorController;
+  bool? _monitorDemo;
   bool _foreground = true;
 
   @override
@@ -120,15 +123,7 @@ class _LibraryScreenState extends State<LibraryScreen>
     _scroll.addListener(_prefetch);
     _scroll.addListener(_activity);
     WidgetsBinding.instance.addObserver(this);
-    if (!c.demo && c.account != null) {
-      _changes = ChangeMonitor(
-        client: c.client,
-        account: c.account!,
-        check: _checkForChanges,
-        onActive: c.setBrowsingActive,
-        onError: c.reportChangeError,
-      )..activity();
-    }
+    _updateChangeMonitor();
   }
 
   @override
@@ -146,6 +141,31 @@ class _LibraryScreenState extends State<LibraryScreen>
   void didUpdateWidget(covariant LibraryScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     _transitionTo(c.tab);
+    _updateChangeMonitor(deferStart: true);
+  }
+
+  void _updateChangeMonitor({bool deferStart = false}) {
+    if (identical(_monitorController, c) &&
+        identical(_monitorAccount, c.account) &&
+        _monitorDemo == c.demo) {
+      return;
+    }
+    _changes?.dispose();
+    _monitorController = c;
+    _monitorAccount = c.account;
+    _monitorDemo = c.demo;
+    final monitor = _changes = c.createChangeMonitor(_checkForChanges);
+    void start() {
+      if (mounted && _foreground && identical(_changes, monitor)) {
+        monitor?.activity();
+      }
+    }
+
+    if (deferStart) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => start());
+    } else {
+      start();
+    }
   }
 
   @override

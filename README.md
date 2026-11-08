@@ -44,6 +44,8 @@ People, face-cover and map-cluster identities are opaque strings in the shared m
 
 `features/library/` owns the library screens, viewer, cached listing membership, paging and foreground change monitoring; `features/photos/timeline_scrubber.dart` owns scrolling gestures and accessibility. The scrubber remains available to screen readers while visually hidden, with date announcements and increase/decrease actions.
 
+Library screens receive an account-bound change monitor from the controller instead of accessing the provider. The monitor restarts when the account configuration changes and ignores hints from the previous session.
+
 The login screen belongs to `features/account/`; reusable error presentation lives in `core/ui/`, while library-specific dialogs and sharing stay in `features/library/`.
 
 Shared library metadata and offline-file storage live in `lib/core/storage/`; their on-disk locations and schemas are independent of their source-code paths.

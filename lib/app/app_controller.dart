@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../features/library/demo.dart';
 import '../features/library/album_members.dart';
+import '../features/library/change_monitor.dart';
 import '../diagnostics.dart';
 import '../discovery_models.dart';
 import '../core/storage/file_store.dart';
@@ -231,6 +232,26 @@ class AppController extends ChangeNotifier {
     if (notice == message) return;
     notice = message;
     notifyListeners();
+  }
+
+  ChangeMonitor? createChangeMonitor(
+    Future<bool> Function(Set<String>? ids, bool pushed) check,
+  ) {
+    final session = account;
+    if (session == null || demo || _disposed) return null;
+    bool current() => !_disposed && !demo && identical(account, session);
+    return ChangeMonitor(
+      client: client,
+      account: session,
+      check: (ids, pushed) async =>
+          current() ? await check(ids, pushed) : false,
+      onActive: (active) {
+        if (current()) setBrowsingActive(active);
+      },
+      onError: (error) {
+        if (current()) reportChangeError(error);
+      },
+    );
   }
 
   final Map<String, Future<CloudFile?>> _covers = {};

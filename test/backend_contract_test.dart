@@ -2,10 +2,12 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ncloud/app/app_controller.dart';
 import 'package:ncloud/features/library/change_monitor.dart';
 import 'package:ncloud/features/library/file_resolver.dart';
+import 'package:ncloud/features/library/library_screen.dart';
 import 'package:ncloud/features/library/media_listing.dart';
 import 'package:ncloud/core/cloud/cloud_backend.dart';
 import 'package:ncloud/core/storage/local_cache.dart';
@@ -46,6 +48,7 @@ class _PortableBackend implements CloudBackend {
   int resolutionCalls = 0;
   int folderListings = 0;
   int folderInspections = 0;
+  int subscriptions = 0;
   final resolution = Completer<Map<String, CloudFile>>();
   final batches = <Completer<List<Uint8List?>>>[];
   Completer<TimelineResult>? delayedPage;
@@ -111,7 +114,10 @@ class _PortableBackend implements CloudBackend {
   }
 
   @override
-  Stream<Set<String>?> changes(Account account) => hints.stream;
+  Stream<Set<String>?> changes(Account account) {
+    subscriptions++;
+    return hints.stream;
+  }
 
   @override
   PlaybackSource playbackSource(Account account, CloudFile file) => (
@@ -608,6 +614,33 @@ void main() {
     expect(controller.items.any((file) => file.name == 'stale.jpg'), isFalse);
   });
 
+  testWidgets(
+    'library monitoring restarts when the account configuration changes',
+    (tester) async {
+      final backend = _PortableBackend();
+      final controller = AppController(store: _SessionStore(), client: backend)
+        ..account = account
+        ..tab = 1;
+      addTearDown(controller.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ListenableBuilder(
+            listenable: controller,
+            builder: (_, _) => LibraryScreen(controller: controller),
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(backend.subscriptions, 1);
+      controller.account = account.withPhotoRoot(['Photos']);
+      controller.notifyListeners();
+      await tester.pump();
+      await tester.pump();
+      expect(backend.subscriptions, 2);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
   testWidgets('old preview batches cannot strand a new session queue', (
     tester,
   ) async {
@@ -916,6 +949,30 @@ void main() {
       ]);
     },
   );
+
+  testWidgets('controller monitor ignores hints after its account changes', (
+    tester,
+  ) async {
+    final backend = _PortableBackend();
+    final controller = AppController(store: _SessionStore(), client: backend)
+      ..account = account;
+    addTearDown(controller.dispose);
+    var checks = 0;
+    final monitor = controller.createChangeMonitor((ids, pushed) async {
+      checks++;
+      return false;
+    })!;
+    addTearDown(monitor.dispose);
+    monitor.activity();
+    await tester.pump();
+    expect(checks, 1);
+    controller.account = const _PortableAccount('portable|other');
+    backend.hints.add({'opaque:1'});
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 3));
+    expect(checks, 1);
+    monitor.dispose();
+  });
 
   testWidgets(
     'change monitoring accepts opaque backend hints and cancels them',
