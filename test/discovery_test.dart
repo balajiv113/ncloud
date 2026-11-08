@@ -15,7 +15,7 @@ http.Response jsonResponse(Object? value, [int status = 200]) =>
     http.Response(jsonEncode(value), status);
 
 void main() {
-  const person = RecognizedPerson(id: 12, name: 'Sample', count: 2);
+  const person = RecognizedPerson(id: '12', name: 'Sample', count: 2);
   final bounds = PhotoMapBounds(south: 40, north: 50, west: 5, east: 15);
 
   test(
@@ -57,7 +57,7 @@ void main() {
       addTearDown(client.close);
       final people = await client.people(account);
       expect(people!.map((p) => p.count), [21, 15, 8, 8]);
-      expect(people.map((p) => p.id), [9, 2, 3, 7]);
+      expect(people.map((p) => p.id), ['9', '2', '3', '7']);
     },
   );
 
@@ -95,8 +95,8 @@ void main() {
         account,
         path: ['Photos', 'Trip & family'],
       );
-      expect(people!.map((p) => p.id), [12, 13]);
-      expect(people.first.cover, 41);
+      expect(people!.map((p) => p.id), ['12', '13']);
+      expect(people.first.cover, '41');
       expect(people.first.coverEtag, 'rev');
       expect(people.first.named, isTrue);
       expect(people.last.named, isFalse);
@@ -121,7 +121,11 @@ void main() {
           }),
         );
         addTearDown(client.close);
-        expect((await client.people(account))!.map((p) => p.id), [12, 14, 13]);
+        expect((await client.people(account))!.map((p) => p.id), [
+          '12',
+          '14',
+          '13',
+        ]);
         expect(calls, 1);
       }
     },
@@ -261,7 +265,7 @@ void main() {
       expect(clusters.map((c) => c.count), [136, 2]);
       expect(clusters.first.location.latitude, 45.8);
       expect(clusters.first.location.longitude, 9.2);
-      expect(clusters.first.previewId, 42);
+      expect(clusters.first.previewId, '42');
       expect(clusters.first.previewEtag, 'rev');
       expect(clusters.last.previewId, isNull);
     },

@@ -20,17 +20,17 @@ import '../../nextcloud_client_test.dart' show account, multistatus;
 import '../../preview_test.dart' show photo, png;
 
 const samplePerson = RecognizedPerson(
-  id: 12,
+  id: '12',
   name: 'Sample',
   count: 3001,
-  cover: 41,
+  cover: '41',
   coverEtag: 'new',
 );
 final samplePersonResponse = {
-  'id': samplePerson.id,
+  'id': 12,
   'name': samplePerson.name,
   'count': samplePerson.count,
-  'cover': samplePerson.cover,
+  'cover': 41,
   'cover_etag': samplePerson.coverEtag,
 };
 
@@ -71,7 +71,7 @@ void main() {
       c.account = account.withPhotoRoot(['Other photos']);
       responses.single.complete(jsonResponse([samplePersonResponse]));
       await first;
-      expect(c.people.single.id, 12);
+      expect(c.people.single.id, '12');
       expect(c.loadingPeople, isFalse);
       requested = Completer<void>();
       final second = c.loadPeople(refresh: true);
@@ -101,13 +101,13 @@ void main() {
     )..account = account;
     addTearDown(c.dispose);
     await c.loadPeople();
-    expect(c.people.single.id, 12);
+    expect(c.people.single.id, '12');
     expect(c.peopleAvailable, isTrue);
     await c.loadPeople();
     expect(calls, 1);
     status = 401;
     await c.loadPeople(refresh: true);
-    expect(c.people.single.id, 12);
+    expect(c.people.single.id, '12');
     expect(c.peopleError, isNotNull);
     expect(c.loadingPeople, isFalse);
     status = 200;
@@ -120,11 +120,11 @@ void main() {
     final dir = await Directory.systemTemp.createTemp('ncloud-people-');
     addTearDown(() => dir.delete(recursive: true));
     final cache = LocalCache(() async => dir);
-    final key = 'people-v1|${account.server}|${account.userId}';
+    final key = 'people-v2|${account.server}|${account.userId}';
     await cache.writeDocument(key, {
       'people': [
-        {'id': 5, 'name': 'Small', 'count': 1},
-        {'id': 6, 'name': 'Large', 'count': 10},
+        {'id': '5', 'name': 'Small', 'count': 1},
+        {'id': '6', 'name': 'Large', 'count': 10},
       ],
     });
     final response = Completer<http.Response>();
@@ -146,7 +146,7 @@ void main() {
     expect(c.people.map((p) => p.count), [10, 1]);
     response.complete(jsonResponse([samplePersonResponse]));
     await loading;
-    expect(c.people.single.id, 12);
+    expect(c.people.single.id, '12');
 
     await cache.writeDocument(key, {'people': 'damaged'});
     c.people = [];
@@ -161,7 +161,7 @@ void main() {
     )..account = account;
     addTearDown(other.dispose);
     await other.loadPeople();
-    expect(other.people.single.id, 12);
+    expect(other.people.single.id, '12');
     expect(other.notice, contains('damaged'));
     expect(other.peopleError, isNull);
   });
@@ -256,7 +256,7 @@ void main() {
     expect(c.cachedPersonPreview(samplePerson), png);
     discoveryFailed = true;
     await c.loadPeople(refresh: true);
-    expect(c.people.single.id, 12);
+    expect(c.people.single.id, '12');
     expect(c.peopleError, isNotNull);
     expect(c.cachedPersonPreview(samplePerson), png);
     expect(await cache.readThumbnail(key), isNotNull);
@@ -269,7 +269,7 @@ void main() {
     expect(await cache.readThumbnail(key), isNull);
     expect(
       (await cache.readDocument(
-        'people-v1|${account.server}|${account.userId}',
+        'people-v2|${account.server}|${account.userId}',
       ))!['people'],
       isEmpty,
     );
@@ -461,7 +461,7 @@ void main() {
       await c.loadNextPage();
       expect(c.items, hasLength(3001));
       final calls = requests.length;
-      await c.openPerson(const RecognizedPerson(id: 13, name: '', count: 1));
+      await c.openPerson(const RecognizedPerson(id: '13', name: '', count: 1));
       expect(c.items.single.id, '13');
       expect(c.activePerson!.label, 'Unnamed person');
       await c.openPerson(samplePerson);
@@ -505,8 +505,8 @@ void main() {
             ..tab = 4
             ..timelineIndexAvailable = true
             ..people = [
-              const RecognizedPerson(id: 12, name: 'Most', count: 30),
-              const RecognizedPerson(id: 13, name: 'Next', count: 20),
+              const RecognizedPerson(id: '12', name: 'Most', count: 30),
+              const RecognizedPerson(id: '13', name: 'Next', count: 20),
             ];
       await tester.pumpWidget(
         MaterialApp(
@@ -537,7 +537,7 @@ void main() {
       expect(find.text('People · most photos first'), findsOneWidget);
       await tester.tap(find.bySemanticsLabel('Most, 30 photos'));
       await tester.pumpAndSettle();
-      expect(c.activePerson!.id, 12);
+      expect(c.activePerson!.id, '12');
       expect(find.text('Most'), findsOneWidget);
       expect(find.bySemanticsLabel('portrait.jpg'), findsOneWidget);
       expect(find.byTooltip('Album actions'), findsNothing);

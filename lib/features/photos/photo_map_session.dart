@@ -37,7 +37,7 @@ class PhotoMapSession {
   }) async {
     _checkCurrent();
     if (bounds.isEmpty) throw const FormatException('Map bounds are required.');
-    final clusters = <int, PhotoMapCluster>{};
+    final clusters = <String, PhotoMapCluster>{};
     for (final area in bounds) {
       _checkCurrent();
       if (!isCurrentViewport()) return null;

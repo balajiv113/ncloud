@@ -7,17 +7,26 @@ class RecognizedPerson {
     this.coverEtag,
   });
 
-  final int id;
+  final String id;
   final String name;
   final int count;
-  final int? cover;
+  final String? cover;
   final String? coverEtag;
   bool get named => name.trim().isNotEmpty;
   String get label => named ? name : 'Unnamed person';
 
   static int compareByCount(RecognizedPerson a, RecognizedPerson b) {
     final count = b.count.compareTo(a.count);
-    return count == 0 ? a.id.compareTo(b.id) : count;
+    if (count != 0) return count;
+    final left = int.tryParse(a.id);
+    final right = int.tryParse(b.id);
+    if (left != null && right != null) {
+      final numeric = left.compareTo(right);
+      if (numeric != 0) return numeric;
+    } else if (left != null || right != null) {
+      return left != null ? -1 : 1;
+    }
+    return a.id.compareTo(b.id);
   }
 
   Map<String, dynamic> toJson() => {
@@ -34,12 +43,12 @@ class RecognizedPerson {
     final count = json['count'];
     final cover = json['cover'];
     final etag = json['coverEtag'];
-    if (id is! int ||
-        id <= 0 ||
+    if (id is! String ||
+        id.isEmpty ||
         name is! String ||
         count is! int ||
         count < 0 ||
-        (cover != null && (cover is! int || cover <= 0)) ||
+        (cover != null && (cover is! String || cover.isEmpty)) ||
         (etag != null && etag is! String)) {
       throw const FormatException('Invalid person record.');
     }
@@ -47,7 +56,7 @@ class RecognizedPerson {
       id: id,
       name: name,
       count: count,
-      cover: cover as int?,
+      cover: cover as String?,
       coverEtag: etag as String?,
     );
   }
@@ -134,9 +143,9 @@ class PhotoMapCluster {
     this.previewEtag,
   });
 
-  final int id;
+  final String id;
   final PhotoLocation location;
   final int count;
-  final int? previewId;
+  final String? previewId;
   final String? previewEtag;
 }

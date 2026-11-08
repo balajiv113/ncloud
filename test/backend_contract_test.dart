@@ -237,6 +237,27 @@ void main() {
   const account = _PortableAccount('portable|account');
 
   test(
+    'discovery identities round-trip without numeric provider assumptions',
+    () {
+      const person = RecognizedPerson(
+        id: 'group:people/blue|1',
+        name: 'Group',
+        count: 2,
+        cover: 'photo:opaque/1',
+      );
+      final restored = RecognizedPerson.fromJson(person.toJson());
+      expect(restored.id, person.id);
+      expect(restored.cover, person.cover);
+      final sorted = [
+        const RecognizedPerson(id: '1x', name: '', count: 1),
+        const RecognizedPerson(id: '10', name: '', count: 1),
+        const RecognizedPerson(id: '2', name: '', count: 1),
+      ]..sort(RecognizedPerson.compareByCount);
+      expect(sorted.map((item) => item.id), ['2', '10', '1x']);
+    },
+  );
+
+  test(
     'multi-file actions stop without touching a replacement account',
     () async {
       final backend = _DelayedMoveBackend();
@@ -337,7 +358,7 @@ void main() {
         east: 190,
       );
       final cluster = PhotoMapCluster(
-        id: 1,
+        id: 'cluster:opaque/1',
         location: PhotoLocation(0, 175),
         count: 2,
       );
@@ -352,7 +373,7 @@ void main() {
       await Future<void>.delayed(Duration.zero);
       expect(backend.requests, hasLength(2));
       backend.requests.last.complete([cluster]);
-      expect((await loading)!.map((c) => c.id), [1]);
+      expect((await loading)!.map((c) => c.id), ['cluster:opaque/1']);
 
       final stale = session.clusters(
         bounds,

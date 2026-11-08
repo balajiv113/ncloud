@@ -219,7 +219,7 @@ void main() {
             )
             ..account = account
             ..activePerson = const RecognizedPerson(
-              id: 12,
+              id: '12',
               name: 'Sample',
               count: 10,
             )
@@ -238,7 +238,7 @@ void main() {
         reason: 'map listing uses the existing persistent paging cache',
       );
       await c.openPerson(
-        const RecognizedPerson(id: 12, name: 'Sample', count: 10),
+        const RecognizedPerson(id: '12', name: 'Sample', count: 10),
       );
       expect(c.activeMapBounds, isNull);
     },
@@ -279,7 +279,7 @@ void main() {
             )
             ..account = account
             ..activePerson = const RecognizedPerson(
-              id: 12,
+              id: '12',
               name: 'Sample',
               count: 10,
             );

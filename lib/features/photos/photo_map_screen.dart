@@ -168,8 +168,8 @@ class _PhotoMapScreenState extends State<PhotoMapScreen> {
     final file = cluster.previewId == null
         ? null
         : CloudFile(
-            id: '${cluster.previewId}',
-            path: [CloudFile.pendingRoot, '${cluster.previewId}'],
+            id: cluster.previewId,
+            path: [CloudFile.pendingRoot, cluster.previewId!],
             name: 'Map photo',
             isDirectory: false,
             contentType: 'image/jpeg',

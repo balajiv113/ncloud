@@ -11,15 +11,20 @@ TimelineDay parseNextcloudDay(Map<String, dynamic> json) {
 }
 
 RecognizedPerson parseNextcloudPerson(Map<String, dynamic> json) {
+  final id = json['id'];
   final rawCover = json['cover'];
+  final cover = rawCover is String ? int.tryParse(rawCover) : rawCover;
+  if (id is! int ||
+      id <= 0 ||
+      (cover != null && (cover is! int || cover <= 0)) ||
+      (rawCover != null && cover == null)) {
+    throw const FormatException('Unsupported Memories person.');
+  }
   return RecognizedPerson.fromJson({
-    'id': json['id'],
+    'id': '$id',
     'name': json['name'],
     'count': json['count'],
-    if (rawCover != null)
-      'cover': rawCover is String
-          ? int.tryParse(rawCover) ?? rawCover
-          : rawCover,
+    if (cover != null) 'cover': '$cover',
     if (json['cover_etag'] != null) 'coverEtag': json['cover_etag'],
   });
 }
@@ -59,10 +64,10 @@ PhotoMapCluster parseNextcloudMapCluster(Map<String, dynamic> json) {
     throw const FormatException('Unsupported photo map preview.');
   }
   return PhotoMapCluster(
-    id: id,
+    id: '$id',
     location: PhotoLocation(_coordinate(center[0]), _coordinate(center[1])),
     count: count.toInt(),
-    previewId: previewId as int?,
+    previewId: previewId?.toString(),
     previewEtag: previewEtag as String?,
   );
 }

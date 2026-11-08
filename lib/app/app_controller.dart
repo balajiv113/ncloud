@@ -1717,7 +1717,7 @@ class AppController extends ChangeNotifier {
     if (demo || session == null || tab == 3) return null;
     return 'browse-v5|${session.storageKey}|$tab|$smartAlbumOpen|'
         '${directory.join('/')}|${activeCloudAlbum?.reference.join('/') ?? ''}'
-        '${activePerson == null ? '' : '|person:${activePerson!.id}'}'
+        '${activePerson == null ? '' : '|person:${Uri.encodeComponent(activePerson!.id)}'}'
         '${activeMapBounds == null ? '' : '|map:${activeMapBounds!.map((b) => b.query).join(';')}'}';
   }
 
@@ -1732,7 +1732,7 @@ class AppController extends ChangeNotifier {
       return;
     }
     final generation = ++_peopleVersion;
-    final key = 'people-v1|${session.storageKey}';
+    final key = 'people-v2|${session.storageKey}';
     bool current() =>
         !_disposed &&
         generation == _peopleVersion &&
@@ -1811,11 +1811,11 @@ class AppController extends ChangeNotifier {
     final session = account;
     return session == null
         ? null
-        : 'face-v1|${session.storageKey}|${person.id}';
+        : 'face-v1|${session.storageKey}|${Uri.encodeComponent(person.id)}';
   }
 
   String _personPreviewVersion(RecognizedPerson person) =>
-      '${person.cover ?? ''}|${person.coverEtag ?? ''}';
+      '${Uri.encodeComponent(person.cover ?? '')}|${person.coverEtag ?? ''}';
 
   Uint8List? cachedPersonPreview(RecognizedPerson person) {
     final saved = _thumbs[_personPreviewKey(person)];

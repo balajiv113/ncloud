@@ -755,8 +755,8 @@ class NextcloudClient implements CloudBackend {
           'preview',
         ],
         {
-          'name': '${person.id}',
-          if (person.cover != null) 'cover': '${person.cover}',
+          'name': person.id,
+          if (person.cover != null) 'cover': person.cover!,
           if (person.coverEtag != null) 'cover_etag': person.coverEtag!,
         },
       ),

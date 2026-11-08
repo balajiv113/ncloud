@@ -40,6 +40,8 @@ Pull-to-refresh keeps cached albums, folders, photos and the Timeline date index
 
 People discovery uses Memories' Recognize clusters directly. The list may include clusters that the Photos app does not show.
 
+People, face-cover and map-cluster identities are opaque strings in the shared model; Nextcloud validates and converts its numeric identifiers inside the adapter. Older disposable People metadata is rebuilt.
+
 `features/library/` owns the library screens, viewer, cached listing membership, paging and foreground change monitoring; `features/photos/timeline_scrubber.dart` owns scrolling gestures and accessibility. The scrubber remains available to screen readers while visually hidden, with date announcements and increase/decrease actions.
 
 The login screen belongs to `features/account/`; reusable error presentation lives in `core/ui/`, while library-specific dialogs and sharing stay in `features/library/`.
