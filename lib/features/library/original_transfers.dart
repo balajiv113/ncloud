@@ -26,9 +26,15 @@ class OriginalTransfers {
         : null;
   }
 
-  /// Resolve a pathless video against saved membership without a server lookup.
-  Future<File?> playbackCopy(Account account, CloudFile file) async {
-    if (!file.pending) return offlineCopy(account, file);
+  /// Resolve a pathless item against saved membership without a server lookup.
+  Future<({File output, CloudFile file})?> _savedCopy(
+    Account account,
+    CloudFile file,
+  ) async {
+    if (!file.pending) {
+      final output = await offlineCopy(account, file);
+      return output == null ? null : (output: output, file: file);
+    }
     final storage = cache;
     final id = file.id;
     final revision = file.etag;
@@ -41,13 +47,16 @@ class OriginalTransfers {
     for (final item in saved) {
       if (item.id == id && item.etag == revision && item.size == file.size) {
         final copy = await offlineCopy(account, item);
-        if (copy != null) return copy;
+        if (copy != null) return (output: copy, file: item);
       }
     }
     return null;
   }
 
-  Future<File> download(
+  Future<File?> playbackCopy(Account account, CloudFile file) async =>
+      (await _savedCopy(account, file))?.output;
+
+  Future<({File output, CloudFile file})> download(
     Account account,
     CloudFile file, {
     required bool offline,
@@ -58,11 +67,7 @@ class OriginalTransfers {
       throw const CloudException('Downloads need a connected server.');
     }
     checkSession();
-    final target = offline
-        ? await storage!.original(_originalKey(account, file), file.name)
-        : null;
-
-    Future<File> publishOffline() async {
+    Future<File> publishOffline(CloudFile file, File target) async {
       checkSession();
       final key = 'offline|${account.storageKey}';
       final saved = await storage!.readOfflineListing(key);
@@ -71,13 +76,23 @@ class OriginalTransfers {
         ...saved.where((f) => f.key != file.key),
         file,
       ]);
-      return target!;
+      return target;
     }
 
-    if (target != null &&
-        await target.exists() &&
-        await target.length() == file.size) {
-      return publishOffline();
+    if (offline) {
+      if (file.pending) {
+        final saved = await _savedCopy(account, file);
+        checkSession();
+        if (saved != null) return saved;
+      } else {
+        final target = await storage!.original(
+          _originalKey(account, file),
+          file.name,
+        );
+        if (await target.exists() && await target.length() == file.size) {
+          return (output: await publishOffline(file, target), file: file);
+        }
+      }
     }
     Directory? transfer;
     try {
@@ -97,6 +112,21 @@ class OriginalTransfers {
         file,
         expectedRevision: offline ? file.etag : null,
       );
+      try {
+        checkSession();
+        final downloaded = response.file;
+        if (downloaded.pending ||
+            (file.id != null && downloaded.id != file.id)) {
+          throw const CloudException(
+            'The downloaded item has an invalid location.',
+          );
+        }
+        validateName(downloaded.name);
+        file = downloaded;
+      } catch (_) {
+        await response.stream.listen(null).cancel();
+        rethrow;
+      }
       transfer = await folder.createTemp('transfer-');
       final output = File('${transfer.path}/${file.name}');
       final sink = output.openWrite();
@@ -114,7 +144,12 @@ class OriginalTransfers {
         );
       }
       checkSession();
-      if (target == null) return output;
+      if (!offline) return (output: output, file: file);
+      final target = await storage!.original(
+        _originalKey(account, file),
+        file.name,
+      );
+      checkSession();
       final partial = File('${target.path}.part');
       try {
         await output.copy(partial.path);
@@ -123,7 +158,7 @@ class OriginalTransfers {
       } finally {
         if (await partial.exists()) await partial.delete();
       }
-      return await publishOffline();
+      return (output: await publishOffline(file, target), file: file);
     } catch (_) {
       if (transfer != null && await transfer.exists()) {
         await transfer.delete(recursive: true);

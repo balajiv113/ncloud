@@ -52,6 +52,7 @@ class FileResolver {
   final Map<String, Future<CloudFile>> _pending = {};
   Account? _owner;
   int _generation = 0;
+  int get generation => _generation;
 
   void clear() {
     _generation++;
@@ -63,6 +64,33 @@ class FileResolver {
   CloudFile? cached(CloudFile file) {
     if (!identical(_owner, account())) return null;
     return _resolved[file.id];
+  }
+
+  void remember(
+    Account session,
+    CloudFile original,
+    CloudFile resolved, {
+    required int generation,
+  }) {
+    final id = original.id;
+    if (id == null ||
+        !active() ||
+        !identical(account(), session) ||
+        generation != _generation) {
+      return;
+    }
+    if (!identical(_owner, session)) {
+      _resolved.clear();
+      _pending.clear();
+      _owner = session;
+    }
+    final applied = apply(original, resolved);
+    if (applied != null &&
+        active() &&
+        identical(account(), session) &&
+        generation == _generation) {
+      _resolved[id] = applied;
+    }
   }
 
   Future<CloudFile> resolve(CloudFile file) async {

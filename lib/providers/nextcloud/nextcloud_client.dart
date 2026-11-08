@@ -306,19 +306,30 @@ class NextcloudClient implements CloudBackend {
 
   @override
   Future<PlaybackSource> playbackSource(Account account, CloudFile file) async {
-    if (file.pending) {
-      final id = file.id;
-      if (id == null) {
-        throw const CloudException('This item has no location reference.');
-      }
-      file =
-          (await resolveFileIds(account, [id]))[id] ??
-          (throw const CloudException('This item is no longer available.'));
-    }
+    file = await _fileForAction(account, file);
     return (
       uri: fileUri(account, file),
       headers: {'Authorization': account.authorization},
     );
+  }
+
+  Future<CloudFile> _fileForAction(Account account, CloudFile file) async {
+    if (!file.pending) return file;
+    final id = file.id;
+    if (id == null) {
+      throw const CloudException('This item has no location reference.');
+    }
+    final found =
+        (await resolveFileIds(account, [id]))[id] ??
+        (throw const CloudException('This item is no longer available.'));
+    final day = file.captureDay;
+    return day == null
+        ? found
+        : found.withCaptureDate(
+            file.taken ?? found.modified ?? DateTime.now(),
+            file.etag ?? found.etag,
+            day: day,
+          );
   }
 
   @override
@@ -1670,6 +1681,7 @@ class NextcloudClient implements CloudBackend {
         'Safe sync requires a strong server file revision.',
       );
     }
+    file = await _fileForAction(account, file);
     final request = http.Request('GET', fileUri(account, file))
       ..followRedirects = false
       ..headers['Authorization'] = account.authorization;
@@ -1684,7 +1696,7 @@ class NextcloudClient implements CloudBackend {
         await response.stream.drain<void>().timeout(_timeout);
         throw statusError(response.statusCode);
       }
-      return CloudDownload(response.stream);
+      return CloudDownload(file, response.stream);
     } on TimeoutException {
       throw CloudException(
         expectedRevision == null

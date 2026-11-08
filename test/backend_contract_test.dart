@@ -872,6 +872,40 @@ void main() {
   });
 
   test(
+    'late download metadata cannot refill an invalidated location cache',
+    () {
+      final backend = _PortableBackend();
+      addTearDown(backend.close);
+      const file = CloudFile(
+        path: [CloudFile.pendingRoot, 'opaque:1'],
+        name: 'photo.jpg',
+        isDirectory: false,
+        id: 'opaque:1',
+      );
+      var applications = 0;
+      final resolver = FileResolver(
+        client: backend,
+        account: () => account,
+        active: () => true,
+        apply: (original, resolved) {
+          applications++;
+          return resolved;
+        },
+      );
+      final generation = resolver.generation;
+      resolver.clear();
+      resolver.remember(
+        account,
+        file,
+        file.atPath(['Pictures', 'photo.jpg']),
+        generation: generation,
+      );
+      expect(applications, 0);
+      expect(resolver.cached(file), isNull);
+    },
+  );
+
+  test(
     'resolution cannot refill a cache cleared during reconciliation',
     () async {
       final backend = _PortableBackend();

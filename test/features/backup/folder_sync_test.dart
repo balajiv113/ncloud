@@ -238,6 +238,7 @@ class CloudFolders implements CloudBackend {
     }
     downloads++;
     return CloudDownload(
+      file,
       interrupted
           ? Stream.error(const SocketException('Interrupted'))
           : Stream.value(value.$1),

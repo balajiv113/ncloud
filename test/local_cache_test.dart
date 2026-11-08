@@ -879,6 +879,109 @@ void main() {
     });
 
     test(
+      'provider downloads pathless originals with revision and metadata',
+      () async {
+        var searches = 0;
+        var downloads = 0;
+        final bytes = List<int>.filled(2048, 7);
+        final controller = AppController(
+          store: MemoryStore(),
+          cache: cache,
+          client: NextcloudClient(
+            transport: MockClient((request) async {
+              if (request.method == 'SEARCH') {
+                searches++;
+                return http.Response(
+                  multistatus(
+                    responseEntry(
+                      properties: '<d:getetag>revision-a</d:getetag>',
+                    ),
+                  ),
+                  207,
+                );
+              }
+              downloads++;
+              expect(request.method, 'GET');
+              expect(request.headers['If-Match'], '"revision-a"');
+              expect(request.url.pathSegments.last, 'Beach & sun.jpg');
+              return http.Response.bytes(bytes, 200);
+            }),
+          ),
+        )..account = account;
+        addTearDown(controller.dispose);
+        final pending = CloudFile(
+          path: const [CloudFile.pendingRoot, '42'],
+          name: 'Beach & sun.jpg',
+          isDirectory: false,
+          contentType: 'image/jpeg',
+          id: '42',
+          size: bytes.length,
+          etag: 'revision-a',
+          captureDay: 21000,
+          taken: DateTime.utc(2027, 7, 1),
+        );
+        final saved = await controller.saveOffline(pending);
+        expect(await saved.readAsBytes(), bytes);
+        expect((await controller.offlineCopy(pending))!.path, saved.path);
+        final members = await cache.readOfflineListing(
+          'offline|${account.server}|${account.userId}',
+        );
+        expect(members.single.path, ['Photos', 'Beach & sun.jpg']);
+        expect(members.single.captureDay, 21000);
+        expect(members.single.etag, 'revision-a');
+        expect((await controller.saveOffline(pending)).path, saved.path);
+        expect(searches, 1);
+        expect(downloads, 1);
+      },
+    );
+
+    test('pathless offline downloads reject a changed revision', () async {
+      var searches = 0;
+      final controller = AppController(
+        store: MemoryStore(),
+        cache: cache,
+        client: NextcloudClient(
+          transport: MockClient((request) async {
+            if (request.method == 'SEARCH') {
+              searches++;
+              return http.Response(
+                multistatus(
+                  responseEntry(properties: '<d:getetag>new</d:getetag>'),
+                ),
+                207,
+              );
+            }
+            expect(request.headers['If-Match'], '"old"');
+            return http.Response('', 412);
+          }),
+        ),
+      )..account = account;
+      addTearDown(controller.dispose);
+      const pending = CloudFile(
+        path: [CloudFile.pendingRoot, '42'],
+        name: 'Beach & sun.jpg',
+        isDirectory: false,
+        contentType: 'image/jpeg',
+        id: '42',
+        size: 2048,
+        etag: 'old',
+        captureDay: 21000,
+      );
+      await expectLater(
+        controller.saveOffline(pending),
+        throwsA(isA<CloudException>()),
+      );
+      expect(searches, 1);
+      expect(
+        await cache.readOfflineListing(
+          'offline|${account.server}|${account.userId}',
+        ),
+        isEmpty,
+      );
+      expect(await controller.offlineCopy(pending), isNull);
+    });
+
+    test(
       'offline download rejects a missing revision before network access',
       () async {
         var requests = 0;

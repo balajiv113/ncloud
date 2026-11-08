@@ -2869,8 +2869,8 @@ class AppController extends ChangeNotifier {
     total = 0;
     completed = 0;
     notifyListeners();
+    final generation = _fileResolver.generation;
     try {
-      file = await resolve(file);
       void checkSession() {
         if (_disposed || account != session) {
           throw const CloudException(
@@ -2879,12 +2879,22 @@ class AppController extends ChangeNotifier {
         }
       }
 
-      return await _originalTransfers.download(
+      final result = await _originalTransfers.download(
         session,
         file,
         offline: offline,
         checkSession: checkSession,
       );
+      checkSession();
+      if (file.pending) {
+        _fileResolver.remember(
+          session,
+          file,
+          result.file,
+          generation: generation,
+        );
+      }
+      return result.output;
     } finally {
       busy = false;
       notifyListeners();

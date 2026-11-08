@@ -24,7 +24,7 @@ Async file resolution and previews are scoped to their initiating session. Clear
 
 On-demand file resolution is owned by `features/library/file_resolver.dart`, which shares concurrent requests and invalidates them on cache or session changes. The cloud contract still exposes ID-based resolution; moving location handling fully inside provider operations remains future work.
 
-`features/library/original_transfers.dart` owns original download validation, temporary staging and offline publication. The app controller retains the transfer lock until offline membership is saved.
+`features/library/original_transfers.dart` owns original download validation, temporary staging and offline publication. Providers accept pathless downloads and return the downloaded file's metadata; the app controller retains the transfer lock until offline membership is saved.
 
 Share panels use a library-owned session bound to the account that opened them, rather than calling the provider from the widget. Account changes prevent stale share results or actions from crossing sessions.
 

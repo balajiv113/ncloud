@@ -21,7 +21,10 @@ abstract interface class LoginFlow {
 typedef PlaybackSource = ({Uri uri, Map<String, String> headers});
 
 class CloudDownload {
-  const CloudDownload(this.stream);
+  const CloudDownload(this.file, this.stream);
+
+  /// Metadata of the downloaded file, including its account-relative path.
+  final CloudFile file;
   final Stream<List<int>> stream;
 }
 
@@ -210,7 +213,8 @@ abstract interface class CloudBackend {
     int size,
   );
 
-  /// If [expectedRevision] is supplied, fails unless that revision is read.
+  /// Accepts pathless items. If [expectedRevision] is supplied, fails unless
+  /// that revision is read; returned metadata identifies the downloaded file.
   Future<CloudDownload> download(
     Account account,
     CloudFile file, {
