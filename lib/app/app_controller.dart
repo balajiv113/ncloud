@@ -5,22 +5,24 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
+import '../features/account/account_session.dart';
 import '../features/library/domain/album_catalogue.dart';
 import '../features/library/domain/album_members.dart';
 import '../features/library/domain/change_monitor.dart';
 import '../diagnostics.dart';
+import 'status_sink.dart';
 import '../discovery_models.dart';
 import '../core/storage/file_store.dart';
 import '../features/backup/folder_sync.dart';
 import '../core/storage/local_cache.dart';
 import '../models.dart';
+import '../features/library/domain/library_operations.dart';
+import '../features/library/domain/library_warm_up.dart';
 import '../features/library/domain/media_listing.dart';
 import '../features/library/domain/file_resolver.dart';
-import '../features/library/domain/library_mutations.dart';
 import '../features/library/domain/original_transfers.dart';
 import '../features/library/domain/share_session.dart';
 import '../features/photos/photo_map_session.dart';
-import '../features/library/domain/preview_batcher.dart' show PreviewCancelled;
 import '../features/library/domain/browse_target.dart';
 import '../features/library/domain/cached_resource.dart';
 import '../features/library/domain/thumbnail_prefetcher.dart';
@@ -29,7 +31,6 @@ import '../core/cloud/cloud_backend.dart';
 import '../features/backup/workmanager_backup.dart';
 import '../features/backup/sync_schedule.dart';
 import '../features/account/session_store.dart';
-import '../features/account/browser_login.dart';
 import '../features/backup/ios_album_backup.dart';
 export '../features/account/session_store.dart';
 export '../features/library/domain/preview_batcher.dart' show PreviewCancelled;
@@ -37,7 +38,7 @@ export '../features/library/domain/preview_batcher.dart' show PreviewCancelled;
 /// A fetched index batch or page with its opaque continuation.
 typedef _Page = ({List<CloudFile> files, List<int> days, String? nextCursor});
 
-class AppController extends ChangeNotifier {
+class AppController extends ChangeNotifier implements StatusSink {
   AppController({
     required this.store,
     required this.client,
@@ -93,11 +94,12 @@ class AppController extends ChangeNotifier {
   /// True while showing locally cached results that are being refreshed.
   bool refreshing = false;
   Account? account;
-  bool starting = true;
-  bool signingIn = false;
-  bool _savingAccount = false;
+  bool get starting => _session.starting;
+  set starting(bool value) => _session.starting = value;
+  bool get signingIn => _session.signingIn;
   bool loading = false;
-  bool busy = false;
+  bool get busy => _ops.busy;
+  set busy(bool value) => _ops.busy = value;
   bool loadingMore = false;
   bool hasMore = false;
   final Map<String, MediaListing> _listings = {};
@@ -143,8 +145,8 @@ class AppController extends ChangeNotifier {
           ? ['Photos']
           : []);
   List<SmartAlbum> get smartAlbums => _albums.smart;
-  int completed = 0;
-  int total = 0;
+  int get completed => _ops.completed;
+  int get total => _ops.total;
 
   /// What the library is showing. The fields below read it.
   BrowseTarget target = const TimelineTarget();
@@ -155,11 +157,12 @@ class AppController extends ChangeNotifier {
   RecognizedPerson? get activePerson => target.person;
   List<PhotoMapBounds>? get activeMapBounds => target.mapBounds;
   List<CloudFile> items = [];
+  @override
   String? error;
+  @override
   String? notice;
   int _loadVersion = 0;
   int _cacheGeneration = 0;
-  int _loginVersion = 0;
   bool _disposed = false;
 
   /// Every screen's photo and face thumbnails: memory, then disk, then server.
@@ -282,14 +285,13 @@ class AppController extends ChangeNotifier {
       }
     },
     limit: FileStore.maxFiles,
-    recentDays: warmYears * 366,
+    recentDays: LibraryWarmUp.years * 366,
   );
   bool _browsingActive = true;
-  Completer<void>? _loginResume;
 
   void setBrowsingActive(bool active) {
     _browsingActive = active;
-    if (active) _wakeLogin();
+    if (active) _session.wake();
     if (!active) {
       _prefetch.pause();
       _thumbnails.pause();
@@ -333,25 +335,14 @@ class AppController extends ChangeNotifier {
   final Map<String, Future<CloudFile?>> _covers = {};
 
   bool get connected => account != null;
-  bool get canCancelLogin => signingIn && !_savingAccount;
+  bool get canCancelLogin => _session.canCancel;
 
   Future<void> initialize() async {
-    final version = _loginVersion;
-    try {
-      final saved = await store.read();
-      if (_disposed || version != _loginVersion) return;
-      if (saved != null) account = client.restoreAccount(saved);
-    } catch (e) {
-      if (!_disposed && version == _loginVersion) {
-        error = 'Could not restore the saved account. ${errorMessage(e)}';
-      }
-    } finally {
-      if (!_disposed && version == _loginVersion) {
-        if (!connected) starting = false;
-        notifyListeners();
-      }
-    }
-    if (_disposed || version != _loginVersion) return;
+    final restored = await _session.restore();
+    if (!restored.current) return;
+    if (restored.account != null) account = restored.account;
+    if (!connected) starting = false;
+    notifyListeners();
     if (connected) {
       setSyncForeground(true);
       try {
@@ -359,7 +350,7 @@ class AppController extends ChangeNotifier {
       } catch (e) {
         notice = 'Could not restore saved offline files. ${errorMessage(e)}';
       }
-      final preparation = _prepareLibrary();
+      final preparation = warmUp.prepare();
       unawaited(_albums.load());
       unawaited(loadPeople());
       unawaited(_shared.load());
@@ -374,272 +365,60 @@ class AppController extends ChangeNotifier {
     }
   }
 
-  Future<void> passwordLogin(
-    String server,
-    String user,
-    String password,
-  ) async {
-    final version = ++_loginVersion;
-    signingIn = true;
-    error = null;
-    notifyListeners();
-    try {
-      final result = await client.authenticate(
-        normalizeServer(server),
-        user,
-        password,
-      );
-      if (version != _loginVersion) return;
-      await _saveAccount(result);
-    } catch (e) {
-      if (version == _loginVersion) error = errorMessage(e);
-    } finally {
-      if (version == _loginVersion) {
-        signingIn = false;
-        notifyListeners();
-      }
-    }
-  }
+  Future<void> passwordLogin(String server, String user, String password) =>
+      _session.passwordLogin(server, user, password);
 
   Future<void> browserLogin(
     String server,
     Future<bool> Function(Uri) openBrowser,
-  ) async {
-    final version = ++_loginVersion;
-    signingIn = true;
-    error = null;
-    notice = null;
-    notifyListeners();
-    try {
-      final uri = normalizeServer(server);
-      final flow = BrowserLogin(
-        client: client,
-        isCurrent: () => version == _loginVersion,
-        isActive: () => _browsingActive,
-        waitForResume: (remaining) async {
-          final resume = _loginResume ??= Completer<void>();
-          await resume.future.timeout(remaining, onTimeout: () {});
-        },
-        onRetry: () {
-          notice = 'Sign-in connection interrupted. Retrying…';
-          notifyListeners();
-        },
-      );
-      final result = await flow.authenticate(uri, openBrowser);
-      if (version == _loginVersion && result != null) {
-        notice = null;
-        await _saveAccount(result);
-      }
-    } catch (e) {
-      if (version == _loginVersion) error = errorMessage(e);
-    } finally {
-      if (version == _loginVersion) {
-        signingIn = false;
-        notice = null;
-        notifyListeners();
-      }
-    }
+  ) => _session.browserLogin(server, openBrowser);
+
+  void cancelLogin() => _session.cancel();
+
+  /// Saves a newly accepted account and prepares its library.
+  Future<void> _signedIn(Account result) async {
+    if (account != null) await folderSync.disconnect();
+    await store.write(result.encode());
+    account = result;
+    setSyncForeground(true);
+    target = const TimelineTarget();
+    final preparation = warmUp.prepare();
+    unawaited(_albums.load());
+    unawaited(loadPeople());
+    unawaited(_shared.load());
+    await preparation;
   }
 
-  void cancelLogin() {
-    if (_savingAccount) return;
-    _loginVersion++;
-    _wakeLogin();
-    signingIn = false;
-    notice = null;
-    notifyListeners();
-  }
+  late final AccountSession _session = AccountSession(
+    client: client,
+    store: store,
+    status: this,
+    disposed: () => _disposed,
+    active: () => _browsingActive,
+    signedIn: _signedIn,
+    onChanged: notifyListeners,
+  );
 
-  void _wakeLogin() {
-    final pending = _loginResume;
-    _loginResume = null;
-    if (pending != null && !pending.isCompleted) pending.complete();
-  }
-
-  Future<void> _saveAccount(Account result) async {
-    _savingAccount = true;
-    notifyListeners();
-    try {
-      if (account != null) await folderSync.disconnect();
-      await store.write(result.encode());
-      account = result;
-      setSyncForeground(true);
-      target = const TimelineTarget();
-      final preparation = _prepareLibrary();
-      unawaited(_albums.load());
-      unawaited(loadPeople());
-      unawaited(_shared.load());
-      await preparation;
-    } finally {
-      _savingAccount = false;
-    }
-  }
-
-  /// True while the one-time welcome screen preloads recent years.
-  bool warming = false;
-  double warmProgress = 0;
-
-  /// 0 day index, 1 recent metadata, 2 thumbnails, 3 ready.
-  int warmPhase = 0;
-  String warmIndex = '';
-  int warmDone = 0;
-  int warmTotal = 0;
-  int _warmVersion = 0;
-  Timer? _warmTimer;
-  static const warmBudget = Duration(seconds: 30);
-  static const warmYears = 3;
-
-  Future<void> _prepareLibrary() async {
-    final session = account!;
-    final key = 'warm-v2|${session.storageKey}';
-    final prepared = await cache?.readDocument(key);
-    if (_disposed || account != session) return;
-    final saved = await cache?.readDocument(_listingKey()!);
-    if (_disposed || account != session) return;
-    var cachedLibrary = false;
-    if (saved != null) {
-      try {
-        MediaListing.fromJson(saved);
-        cachedLibrary = true;
-      } catch (e) {
-        notice = 'The saved timeline needs rebuilding. ${errorMessage(e)}';
-      }
-    }
-    starting = false;
-    if (prepared?['complete'] == true || cachedLibrary) {
-      warming = false;
-      notifyListeners();
-      await load(refresh: false);
-      return;
-    }
-    warming = true;
-    warmProgress = 0;
-    warmPhase = 0;
-    warmIndex = '';
-    warmDone = warmTotal = 0;
-    notifyListeners();
-    await _warmUp();
-    if (!_disposed &&
-        account == session &&
-        error == null &&
-        warmDone == warmTotal &&
-        warmPhase == 3) {
-      await _storeWrite;
-      await cache?.writeDocument(key, {'complete': true});
-    }
-  }
-
-  /// After the first sign-in, loads the Timeline index, then the metadata of
-  /// recent years and the first screen of thumbnails, within [warmBudget].
-  /// Skipping only hides the screen; metadata keeps loading quietly.
-  Future<void> _warmUp() async {
-    final version = ++_warmVersion;
-    final session = account;
-    final deadline = DateTime.now().add(warmBudget);
-    _warmTimer?.cancel();
-    _warmTimer = Timer(warmBudget, () {
-      if (version == _warmVersion) skipWarmUp();
-    });
-    bool active() =>
-        version == _warmVersion && !_disposed && account == session;
-    void step(double progress, int phase) {
-      if (!active() || !warming) return;
-      warmProgress = progress;
-      warmPhase = phase;
-      notifyListeners();
-    }
-
-    try {
-      step(0.03, 0);
-      await load(refresh: false);
-      final listing = _activeListing;
-      final days = listing?.days;
-      if (!active() || listing == null || error != null) return;
-      final thumbnails = Future.wait([
-        for (final file in items.where((f) => f.isMedia).take(60))
-          preview(file).then<void>(
-            (_) {},
-            onError: (Object e) {
-              if (active() && e is! PreviewCancelled) {
-                notice =
-                    'Some previews could not be prepared. Tap them to retry.';
-              }
-            },
-          ),
-      ]);
-      if (days != null && days.isNotEmpty) {
-        final years = [
-          for (final day in [
-            days.map((d) => d.id).reduce(math.min),
-            days.map((d) => d.id).reduce(math.max),
-          ])
-            DateTime.fromMillisecondsSinceEpoch(
-              day * 86400000,
-              isUtc: true,
-            ).year,
-        ];
-        final count = days.fold(0, (sum, d) => sum + d.count);
-        warmIndex =
-            '$count photos · '
-            '${years.first == years.last ? years.first : years.join('–')}';
-      }
-      if (days != null) {
-        final today = DateTime.now().toUtc().millisecondsSinceEpoch ~/ 86400000;
-        final recent = days
-            .where((d) => d.id >= today - warmYears * 366)
-            .toList();
-        final total = recent.fold(0, (sum, d) => sum + d.count);
-        warmTotal = total;
-        while (active() &&
-            _browsingActive &&
-            DateTime.now().isBefore(deadline) &&
-            identical(listing, _activeListing)) {
-          final missing = recent
-              .where((d) => !listing.loaded.contains(d.id))
-              .fold(0, (sum, d) => sum + d.count);
-          warmDone = total - missing;
-          if (missing == 0) break;
-          step(0.1 + 0.7 * warmDone / math.max(1, total), 1);
-          final before = listing.loaded.length;
-          await loadNextPage();
-          if (listing.loaded.length == before) break;
-        }
-        warmDone =
-            total -
-            recent
-                .where((d) => !listing.loaded.contains(d.id))
-                .fold(0, (sum, d) => sum + d.count);
-      }
-      if (!active()) return;
-      step(0.85, 2);
-      final left = deadline.difference(DateTime.now());
-      if (left > Duration.zero) {
-        await thumbnails.timeout(left, onTimeout: () => []);
-      }
-      if (active() && warmDone == warmTotal) {
-        warmProgress = 1;
-        warmPhase = 3;
-        notifyListeners();
-      }
-    } on Object catch (e) {
-      if (active()) error ??= errorMessage(e);
-    } finally {
-      if (version == _warmVersion) {
-        _warmTimer?.cancel();
-        skipWarmUp();
-      }
-    }
-  }
-
-  /// Leaves the welcome screen; loading continues in the background.
-  void skipWarmUp() {
-    if (!warming) return;
-    warming = false;
-    notifyListeners();
-  }
+  /// The one-time welcome after the first sign-in.
+  late final LibraryWarmUp warmUp = LibraryWarmUp(
+    cache: cache,
+    account: () => account,
+    disposed: () => _disposed,
+    browsingActive: () => _browsingActive,
+    status: this,
+    listingKey: () => _listingKey()!,
+    load: () => load(refresh: false),
+    activeListing: () => _activeListing,
+    loadNextPage: loadNextPage,
+    items: () => items,
+    preview: (file) => preview(file),
+    storeWritten: () => _storeWrite,
+    started: () => starting = false,
+    onChanged: notifyListeners,
+  );
 
   Future<void> signOut() async {
-    if (busy || _savingAccount) return;
+    if (busy || _session.saving) return;
     busy = true;
     error = null;
     notifyListeners();
@@ -654,7 +433,7 @@ class AppController extends ChangeNotifier {
       await _storeWrite;
       await cache?.clearAll();
       _loadVersion++;
-      _loginVersion++;
+      _session.invalidate();
       _changeOwner = null;
       _changeEtag = null;
       _lastIndexCheck = null;
@@ -662,8 +441,7 @@ class AppController extends ChangeNotifier {
       _pendingChangeIds = {};
       _clearPreviews();
       _covers.clear();
-      _warmVersion++;
-      warming = false;
+      warmUp.cancel();
       account = null;
       Diagnostics.session.clear();
       _libraryFiles = [];
@@ -1820,126 +1598,50 @@ class AppController extends ChangeNotifier {
         return found.firstOrNull;
       });
 
+  late final LibraryOperations _ops = LibraryOperations(
+    client: client,
+    store: fileStore,
+    originals: _originalTransfers,
+    resolver: _fileResolver,
+    account: () => account,
+    disposed: () => _disposed,
+    status: this,
+    directory: () => directory,
+    refresh: _refreshAfterChange,
+    onChanged: notifyListeners,
+  );
+
+  /// Updates every view after the library changed.
+  Future<void> _refreshAfterChange({
+    required bool coversChanged,
+    required bool Function() current,
+  }) async {
+    if (coversChanged) _covers.clear();
+    await _invalidateBrowse();
+    if (!current()) return;
+    await load();
+  }
+
   Future<bool> organize(
     List<CloudFile> files,
     String operation, {
     List<String>? destination,
     String? newName,
     bool favorite = true,
-  }) async {
-    if (busy || files.isEmpty) return false;
-    final session = account;
-    bool current() => !_disposed && identical(account, session);
-    void checkSession() {
-      if (!current()) {
-        throw const CloudException(
-          'The account changed. Start the operation again.',
-        );
-      }
-    }
+  }) => _ops.organize(
+    files,
+    operation,
+    destination: destination,
+    newName: newName,
+    favorite: favorite,
+  );
 
-    busy = true;
-    error = null;
-    notice = null;
-    completed = 0;
-    total = files.length;
-    notifyListeners();
-    Object? failure;
-    try {
-      await LibraryMutations(
-        client: client,
-        store: fileStore,
-        resolve: resolve,
-        checkSession: checkSession,
-        onCompleted: () {
-          completed++;
-          notifyListeners();
-        },
-      ).run(
-        files,
-        operation,
-        account: session,
-        destination: destination,
-        newName: newName,
-        favorite: favorite,
-      );
-    } catch (e) {
-      failure = e;
-    }
-    try {
-      if (!current()) return false;
-      _covers.clear();
-      await _invalidateBrowse();
-      if (!current()) return false;
-      await load();
-      if (!current()) return false;
-      if (failure != null) {
-        error = '$completed of $total completed. ${errorMessage(failure)}';
-      } else {
-        notice = '$completed ${completed == 1 ? 'item' : 'items'} updated';
-      }
-      return failure == null;
-    } finally {
-      busy = false;
-      notifyListeners();
-    }
-  }
-
-  Future<List<TrashEntry>> trash() => client.trash(account!);
-
-  Future<void> restore(TrashEntry entry) async {
-    if (busy) throw const CloudException('Wait for the current operation.');
-    busy = true;
-    notifyListeners();
-    try {
-      await client.restore(account!, entry);
-      _covers.clear();
-      await _invalidateBrowse();
-      await load();
-    } finally {
-      busy = false;
-      notifyListeners();
-    }
-  }
-
-  Future<void> _action(Future<void> Function() action, String success) async {
-    if (busy) return;
-    busy = true;
-    total = 0;
-    completed = 0;
-    error = null;
-    notice = null;
-    notifyListeners();
-    try {
-      await action();
-      notice = success;
-      await _invalidateBrowse();
-      await load();
-    } catch (e) {
-      error = errorMessage(e);
-    } finally {
-      busy = false;
-      notifyListeners();
-    }
-  }
-
-  Future<void> favorite(CloudFile file) => _action(() async {
-    file = await resolve(file);
-    await client.setFavorite(account!, file, !file.favorite);
-    fileStore.update(file.key, (f) => f.withFavorite(!file.favorite));
-  }, file.favorite ? 'Removed from favorites' : 'Added to favorites');
-
-  Future<void> createFolder(String name) => _action(() async {
-    validateName(name);
-    await client.createFolder(account!, [...directory, name]);
-    fileStore.invalidateFolder(directory);
-  }, 'Folder created');
-
+  Future<List<TrashEntry>> trash() => _ops.trash();
+  Future<void> restore(TrashEntry entry) => _ops.restore(entry);
+  Future<void> favorite(CloudFile file) => _ops.favorite(file);
+  Future<void> createFolder(String name) => _ops.createFolder(name);
   Future<void> upload(String name, Stream<List<int>> bytes, int size) =>
-      _action(() async {
-        await client.uploadNew(account!, [...directory, name], bytes, size);
-        fileStore.invalidateFolder(directory);
-      }, 'Upload complete');
+      _ops.upload(name, bytes, size);
 
   void _clearPreviews() {
     _prefetch.clear();
@@ -2057,7 +1759,8 @@ class AppController extends ChangeNotifier {
   }
 
   /// Explicitly saved original, outside the bounded browsing cache.
-  Future<File> saveOffline(CloudFile file) => _download(file, offline: true);
+  Future<File> saveOffline(CloudFile file) =>
+      _ops.download(file, offline: true);
 
   String get _offlineListingKey =>
       'offline|${account?.storageKey ?? 'null|null'}';
@@ -2071,9 +1774,7 @@ class AppController extends ChangeNotifier {
     }
     _loadVersion++;
     _cacheGeneration++;
-    _warmVersion++;
-    _warmTimer?.cancel();
-    warming = false;
+    warmUp.cancel();
     loading = false;
     refreshing = false;
     loadingMore = false;
@@ -2092,51 +1793,10 @@ class AppController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<File> download(CloudFile file) => _download(file);
+  Future<File> download(CloudFile file) => _ops.download(file);
 
-  Future<File> _download(CloudFile file, {bool offline = false}) async {
-    final session = account;
-    if (session == null || (offline && cache == null)) {
-      throw const CloudException('Downloads need a connected server.');
-    }
-    if (busy) {
-      throw const CloudException('Wait for the current transfer to finish.');
-    }
-    busy = true;
-    total = 0;
-    completed = 0;
-    notifyListeners();
-    final generation = _fileResolver.generation;
-    try {
-      void checkSession() {
-        if (_disposed || account != session) {
-          throw const CloudException(
-            'The account changed. Start the download again.',
-          );
-        }
-      }
-
-      final result = await _originalTransfers.download(
-        session,
-        file,
-        offline: offline,
-        checkSession: checkSession,
-      );
-      checkSession();
-      if (file.pending) {
-        _fileResolver.remember(
-          session,
-          file,
-          result.file,
-          generation: generation,
-        );
-      }
-      return result.output;
-    } finally {
-      busy = false;
-      notifyListeners();
-    }
-  }
+  @override
+  void changed() => notifyListeners();
 
   @override
   void notifyListeners() {
@@ -2148,11 +1808,10 @@ class AppController extends ChangeNotifier {
     _folderSync?.dispose();
     _disposed = true;
     _thumbnails.dispose();
-    _warmTimer?.cancel();
+    warmUp.cancel();
     _prefetch.clear();
     _loadVersion++;
-    _loginVersion++;
-    _wakeLogin();
+    _session.invalidate();
     client.close();
     unawaited(cache?.close());
     super.dispose();

@@ -68,7 +68,7 @@ class _NcloudAppState extends State<NcloudApp> with WidgetsBindingObserver {
             body: Center(child: CircularProgressIndicator()),
           );
         }
-        if (widget.controller.warming) {
+        if (widget.controller.warmUp.warming) {
           return WarmStartScreen(controller: widget.controller);
         }
         return widget.controller.connected

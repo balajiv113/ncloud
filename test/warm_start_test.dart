@@ -126,16 +126,16 @@ void main() {
         i++
       ) {
         await Future<void>.delayed(const Duration(milliseconds: 10));
-        if (c.warming) break;
+        if (c.warmUp.warming) break;
       }
-      expect(c.warming, isTrue);
+      expect(c.warmUp.warming, isTrue);
       expect(await cache.readDocument(key), isNull);
       gate.complete();
       await initialization;
       expect(c.error, isNull);
-      expect(c.warming, isFalse);
-      expect(c.warmTotal, 1800);
-      expect(c.warmDone, 1800);
+      expect(c.warmUp.warming, isFalse);
+      expect(c.warmUp.total, 1800);
+      expect(c.warmUp.done, 1800);
       expect(c.items, hasLength(1800));
       expect(c.cachedPreview(c.items.first), isNotNull);
       expect(calls.where((r) => r.method == 'SEARCH'), isEmpty);
@@ -149,7 +149,7 @@ void main() {
         pathlessTimeline: true,
       );
       final warmingStates = <bool>[];
-      restored.addListener(() => warmingStates.add(restored.warming));
+      restored.addListener(() => warmingStates.add(restored.warmUp.warming));
       await restored.initialize();
       expect(
         warmingStates,
@@ -159,7 +159,7 @@ void main() {
       expect(restored.error, isNull);
       expect(restored.items, hasLength(1800));
       expect(
-        restored.warmPhase,
+        restored.warmUp.phase,
         0,
         reason: 'successful preparation is not repeated',
       );
@@ -189,12 +189,12 @@ void main() {
       );
       addTearDown(restored.dispose);
       final states = <bool>[];
-      restored.addListener(() => states.add(restored.warming));
+      restored.addListener(() => states.add(restored.warmUp.warming));
       await restored.initialize();
       expect(states, isNot(contains(true)));
       expect(restored.items, hasLength(loaded));
       expect(
-        restored.warmPhase,
+        restored.warmUp.phase,
         0,
         reason:
             'incomplete three-year warmup is not a reason to block reopening',
@@ -210,7 +210,7 @@ void main() {
       pathlessTimeline: true,
     );
     await c.initialize();
-    expect(c.warming, isFalse);
+    expect(c.warmUp.warming, isFalse);
     expect(c.error, isNotNull);
     expect(await cache.readDocument(key), isNull);
     c.dispose();
@@ -236,7 +236,7 @@ void main() {
     gate.complete();
     await tester.pumpAndSettle();
     expect(c.items, hasLength(1800));
-    expect(c.warmDone, 1800);
+    expect(c.warmUp.done, 1800);
     expect(c.error, isNull);
     await tester.pumpWidget(const SizedBox.shrink());
   });
