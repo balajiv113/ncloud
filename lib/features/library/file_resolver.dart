@@ -127,6 +127,7 @@ class FileResolver {
   ) async {
     final found = await client.resolveFileIds(session, [id]);
     _checkCurrent(session, generation);
+    if (_resolved[id] case final known?) return known;
     final resolved = apply(original, found[id]);
     _checkCurrent(session, generation);
     if (resolved == null) {

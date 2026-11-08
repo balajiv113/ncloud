@@ -906,6 +906,43 @@ void main() {
   );
 
   test(
+    'late resolution cannot overwrite a remembered download location',
+    () async {
+      final backend = _PortableBackend();
+      addTearDown(backend.close);
+      const pending = CloudFile(
+        path: [CloudFile.pendingRoot, 'opaque:1'],
+        name: 'photo.jpg',
+        isDirectory: false,
+        id: 'opaque:1',
+      );
+      final downloaded = pending.atPath(['new', 'photo.jpg']);
+      final older = pending.atPath(['old', 'photo.jpg']);
+      final applied = <CloudFile?>[];
+      final resolver = FileResolver(
+        client: backend,
+        account: () => account,
+        active: () => true,
+        apply: (original, result) {
+          applied.add(result);
+          return result;
+        },
+      );
+      final request = resolver.resolve(pending);
+      resolver.remember(
+        account,
+        pending,
+        downloaded,
+        generation: resolver.generation,
+      );
+      backend.resolution.complete({'opaque:1': older});
+      expect(await request, same(downloaded));
+      expect(applied, [downloaded]);
+      expect(resolver.cached(pending), same(downloaded));
+    },
+  );
+
+  test(
     'resolution cannot refill a cache cleared during reconciliation',
     () async {
       final backend = _PortableBackend();
