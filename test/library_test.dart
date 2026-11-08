@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:ncloud/features/library/domain/browse_target.dart';
 import 'package:ncloud/app/app_controller.dart';
 import 'package:ncloud/main.dart';
 import 'package:ncloud/models.dart';
@@ -143,8 +144,14 @@ void main() {
       final dock = find.byKey(const ValueKey('navigation-dock'));
       expect(tester.getSize(dock).height, 60);
       expect(tester.getSize(dock).width, lessThanOrEqualTo(268));
-      for (final tab in [0, 4, 1]) {
-        final size = tester.getSize(find.byKey(ValueKey('navigate-$tab')));
+      for (final destination in [
+        Destination.timeline,
+        Destination.albums,
+        Destination.drive,
+      ]) {
+        final size = tester.getSize(
+          find.byKey(ValueKey('navigate-${destination.name}')),
+        );
         expect(size.width, greaterThanOrEqualTo(48));
         expect(size.height, greaterThanOrEqualTo(48));
       }
@@ -200,8 +207,14 @@ void main() {
       find.byKey(const ValueKey('navigation-dock')),
     );
     expect(dock.duration, Duration.zero);
-    for (final tab in [0, 4, 1]) {
-      final size = tester.getSize(find.byKey(ValueKey('navigate-$tab')));
+    for (final destination in [
+      Destination.timeline,
+      Destination.albums,
+      Destination.drive,
+    ]) {
+      final size = tester.getSize(
+        find.byKey(ValueKey('navigate-${destination.name}')),
+      );
       expect(size.width, greaterThanOrEqualTo(48));
       expect(size.height, greaterThanOrEqualTo(48));
     }
@@ -245,13 +258,13 @@ void main() {
       addTearDown(c.dispose);
       await c.initialize();
       c.enterDemo();
-      await c.selectTab(4);
+      await c.select(Destination.albums);
       final photos = (await c.folderContents(
         [],
       )).firstWhere((f) => f.name == 'Photos');
       expect(await c.albumCover(photos), isNotNull);
       await c.openSmartAlbum(['Photos', 'Travel', 'Japan', 'Kyoto']);
-      expect(c.tab, 4);
+      expect(c.destination, Destination.albums);
       final original = c.items.firstWhere((f) => f.isImage);
       expect(
         await c.organize([original], 'copy', destination: ['Documents']),
@@ -454,7 +467,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Kyoto'));
     await tester.pumpAndSettle();
-    expect(c.tab, 4);
+    expect(c.destination, Destination.albums);
     expect(c.directory, ['Photos', 'Travel', 'Japan', 'Kyoto']);
     final image = find.bySemanticsLabel('Alpine morning.jpg');
     await tester.longPress(image);

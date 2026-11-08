@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_driver/driver_extension.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:ncloud/features/library/domain/browse_target.dart';
 import 'package:ncloud/app/app_controller.dart';
 import 'package:ncloud/core/storage/file_store.dart';
 import 'package:ncloud/features/backup/folder_sync.dart';
@@ -36,7 +37,7 @@ Future<void> main() async {
           cache: cache,
         )
         ..account = account
-        ..tab = 1;
+        ..target = DriveTarget([]);
   enableFlutterDriverExtension(
     handler: (message) async {
       if (message == 'platform') return Platform.operatingSystem;

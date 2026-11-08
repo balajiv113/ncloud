@@ -6,6 +6,7 @@ import '../../discovery_models.dart';
 import '../../shared/ui/media_tile.dart';
 import '../photos/people_bubble.dart';
 import 'domain/album_entries.dart';
+import 'domain/browse_target.dart';
 import 'domain/library_view.dart';
 
 /// How the Albums destination asks the screen to navigate; the screen also
@@ -18,6 +19,7 @@ class AlbumHomeActions {
     required this.expandPeople,
     required this.openMap,
     required this.openCollection,
+    required this.openTrash,
   });
 
   final void Function(AlbumEntry album) openAlbum;
@@ -25,7 +27,8 @@ class AlbumHomeActions {
   final VoidCallback expandAlbums;
   final VoidCallback expandPeople;
   final VoidCallback openMap;
-  final void Function(int tab) openCollection;
+  final void Function(Destination destination) openCollection;
+  final VoidCallback openTrash;
 }
 
 /// The Albums destination: pinned shortcuts, People and every album in one
@@ -217,19 +220,19 @@ class _AlbumSections {
                 'Favorites',
                 'Favorites',
                 Icons.favorite_border,
-                () => actions.openCollection(2),
+                () => actions.openCollection(Destination.favorites),
               ),
               (
                 'Offline',
                 'Offline',
                 Icons.offline_bolt_outlined,
-                () => actions.openCollection(6),
+                () => actions.openCollection(Destination.offline),
               ),
               (
                 'Bin',
                 'Recently deleted',
                 Icons.restore_from_trash_outlined,
-                () => actions.openCollection(3),
+                () => actions.openTrash(),
               ),
               ('Map', 'Photo map', Icons.map_outlined, actions.openMap),
             ].indexed) ...[

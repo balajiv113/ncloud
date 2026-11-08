@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:ncloud/features/library/domain/browse_target.dart';
 import 'package:ncloud/app/app_controller.dart';
 import 'package:ncloud/core/cloud/cloud_backend.dart';
 import 'package:ncloud/discovery_models.dart';
@@ -494,7 +495,7 @@ void main() {
       await c.openPerson(samplePerson);
       expect(c.items, hasLength(3001));
       expect(requests.length, calls + 2);
-      await c.selectTab(1);
+      await c.select(Destination.drive);
       expect(c.activePerson, isNull);
     },
   );
@@ -525,7 +526,7 @@ void main() {
             ),
           )
           ..account = account
-          ..tab = 4
+          ..target = const AlbumHomeTarget()
           ..timelineIndexAvailable = true
           ..people = [
             const RecognizedPerson(id: '12', name: 'Most', count: 30),

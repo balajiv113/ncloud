@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:ncloud/features/library/domain/browse_target.dart';
 import 'package:ncloud/app/app_controller.dart';
 import 'package:ncloud/core/cloud/cloud_backend.dart';
 import 'package:ncloud/discovery_models.dart';
@@ -65,7 +66,7 @@ void main() {
             ),
           )
           ..account = account
-          ..tab = 4
+          ..target = const AlbumHomeTarget()
           ..timelineIndexAvailable = true;
     await tester.pumpWidget(
       MaterialApp(
@@ -218,10 +219,8 @@ void main() {
               ),
             )
             ..account = account
-            ..activePerson = const RecognizedPerson(
-              id: '12',
-              name: 'Sample',
-              count: 10,
+            ..target = const PersonTarget(
+              RecognizedPerson(id: '12', name: 'Sample', count: 10),
             )
             ..timelineIndexAvailable = true;
       addTearDown(c.dispose);
@@ -278,10 +277,8 @@ void main() {
               ),
             )
             ..account = account
-            ..activePerson = const RecognizedPerson(
-              id: '12',
-              name: 'Sample',
-              count: 10,
+            ..target = const PersonTarget(
+              RecognizedPerson(id: '12', name: 'Sample', count: 10),
             );
       await tester.pumpWidget(
         MaterialApp(

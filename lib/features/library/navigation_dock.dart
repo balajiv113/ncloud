@@ -2,6 +2,8 @@ import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/material.dart';
 
+import 'domain/browse_target.dart';
+
 /// The floating Timeline / Albums / Drive dock. Only the active destination
 /// shows its label.
 class NavigationDock extends StatelessWidget {
@@ -12,18 +14,18 @@ class NavigationDock extends StatelessWidget {
     required this.onSelect,
   });
 
-  /// The active destination's tab number.
-  final int active;
+  /// The active bottom-bar destination.
+  final Destination active;
   final bool busy;
-  final ValueChanged<int> onSelect;
+  final ValueChanged<Destination> onSelect;
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     final destinations = [
-      (0, 'Timeline', Icons.photo_library_outlined),
-      (4, 'Albums', Icons.collections_bookmark_outlined),
-      (1, 'Drive', Icons.folder_outlined),
+      (Destination.timeline, 'Timeline', Icons.photo_library_outlined),
+      (Destination.albums, 'Albums', Icons.collections_bookmark_outlined),
+      (Destination.drive, 'Drive', Icons.folder_outlined),
     ];
     final activeIndex = destinations.indexWhere((d) => d.$1 == active);
     final duration = MediaQuery.disableAnimationsOf(context)
@@ -92,24 +94,27 @@ class NavigationDock extends StatelessWidget {
                               ),
                               Row(
                                 children: [
-                                  for (final (tab, label, icon) in destinations)
+                                  for (final (destination, label, icon)
+                                      in destinations)
                                     Expanded(
-                                      flex: active == tab ? 46 : 27,
+                                      flex: active == destination ? 46 : 27,
                                       child: Tooltip(
                                         message: label,
                                         child: Semantics(
-                                          selected: tab == active,
+                                          selected: destination == active,
                                           button: true,
                                           label: label,
                                           excludeSemantics: true,
                                           child: InkWell(
-                                            key: ValueKey('navigate-$tab'),
+                                            key: ValueKey(
+                                              'navigate-${destination.name}',
+                                            ),
                                             borderRadius: BorderRadius.circular(
                                               28,
                                             ),
                                             onTap: busy
                                                 ? null
-                                                : () => onSelect(tab),
+                                                : () => onSelect(destination),
                                             child: SizedBox.expand(
                                               child: Row(
                                                 mainAxisAlignment:
@@ -118,17 +123,20 @@ class NavigationDock extends StatelessWidget {
                                                   Icon(
                                                     icon,
                                                     size: 21,
-                                                    color: active == tab
+                                                    color: active == destination
                                                         ? colors
                                                               .onPrimaryContainer
                                                         : colors
                                                               .onSurfaceVariant,
                                                   ),
-                                                  if (active == tab) ...[
+                                                  if (active ==
+                                                      destination) ...[
                                                     const SizedBox(width: 6),
                                                     Flexible(
                                                       child: Text(
-                                                        tab == 0
+                                                        destination ==
+                                                                Destination
+                                                                    .timeline
                                                             ? 'Photos'
                                                             : label,
                                                         maxLines: 1,
@@ -138,7 +146,9 @@ class NavigationDock extends StatelessWidget {
                                                           fontSize: 12,
                                                           fontWeight:
                                                               FontWeight.w600,
-                                                          color: active == tab
+                                                          color:
+                                                              active ==
+                                                                  destination
                                                               ? colors
                                                                     .onPrimaryContainer
                                                               : colors

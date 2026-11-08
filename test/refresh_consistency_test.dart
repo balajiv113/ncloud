@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ncloud/features/library/domain/browse_target.dart';
 import 'package:ncloud/app/app_controller.dart';
 import 'package:ncloud/core/cloud/cloud_backend.dart';
 import 'package:ncloud/discovery_models.dart';
@@ -110,7 +111,7 @@ void main() {
       final backend = _Backend();
       final c = _controller(backend);
       addTearDown(c.dispose);
-      await c.selectTab(4);
+      await c.select(Destination.albums);
       expect(c.smartAlbums.single.name, 'Trip');
       final gate = Completer<List<CloudFile>>();
       backend.delayedRoot = gate;
@@ -146,7 +147,7 @@ void main() {
       final backend = _Backend();
       final c = _controller(backend);
       addTearDown(c.dispose);
-      await c.selectTab(4);
+      await c.select(Destination.albums);
       backend.fail = true;
       await c.load();
       expect(c.smartAlbums.single.name, 'Trip');
@@ -164,7 +165,7 @@ void main() {
       final backend = _Backend();
       final c = _controller(backend);
       addTearDown(c.dispose);
-      await c.selectTab(4);
+      await c.select(Destination.albums);
       final oldRoot = Completer<List<CloudFile>>();
       final oldShares = Completer<List<List<String>>>();
       backend.delayedRoot = oldRoot;
@@ -192,7 +193,7 @@ void main() {
     'Drive refresh keeps existing files and reconciles removed folders',
     () async {
       final backend = _Backend();
-      final c = _controller(backend)..tab = 1;
+      final c = _controller(backend)..target = DriveTarget([]);
       addTearDown(c.dispose);
       await c.goTo(['Photos']);
       expect(c.items.single.name, 'Trip');

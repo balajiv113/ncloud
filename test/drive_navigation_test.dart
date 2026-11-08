@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:ncloud/features/library/domain/browse_target.dart';
 import 'package:ncloud/app/app_controller.dart';
 import 'package:ncloud/core/storage/file_store.dart';
 import 'package:ncloud/features/library/library_screen.dart';
@@ -44,7 +45,7 @@ void main() {
           );
         } else {
           final key =
-              'browse-v5|${account.server}|${account.userId}|1|false|Trips|';
+              'browse-v6|${account.server}|${account.userId}|drive:Trips';
           final files = store.where((_) => true);
           await cache.writeListing(key, files);
           final listing = MediaListing()..add(FileStore(), files);
@@ -81,8 +82,7 @@ void main() {
                 ),
               )
               ..account = account
-              ..tab = 1
-              ..directory = ['Trips'];
+              ..target = DriveTarget(['Trips']);
         try {
           await controller.load(refresh: false);
           expect(controller.error, isNull);
@@ -146,7 +146,7 @@ void main() {
       );
       final controller = AppController(store: MemoryStore(), client: client)
         ..account = account
-        ..tab = 1;
+        ..target = DriveTarget([]);
       addTearDown(controller.dispose);
       for (var attempt = 0; attempt < 2; attempt++) {
         await controller.goTo([]);

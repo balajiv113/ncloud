@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:ncloud/features/library/domain/browse_target.dart';
 import 'package:ncloud/app/app_controller.dart';
 import 'package:ncloud/core/storage/local_cache.dart';
 import 'package:ncloud/main.dart';
@@ -119,7 +120,7 @@ void main() {
         ),
       )..account = account.withPhotoRoot(['Photos']);
       addTearDown(c.dispose);
-      await c.selectTab(4);
+      await c.select(Destination.albums);
       expect(c.error, isNull);
       expect(c.smartAlbums.map((a) => a.name), ['Trip']);
       expect(visited.where((path) => path.startsWith('sub:')), ['sub:/Photos']);
@@ -187,7 +188,7 @@ void main() {
             ..account = account.withPhotoRoot(['Photos'])
             ..timelineIndexAvailable = false;
       addTearDown(c.dispose);
-      await c.selectTab(4);
+      await c.select(Destination.albums);
       expect(c.error, isNull);
       expect(c.smartAlbums.map((a) => a.path), [
         ['Photos'],
@@ -200,7 +201,7 @@ void main() {
         'Photos/Trip/Japan',
       ]);
       expect(searches, 0);
-      c.tab = 1;
+      c.target = DriveTarget([]);
       await c.goTo(['Photos', 'Trip', 'Japan']);
       expect(c.error, isNull);
       expect(c.items.map((f) => f.name), ['Nested', 'a.jpg']);
@@ -264,7 +265,7 @@ void main() {
         ),
       )..account = account.withPhotoRoot(['Photos']);
       addTearDown(c.dispose);
-      await c.selectTab(4);
+      await c.select(Destination.albums);
       expect(c.error, isNull);
       expect(c.smartAlbums.map((a) => a.path), [
         ['Photos'],
@@ -362,7 +363,7 @@ void main() {
       for (var i = 0; i < 100 && c.smartAlbums.isEmpty; i++) {
         await Future<void>.delayed(const Duration(milliseconds: 10));
       }
-      expect(c.tab, 0);
+      expect(c.destination, Destination.timeline);
       expect(c.smartAlbums.single.name, 'Travel');
       expect(c.nativeAlbums.single.name, 'Best days');
       expect(c.nativeAlbums.single.count, 12);
@@ -371,7 +372,7 @@ void main() {
       for (var i = 0; i < 100 && calls < 2; i++) {
         await Future<void>.delayed(const Duration(milliseconds: 10));
       }
-      await c.selectTab(4);
+      await c.select(Destination.albums);
       expect(c.loading, isFalse);
       expect(c.smartAlbums.single.name, 'Travel');
       expect(
@@ -381,7 +382,7 @@ void main() {
       );
       timeline.complete(jsonResponse([]));
       await initializing;
-      expect(c.tab, 4);
+      expect(c.destination, Destination.albums);
       expect(c.smartAlbums.single.name, 'Travel');
     },
   );
@@ -430,7 +431,7 @@ void main() {
         ),
       )..account = account.withPhotoRoot(['Photos']);
       addTearDown(c.dispose);
-      await c.selectTab(4);
+      await c.select(Destination.albums);
       expect(c.smartAlbums, hasLength(2));
       final lengths = <int>[];
       c.addListener(() => lengths.add(c.smartAlbums.length));
@@ -439,7 +440,7 @@ void main() {
       await Future<void>.delayed(Duration.zero);
       expect(c.discoveringAlbums, isTrue);
       expect(c.smartAlbums, hasLength(2));
-      final revisiting = c.selectTab(4);
+      final revisiting = c.select(Destination.albums);
       await Future<void>.delayed(Duration.zero);
       expect(folderCalls, 2, reason: 'revisiting joins the in-flight refresh');
       folders.complete(
@@ -646,9 +647,9 @@ void main() {
       expect(calls, hasLength(7));
       expect(c.hasMore, isTrue);
       expect(c.error, isNull);
-      await c.selectTab(1);
+      await c.select(Destination.drive);
       final before = calls.length;
-      await c.selectTab(0);
+      await c.select(Destination.timeline);
       expect(c.items, hasLength(360));
       expect(calls.length, before);
       final copy = CloudFile.fromJson(
@@ -705,14 +706,14 @@ void main() {
       await started.future;
       await c.loadNextPage();
       expect(details, 2);
-      await c.selectTab(1);
+      await c.select(Destination.drive);
       pending.complete(
         jsonResponse([
           {'fileid': 200, 'dayid': 20997},
         ]),
       );
       await next;
-      await c.selectTab(0);
+      await c.select(Destination.timeline);
       expect(c.items.single.key, first);
       await c.loadNextPage();
       expect(details, 3);
@@ -744,10 +745,10 @@ void main() {
         ),
       )..account = account.withPhotoRoot(['Photos']);
       addTearDown(c.dispose);
-      final first = c.selectTab(4);
+      final first = c.select(Destination.albums);
       await started.future;
-      await c.selectTab(1);
-      final revisited = c.selectTab(4);
+      await c.select(Destination.drive);
+      final revisited = c.select(Destination.albums);
       pending.complete(jsonResponse([]));
       await Future.wait([first, revisited]);
       expect(walks, 1);
@@ -817,7 +818,7 @@ void main() {
         ),
       )..account = account.withPhotoRoot(['Photos']);
       addTearDown(c.dispose);
-      await c.selectTab(4);
+      await c.select(Destination.albums);
       expect(c.error, isNull);
       expect(c.smartAlbums.map((a) => a.name), ['Japan', 'Italy']);
       expect(c.smartAlbums.first.files.single.id, '43');
@@ -834,7 +835,7 @@ void main() {
         ['/Photos', '/Photos/Travel'],
       );
       final count = calls.length;
-      await c.selectTab(4);
+      await c.select(Destination.albums);
       expect(calls.length, count);
       expect(c.discoveringAlbums, isFalse);
     },
@@ -874,7 +875,7 @@ void main() {
       first.dispose();
       final restored = create();
       addTearDown(restored.dispose);
-      await restored.selectTab(0);
+      await restored.select(Destination.timeline);
       expect(calls, 3);
       expect(restored.items, hasLength(1));
       await restored.loadNextPage();
@@ -1065,7 +1066,7 @@ void main() {
               ),
             )
             ..account = account.withPhotoRoot(['Photos'])
-            ..tab = 4
+            ..target = const AlbumHomeTarget()
             ..timelineIndexAvailable = false;
       await tester.pumpWidget(NcloudApp(controller: c));
       await tester.pumpAndSettle();
@@ -1083,7 +1084,7 @@ void main() {
       expect(c.hasMore, isFalse);
       await tester.tap(find.byTooltip('Back'));
       await tester.pumpAndSettle();
-      expect(c.tab, 4);
+      expect(c.destination, Destination.albums);
       expect(c.directory, isEmpty);
       expect(find.text('Trip'), findsOneWidget);
       expect(searches, 3, reason: 'Shared album catalogue is hot cached');

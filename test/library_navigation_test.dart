@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ncloud/features/library/domain/browse_target.dart';
 import 'package:ncloud/app/app_controller.dart';
 import 'package:ncloud/features/library/library_screen.dart';
 import 'package:ncloud/providers/nextcloud/nextcloud_client.dart';
@@ -60,19 +61,19 @@ void main() {
   ) async {
     final controller = await _library(tester);
     await _swipe(tester, 140);
-    expect(controller.tab, 0);
+    expect(controller.destination, Destination.timeline);
     await _swipe(tester, -140);
-    expect(controller.tab, 4);
+    expect(controller.destination, Destination.albums);
     expect(_title(tester), 'ncloud');
     await _swipe(tester, -140);
-    expect(controller.tab, 1);
+    expect(controller.destination, Destination.drive);
     expect(_title(tester), 'ncloud');
     await _swipe(tester, -140);
-    expect(controller.tab, 1);
+    expect(controller.destination, Destination.drive);
     await _swipe(tester, 140);
-    expect(controller.tab, 4);
+    expect(controller.destination, Destination.albums);
     await _swipe(tester, 140);
-    expect(controller.tab, 0);
+    expect(controller.destination, Destination.timeline);
     expect(_title(tester), 'ncloud');
     expect(tester.takeException(), isNull);
   });
@@ -80,31 +81,31 @@ void main() {
   testWidgets('RTL swipes follow the reading direction', (tester) async {
     final controller = await _library(tester, direction: TextDirection.rtl);
     await _swipe(tester, 140);
-    expect(controller.tab, 4);
+    expect(controller.destination, Destination.albums);
     await _swipe(tester, -140);
-    expect(controller.tab, 0);
+    expect(controller.destination, Destination.timeline);
   });
 
   testWidgets('destinations show the app name and nested views keep context', (
     tester,
   ) async {
     final controller = await _library(tester);
-    for (final (tab, title) in [
-      (0, 'Timeline'),
-      (4, 'Albums'),
-      (1, 'Drive'),
-      (2, 'Favorites'),
-      (6, 'Offline'),
+    for (final (destination, title) in [
+      (Destination.timeline, 'Timeline'),
+      (Destination.albums, 'Albums'),
+      (Destination.drive, 'Drive'),
+      (Destination.favorites, 'Favorites'),
+      (Destination.offline, 'Offline'),
     ]) {
-      await controller.selectTab(tab);
+      await controller.select(destination);
       await tester.pumpAndSettle();
       expect(_title(tester), 'ncloud', reason: title);
-      if (tab == 1) {
+      if (destination == Destination.drive) {
         expect(find.text('Drive'), findsOneWidget);
         expect(find.text('Drive').hitTestable(), findsOneWidget);
       }
     }
-    await controller.selectTab(1);
+    await controller.select(Destination.drive);
     await controller.openFolder(
       controller.items.firstWhere((file) => file.name == 'Photos'),
     );
@@ -122,7 +123,7 @@ void main() {
     final scroll = tester
         .widget<CustomScrollView>(find.byType(CustomScrollView))
         .controller;
-    await tester.tap(find.byKey(const ValueKey('navigate-4')));
+    await tester.tap(find.byKey(const ValueKey('navigate-albums')));
     await tester.pump();
     expect(_slide(tester).position.value.dx, greaterThan(0));
     expect(_fade(tester).opacity.value, lessThan(1));
@@ -137,7 +138,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(_slide(tester).position.value, Offset.zero);
     expect(_fade(tester).opacity.value, 1);
-    await tester.tap(find.byKey(const ValueKey('navigate-0')));
+    await tester.tap(find.byKey(const ValueKey('navigate-timeline')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 70));
     expect(_slide(tester).position.value.dx, lessThan(0));
@@ -151,16 +152,20 @@ void main() {
     tester,
   ) async {
     final controller = await _library(tester, reducedMotion: true);
-    for (final tab in [4, 1, 0]) {
-      await tester.tap(find.byKey(ValueKey('navigate-$tab')));
+    for (final destination in [
+      Destination.albums,
+      Destination.drive,
+      Destination.timeline,
+    ]) {
+      await tester.tap(find.byKey(ValueKey('navigate-${destination.name}')));
       await tester.pump();
-      expect(controller.tab, tab);
+      expect(controller.destination, destination);
       expect(_slide(tester).position.value, Offset.zero);
       expect(_fade(tester).opacity.value, 1);
       await tester.pumpAndSettle();
     }
     await _swipe(tester, -140);
-    expect(controller.tab, 4);
+    expect(controller.destination, Destination.albums);
     expect(_slide(tester).position.value, Offset.zero);
     expect(_fade(tester).opacity.value, 1);
   });
@@ -169,13 +174,19 @@ void main() {
     tester,
   ) async {
     final controller = await _library(tester);
-    for (final tab in [4, 1, 0, 4, 0]) {
-      await tester.tap(find.byKey(ValueKey('navigate-$tab')));
+    for (final destination in [
+      Destination.albums,
+      Destination.drive,
+      Destination.timeline,
+      Destination.albums,
+      Destination.timeline,
+    ]) {
+      await tester.tap(find.byKey(ValueKey('navigate-${destination.name}')));
       await tester.pump(const Duration(milliseconds: 40));
       expect(find.byType(CustomScrollView), findsOneWidget);
     }
     await tester.pumpAndSettle();
-    expect(controller.tab, 0);
+    expect(controller.destination, Destination.timeline);
     expect(_title(tester), 'ncloud');
     expect(_slide(tester).position.value, Offset.zero);
     expect(_fade(tester).opacity.value, 1);
@@ -191,23 +202,23 @@ void main() {
         .controller!;
     await tester.dragFrom(const Offset(205, 650), const Offset(0, -300));
     await tester.pumpAndSettle();
-    expect(controller.tab, 0);
+    expect(controller.destination, Destination.timeline);
     expect(scroll.offset, greaterThan(0));
     final offset = scroll.offset;
     await tester.dragFrom(const Offset(205, 400), const Offset(-45, 0));
     await tester.pumpAndSettle();
-    expect(controller.tab, 0);
+    expect(controller.destination, Destination.timeline);
     expect(scroll.offset, closeTo(offset, 1));
     await tester.dragFrom(const Offset(300, 500), const Offset(-130, -110));
     await tester.pumpAndSettle();
-    expect(controller.tab, 0);
+    expect(controller.destination, Destination.timeline);
   });
 
   testWidgets('horizontal album carousels keep their own gestures', (
     tester,
   ) async {
     final controller = await _library(tester);
-    await tester.tap(find.byKey(const ValueKey('navigate-4')));
+    await tester.tap(find.byKey(const ValueKey('navigate-albums')));
     await tester.pumpAndSettle();
     final carousel = find
         .byWidgetPredicate(
@@ -217,7 +228,7 @@ void main() {
         .first;
     await tester.drag(carousel, const Offset(-160, 0));
     await tester.pumpAndSettle();
-    expect(controller.tab, 4);
+    expect(controller.destination, Destination.albums);
     expect(_title(tester), 'ncloud');
   });
 
@@ -229,7 +240,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(_title(tester), '1 selected');
     await _swipe(tester, -140);
-    expect(controller.tab, 0);
+    expect(controller.destination, Destination.timeline);
     expect(_title(tester), '1 selected');
     await tester.tap(find.byTooltip('Cancel selection'));
     await tester.pumpAndSettle();
@@ -237,7 +248,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField), 'Alpine');
     await _swipe(tester, -140);
-    expect(controller.tab, 0);
+    expect(controller.destination, Destination.timeline);
     expect(find.text('Alpine'), findsOneWidget);
   });
 
@@ -247,7 +258,7 @@ void main() {
     final controller = await _library(tester);
     controller.busy = true;
     await _swipe(tester, -140);
-    expect(controller.tab, 0);
+    expect(controller.destination, Destination.timeline);
     controller.busy = false;
     final first = await tester.startGesture(const Offset(205, 30), pointer: 1);
     await first.moveBy(const Offset(-30, 0));
@@ -257,7 +268,7 @@ void main() {
     await second.up();
     await first.up();
     await tester.pumpAndSettle();
-    expect(controller.tab, 0);
+    expect(controller.destination, Destination.timeline);
     expect(_title(tester), 'ncloud');
   });
 
@@ -265,12 +276,12 @@ void main() {
     tester,
   ) async {
     final controller = await _library(tester);
-    await tester.tap(find.byKey(const ValueKey('navigate-4')));
+    await tester.tap(find.byKey(const ValueKey('navigate-albums')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('View all Albums')));
     await tester.pumpAndSettle();
     await _swipe(tester, -140);
-    expect(controller.tab, 4);
+    expect(controller.destination, Destination.albums);
     expect(_title(tester), 'Albums');
     await tester.tap(find.byTooltip('Back'));
     await tester.pumpAndSettle();
@@ -278,24 +289,24 @@ void main() {
     await controller.openSmartAlbum(['Photos', 'Travel', 'Japan', 'Kyoto']);
     await tester.pumpAndSettle();
     await _swipe(tester, -140);
-    expect(controller.tab, 4);
+    expect(controller.destination, Destination.albums);
     expect(controller.directory, ['Photos', 'Travel', 'Japan', 'Kyoto']);
     await tester.tap(find.byTooltip('Back'));
     await tester.pumpAndSettle();
     expect(_title(tester), 'ncloud');
-    await tester.tap(find.byKey(const ValueKey('navigate-1')));
+    await tester.tap(find.byKey(const ValueKey('navigate-drive')));
     await tester.pumpAndSettle();
     await controller.openFolder(
       controller.items.firstWhere((file) => file.name == 'Photos'),
     );
     await tester.pumpAndSettle();
     await _swipe(tester, 140);
-    expect(controller.tab, 1);
+    expect(controller.destination, Destination.drive);
     expect(controller.directory, ['Photos']);
-    await controller.selectTab(2);
+    await controller.select(Destination.favorites);
     await tester.pumpAndSettle();
     await _swipe(tester, -140);
-    expect(controller.tab, 2);
+    expect(controller.destination, Destination.favorites);
     expect(_title(tester), 'ncloud');
   });
 
@@ -310,12 +321,12 @@ void main() {
     await tester.pumpAndSettle();
     final offset = scroll.offset;
     expect(offset, greaterThan(0));
-    await tester.tap(find.byKey(const ValueKey('navigate-4')));
+    await tester.tap(find.byKey(const ValueKey('navigate-albums')));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('navigate-0')));
+    await tester.tap(find.byKey(const ValueKey('navigate-timeline')));
     await tester.pumpAndSettle();
     expect(scroll.offset, closeTo(offset, 1));
-    await tester.tap(find.byKey(const ValueKey('navigate-0')));
+    await tester.tap(find.byKey(const ValueKey('navigate-timeline')));
     await tester.pumpAndSettle();
     expect(
       scroll.offset,

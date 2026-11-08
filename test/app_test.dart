@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:ncloud/features/library/domain/browse_target.dart';
 import 'package:ncloud/app/app_controller.dart';
 import 'package:ncloud/main.dart';
 import 'package:ncloud/providers/nextcloud/nextcloud_client.dart';
@@ -116,7 +117,7 @@ void main() {
       await controller.load();
       expect(controller.items, hasLength(12));
       expect(controller.items.every((f) => f.isMedia), isTrue);
-      await controller.selectTab(1);
+      await controller.select(Destination.drive);
       expect(controller.items.any((f) => f.name == 'Photos'), isTrue);
       await controller.createFolder('New folder');
       expect(controller.items.any((f) => f.name == 'New folder'), isTrue);

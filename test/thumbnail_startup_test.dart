@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ncloud/features/library/domain/browse_target.dart';
 import 'package:ncloud/app/app_controller.dart';
 import 'package:ncloud/core/cloud/cloud_backend.dart';
 import 'package:ncloud/core/storage/local_cache.dart';
@@ -205,7 +206,7 @@ void main() {
         ..account = account
         ..timelineIndexAvailable = false;
       addTearDown(c.dispose);
-      await c.selectTab(4);
+      await c.select(Destination.albums);
       expect(c.sharedAlbums.map((a) => a.name), [
         'a',
         'b',

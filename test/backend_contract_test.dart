@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ncloud/features/library/domain/browse_target.dart';
 import 'package:ncloud/app/app_controller.dart';
 import 'package:ncloud/features/library/domain/change_monitor.dart';
 import 'package:ncloud/features/library/domain/file_resolver.dart';
@@ -619,7 +620,7 @@ void main() {
     final backend = _QueuedResolutionBackend();
     final controller = AppController(store: _SessionStore(), client: backend)
       ..account = account
-      ..tab = 1;
+      ..target = DriveTarget([]);
     addTearDown(controller.dispose);
     const file = CloudFile(
       path: [CloudFile.pendingRoot, 'opaque:1'],
@@ -711,7 +712,7 @@ void main() {
     final pending = controller.load();
     await backend.pageRequested.future;
     backend.delayedPage = null;
-    await controller.selectTab(2);
+    await controller.select(Destination.favorites);
     final keys = controller.fileStore
         .where((_) => true)
         .map((file) => file.key)
@@ -739,7 +740,7 @@ void main() {
       final backend = _PortableBackend();
       final controller = AppController(store: _SessionStore(), client: backend)
         ..account = account
-        ..tab = 1;
+        ..target = DriveTarget([]);
       addTearDown(controller.dispose);
       await tester.pumpWidget(
         MaterialApp(
