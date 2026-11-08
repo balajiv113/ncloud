@@ -163,18 +163,9 @@ class AppController extends ChangeNotifier {
   Destination get destination => target.destination;
   List<String> get directory => target.path;
   bool get smartAlbumOpen => target is SmartAlbumTarget;
-  CloudAlbum? get activeCloudAlbum => switch (target) {
-    ServerAlbumTarget(:final album) => album,
-    _ => null,
-  };
-  RecognizedPerson? get activePerson => switch (target) {
-    PersonTarget(:final person) => person,
-    _ => null,
-  };
-  List<PhotoMapBounds>? get activeMapBounds => switch (target) {
-    MapAreaTarget(:final bounds) => bounds,
-    _ => null,
-  };
+  CloudAlbum? get activeCloudAlbum => target.serverAlbum;
+  RecognizedPerson? get activePerson => target.person;
+  List<PhotoMapBounds>? get activeMapBounds => target.mapBounds;
   List<CloudFile> items = [];
   String? error;
   String? notice;
@@ -795,16 +786,75 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> load({bool refresh = true}) async {
-    final version = ++_loadVersion;
+    final run = _LoadRun(
+      version: ++_loadVersion,
+      session: account,
+      view: target,
+      refresh: refresh,
+      listingKey: _listingKey(),
+    );
     if (refresh) _initialDays = null;
-    final session = account;
-    final currentDestination = destination;
-    final path = [...directory];
-    final native = activeCloudAlbum;
-    final person = activePerson;
-    final mapBounds = activeMapBounds;
-    final listingKey = _listingKey();
-    final keepItems = listingKey != null && listingKey == _visibleListingKey;
+    final keepItems =
+        run.listingKey != null && run.listingKey == _visibleListingKey;
+    _startLoad(run, keepItems: keepItems);
+    try {
+      if (demo) {
+        _loadDemo(run);
+        return;
+      }
+      final session = run.session;
+      if (session == null) return;
+      if (run.view is AlbumHomeTarget) {
+        await Future.wait([
+          _prepareAlbums(refresh: refresh),
+          _shared.load(refresh: refresh),
+          loadPeople(refresh: refresh),
+        ]);
+        return;
+      }
+      await _restoreStore(session);
+      if (!_isCurrent(run)) return;
+      final cached = await _restoreListing(run, keepItems: keepItems);
+      if (cached == null || cached.fresh) return;
+      final scope = await _checkScope(run, cached);
+      if (scope == null) return;
+      final listing = MediaListing()
+        ..allowCachedDays =
+            !refresh &&
+            (scope.etag == null || scope.etag == cached.previous?.scopeEtag)
+        ..scopeEtag = scope.etag;
+      final loaded = switch (run.view) {
+        OfflineTarget() => await _loadOffline(run, listing),
+        ServerAlbumTarget(:final album) => await _loadServerAlbum(
+          run,
+          listing,
+          album,
+        ),
+        DriveTarget() => await _loadFolder(run, listing),
+        _ => await _loadIndexed(run, listing, cached),
+      };
+      if (!loaded || !_isCurrent(run)) return;
+      await _publishListing(listing, run.listingKey);
+    } catch (e) {
+      if (run.version == _loadVersion) error = errorMessage(e);
+    } finally {
+      if (run.version == _loadVersion) {
+        loading = false;
+        refreshing = false;
+        loadingMore = false;
+        if (destination == Destination.timeline) _queueThumbnailWarmup(items);
+        notifyListeners();
+      }
+    }
+  }
+
+  /// Whether [run] is still the load that should publish: nothing newer has
+  /// started and the account is unchanged.
+  bool _isCurrent(_LoadRun run) =>
+      run.version == _loadVersion && !_disposed && account == run.session;
+
+  /// Shows what is already known for the view while the load runs.
+  void _startLoad(_LoadRun run, {required bool keepItems}) {
     loading = true;
     refreshing = keepItems && items.isNotEmpty;
     loadingMore = false;
@@ -814,264 +864,266 @@ class AppController extends ChangeNotifier {
     _timelineChanges = null;
     _pendingDays.clear();
     if (!keepItems) {
-      final previous = _listings[listingKey];
+      final previous = _listings[run.listingKey];
       items = previous != null
           ? fileStore.resolve(previous.keys)
-          : _seed(currentDestination, path, native);
-      if (currentDestination == Destination.drive &&
-          !FileStore.validChildren(path, items)) {
+          : _seed(run.destination, run.path, run.view.serverAlbum);
+      if (run.destination == Destination.drive &&
+          !FileStore.validChildren(run.path, items)) {
         items = [];
       }
     }
-    _visibleListingKey = listingKey;
+    _visibleListingKey = run.listingKey;
     notifyListeners();
-    try {
-      if (demo) {
-        items = native != null
-            ? _demo.where((f) => f.isMedia && f.favorite).toList()
-            : _demo
-                  .where(
-                    (file) => switch (currentDestination) {
-                      Destination.timeline || Destination.albums =>
-                        file.isMedia &&
-                            pathStartsWith(file.path, path) &&
-                            (_recursiveMedia(currentDestination, path) ||
-                                file.path.length == path.length + 1),
-                      Destination.favorites => file.favorite,
-                      Destination.sharedFolder || Destination.offline => false,
-                      Destination.drive =>
-                        file.path.length == path.length + 1 &&
-                            pathStartsWith(file.path, path),
-                    },
-                  )
-                  .toList();
-        if (currentDestination == Destination.timeline || albumHome) {
-          _libraryFiles = items;
-        }
-        if (albumHome) {
-          nativeAlbums = [
-            const CloudAlbum(
-              name: 'Best days',
-              reference: ['demo-album'],
-              count: 3,
-            ),
-          ];
-        }
-        return;
+  }
+
+  void _loadDemo(_LoadRun run) {
+    final path = run.path;
+    items = run.view.serverAlbum != null
+        ? _demo.where((f) => f.isMedia && f.favorite).toList()
+        : _demo
+              .where(
+                (file) => switch (run.destination) {
+                  Destination.timeline || Destination.albums =>
+                    file.isMedia &&
+                        pathStartsWith(file.path, path) &&
+                        (_recursiveMedia(run.destination, path) ||
+                            file.path.length == path.length + 1),
+                  Destination.favorites => file.favorite,
+                  Destination.sharedFolder || Destination.offline => false,
+                  Destination.drive =>
+                    file.path.length == path.length + 1 &&
+                        pathStartsWith(file.path, path),
+                },
+              )
+              .toList();
+    if (run.destination == Destination.timeline || albumHome) {
+      _libraryFiles = items;
+    }
+    if (albumHome) {
+      nativeAlbums = [
+        const CloudAlbum(
+          name: 'Best days',
+          reference: ['demo-album'],
+          count: 3,
+        ),
+      ];
+    }
+  }
+
+  /// Reads the view's remembered listing from memory or disk and shows it. A
+  /// listing that is still fresh is published as is, which ends the load; null
+  /// means the load was superseded.
+  Future<_CachedListing?> _restoreListing(
+    _LoadRun run, {
+    required bool keepItems,
+  }) async {
+    final key = run.listingKey;
+    MediaListing? previous = key == null ? null : _listings[key];
+    if (previous == null && key != null) {
+      final document = await cache?.readDocument(key);
+      if (!_isCurrent(run)) return null;
+      if (document != null) previous = MediaListing.fromJson(document);
+    }
+    var known = previous == null ? null : fileStore.resolve(previous.keys);
+    if (previous?.days != null) timelineIndexAvailable ??= true;
+    if (previous != null &&
+        known!.length != previous.keys.length &&
+        key != null) {
+      final persisted = await cache?.readListing(key);
+      if (!_isCurrent(run)) return null;
+      if (persisted != null) {
+        fileStore.putAll(persisted);
+        known = fileStore.resolve(previous.keys);
       }
-      if (session == null) return;
-      if (albumHome) {
-        await Future.wait([
-          _prepareAlbums(refresh: refresh),
-          _shared.load(refresh: refresh),
-          loadPeople(refresh: refresh),
-        ]);
-        return;
+    }
+    if (run.destination == Destination.drive &&
+        known != null &&
+        !FileStore.validChildren(run.path, known)) {
+      previous = null;
+      known = null;
+      items = [];
+    }
+    if (previous != null && known!.length == previous.keys.length) {
+      items = known;
+      refreshing = true;
+      _hydrate(items.take(_hydrateLimit));
+      notifyListeners();
+      if (!run.refresh &&
+          previous.fresh(fileStore) &&
+          run.destination != Destination.offline) {
+        if (previous.days != null) timelineIndexAvailable ??= true;
+        _activeListing = previous;
+        _listings[key!] = previous;
+        hasMore = previous.more;
+        if (run.destination == Destination.timeline) _libraryFiles = items;
+        return _CachedListing(previous, known, fresh: true);
       }
-      await _restoreStore(session);
-      if (version != _loadVersion) return;
-      MediaListing? previous = listingKey == null
-          ? null
-          : _listings[listingKey];
-      if (previous == null && listingKey != null) {
-        final document = await cache?.readDocument(listingKey);
-        if (version != _loadVersion) return;
-        if (document != null) previous = MediaListing.fromJson(document);
-      }
-      var known = previous == null ? null : fileStore.resolve(previous.keys);
-      if (previous?.days != null) timelineIndexAvailable ??= true;
-      if (previous != null &&
-          known!.length != previous.keys.length &&
-          listingKey != null) {
-        final persisted = await cache?.readListing(listingKey);
-        if (version != _loadVersion) return;
-        if (persisted != null) {
-          fileStore.putAll(persisted);
-          known = fileStore.resolve(previous.keys);
-        }
-      }
-      if (currentDestination == Destination.drive &&
-          known != null &&
-          !FileStore.validChildren(path, known)) {
-        previous = null;
-        known = null;
-        items = [];
-      }
-      if (previous != null && known!.length == previous.keys.length) {
-        items = known;
+    } else if (key != null) {
+      final cached = await cache?.readListing(key);
+      if (!_isCurrent(run)) return null;
+      if (cached != null) fileStore.putAll(cached);
+      final seed = run.destination == Destination.drive && cached != null
+          ? {
+              for (final file in cached)
+                if (file.path.length == run.path.length + 1 &&
+                    pathStartsWith(file.path, run.path))
+                  file.key: file,
+            }.values.toList()
+          : cached ?? _seed(run.destination, run.path, run.view.serverAlbum);
+      if (seed.isNotEmpty && !keepItems) {
+        items = seed;
         refreshing = true;
         _hydrate(items.take(_hydrateLimit));
         notifyListeners();
-        if (!refresh &&
-            previous.fresh(fileStore) &&
-            currentDestination != Destination.offline) {
-          if (previous.days != null) timelineIndexAvailable ??= true;
-          _activeListing = previous;
-          _listings[listingKey!] = previous;
-          hasMore = previous.more;
-          if (currentDestination == Destination.timeline) _libraryFiles = items;
-          return;
-        }
-      } else if (listingKey != null) {
-        final cached = await cache?.readListing(listingKey);
-        if (version != _loadVersion) return;
-        if (cached != null) fileStore.putAll(cached);
-        final seed = currentDestination == Destination.drive && cached != null
-            ? {
-                for (final file in cached)
-                  if (file.path.length == path.length + 1 &&
-                      pathStartsWith(file.path, path))
-                    file.key: file,
-              }.values.toList()
-            : cached ?? _seed(currentDestination, path, native);
-        if (seed.isNotEmpty && !keepItems) {
-          items = seed;
-          refreshing = true;
-          _hydrate(items.take(_hydrateLimit));
-          notifyListeners();
-        }
-      }
-      String? scopeEtag;
-      if (cache != null &&
-          currentDestination == Destination.albums &&
-          smartAlbumOpen &&
-          native == null &&
-          person == null &&
-          mapBounds == null) {
-        scopeEtag = (await client.listFolder(
-          session,
-          path,
-          metadataOnly: true,
-          optional: true,
-        )).revision;
-        if (version != _loadVersion || _disposed) return;
-        if (!refresh &&
-            previous != null &&
-            known?.length == previous.keys.length &&
-            scopeEtag != null &&
-            scopeEtag == previous.scopeEtag) {
-          previous.updated = DateTime.now();
-          previous.staleDays.clear();
-          await _publishListing(previous, listingKey);
-          return;
-        }
-      }
-      final listing = MediaListing()
-        ..allowCachedDays =
-            !refresh && (scopeEtag == null || scopeEtag == previous?.scopeEtag);
-      listing.scopeEtag = scopeEtag;
-      if (currentDestination == Destination.offline) {
-        final saved = await cache?.readOfflineListing(_offlineListingKey) ?? [];
-        final available = <CloudFile>[];
-        for (final file in saved) {
-          if (await offlineCopy(file) != null) available.add(file);
-        }
-        if (version != _loadVersion || account != session || _disposed) return;
-        listing.add(fileStore, available);
-      } else if (native != null) {
-        final members = await client.albumFiles(session, native);
-        if (version != _loadVersion || account != session || _disposed) return;
-        listing.add(fileStore, reconcileAlbumMembers(members, _libraryFiles));
-      } else if (currentDestination == Destination.drive) {
-        final files = await _listFolder(
-          session,
-          path,
-          force: refresh,
-          isCurrent: () => version == _loadVersion,
-        );
-        if (version != _loadVersion || account != session || _disposed) return;
-        listing.add(fileStore, files);
-      } else {
-        if (currentDestination != Destination.sharedFolder) {
-          await _ensureTimelineIndex(session);
-        }
-        if (version != _loadVersion) return;
-        if (person != null && timelineIndexAvailable != true) {
-          throw const CloudException(
-            'This server does not support browsing people.',
-          );
-        }
-        if (mapBounds != null && timelineIndexAvailable != true) {
-          throw const CloudException(
-            'This server does not support browsing the photo map.',
-          );
-        }
-        if (timelineIndexAvailable == true &&
-            currentDestination != Destination.sharedFolder) {
-          listing.days =
-              mapBounds == null &&
-                  currentDestination == Destination.timeline &&
-                  _initialDays != null
-              ? _initialDays
-              : (await client.timeline(
-                  session,
-                  TimelineQuery(
-                    path: path,
-                    favorites: currentDestination == Destination.favorites,
-                    recursive: _recursiveMedia(currentDestination, path),
-                    person: person,
-                    mapBounds: mapBounds,
-                  ),
-                ))?.days;
-          if (version != _loadVersion || account != session || _disposed) {
-            return;
-          }
-          _initialDays = null;
-        }
-        listing.more = true;
-        final previousDays = previous?.days;
-        if (listing.days case final days? when listing.allowCachedDays) {
-          if (previousDays != null &&
-              !previous!.updated.isBefore(fileStore.staleBefore)) {
-            // Keep days whose index entry and cached files are unchanged so
-            // revalidation only downloads days that actually changed.
-            final before = {for (final day in previousDays) day.id: day.count};
-            final byDay = <int, List<CloudFile>>{};
-            for (final file in known ?? <CloudFile>[]) {
-              if (file.captureDay case final day?) {
-                byDay.putIfAbsent(day, () => []).add(file);
-              }
-            }
-            for (final day in days) {
-              final files = byDay[day.id] ?? const <CloudFile>[];
-              if (previous.loaded.contains(day.id) &&
-                  !previous.staleDays.contains(day.id) &&
-                  before[day.id] == day.count &&
-                  files.length == day.count) {
-                listing.add(fileStore, files);
-                listing.loaded.add(day.id);
-              }
-            }
-            listing.more = days.any((d) => !listing.loaded.contains(d.id));
-          }
-        }
-        if (version != _loadVersion) return;
-        if (listing.loaded.isEmpty) {
-          final page = await _nextPage(
-            listing,
-            session,
-            currentDestination,
-            path,
-          );
-          if (version != _loadVersion || account != session || _disposed) {
-            return;
-          }
-          _mergePage(listing, page);
-        }
-      }
-      if (version != _loadVersion || _disposed) return;
-      await _publishListing(listing, listingKey);
-    } catch (e) {
-      if (version == _loadVersion) error = errorMessage(e);
-    } finally {
-      if (version == _loadVersion) {
-        loading = false;
-        refreshing = false;
-        loadingMore = false;
-        if (destination == Destination.timeline) _queueThumbnailWarmup(items);
-        notifyListeners();
       }
     }
+    return _CachedListing(previous, known);
+  }
+
+  /// For an opened Smart album, asks the folder's revision. An unchanged
+  /// folder republishes the remembered listing and returns null; otherwise
+  /// the revision is returned for the new listing.
+  Future<({String? etag})?> _checkScope(
+    _LoadRun run,
+    _CachedListing cached,
+  ) async {
+    if (cache == null || run.view is! SmartAlbumTarget) return (etag: null);
+    final etag = (await client.listFolder(
+      run.session!,
+      run.path,
+      metadataOnly: true,
+      optional: true,
+    )).revision;
+    if (!_isCurrent(run)) return null;
+    final previous = cached.previous;
+    if (!run.refresh &&
+        previous != null &&
+        cached.known?.length == previous.keys.length &&
+        etag != null &&
+        etag == previous.scopeEtag) {
+      previous.updated = DateTime.now();
+      previous.staleDays.clear();
+      await _publishListing(previous, run.listingKey);
+      return null;
+    }
+    return (etag: etag);
+  }
+
+  Future<bool> _loadOffline(_LoadRun run, MediaListing listing) async {
+    final saved = await cache?.readOfflineListing(_offlineListingKey) ?? [];
+    final available = <CloudFile>[];
+    for (final file in saved) {
+      if (await offlineCopy(file) != null) available.add(file);
+    }
+    if (!_isCurrent(run)) return false;
+    listing.add(fileStore, available);
+    return true;
+  }
+
+  Future<bool> _loadServerAlbum(
+    _LoadRun run,
+    MediaListing listing,
+    CloudAlbum album,
+  ) async {
+    final members = await client.albumFiles(run.session!, album);
+    if (!_isCurrent(run)) return false;
+    listing.add(fileStore, reconcileAlbumMembers(members, _libraryFiles));
+    return true;
+  }
+
+  Future<bool> _loadFolder(_LoadRun run, MediaListing listing) async {
+    final files = await _listFolder(
+      run.session!,
+      run.path,
+      force: run.refresh,
+      isCurrent: () => run.version == _loadVersion,
+    );
+    if (!_isCurrent(run)) return false;
+    listing.add(fileStore, files);
+    return true;
+  }
+
+  /// Timeline-like views: the day index when the server has one, then the
+  /// first batch of photos. Days whose index entry and files are unchanged
+  /// since the remembered listing are reused.
+  Future<bool> _loadIndexed(
+    _LoadRun run,
+    MediaListing listing,
+    _CachedListing cached,
+  ) async {
+    final session = run.session!;
+    final view = run.view;
+    if (run.destination != Destination.sharedFolder) {
+      await _ensureTimelineIndex(session);
+    }
+    if (!_isCurrent(run)) return false;
+    if (view is PersonTarget && timelineIndexAvailable != true) {
+      throw const CloudException(
+        'This server does not support browsing people.',
+      );
+    }
+    if (view is MapAreaTarget && timelineIndexAvailable != true) {
+      throw const CloudException(
+        'This server does not support browsing the photo map.',
+      );
+    }
+    if (timelineIndexAvailable == true &&
+        run.destination != Destination.sharedFolder) {
+      listing.days = view is TimelineTarget && _initialDays != null
+          ? _initialDays
+          : (await client.timeline(
+              session,
+              TimelineQuery(
+                path: run.path,
+                favorites: run.destination == Destination.favorites,
+                recursive: _recursiveMedia(run.destination, run.path),
+                person: view.person,
+                mapBounds: view.mapBounds,
+              ),
+            ))?.days;
+      if (!_isCurrent(run)) return false;
+      _initialDays = null;
+    }
+    listing.more = true;
+    _reuseLoadedDays(listing, cached);
+    if (listing.loaded.isEmpty) {
+      final page = await _nextPage(listing, session, run.destination, run.path);
+      if (!_isCurrent(run)) return false;
+      _mergePage(listing, page);
+    }
+    return true;
+  }
+
+  /// Keeps days whose index entry and cached files are unchanged so
+  /// revalidation only downloads days that actually changed.
+  void _reuseLoadedDays(MediaListing listing, _CachedListing cached) {
+    final previous = cached.previous;
+    final days = listing.days;
+    if (days == null || !listing.allowCachedDays) return;
+    final previousDays = previous?.days;
+    if (previousDays == null ||
+        previous!.updated.isBefore(fileStore.staleBefore)) {
+      return;
+    }
+    final before = {for (final day in previousDays) day.id: day.count};
+    final byDay = <int, List<CloudFile>>{};
+    for (final file in cached.known ?? <CloudFile>[]) {
+      if (file.captureDay case final day?) {
+        byDay.putIfAbsent(day, () => []).add(file);
+      }
+    }
+    for (final day in days) {
+      final files = byDay[day.id] ?? const <CloudFile>[];
+      if (previous.loaded.contains(day.id) &&
+          !previous.staleDays.contains(day.id) &&
+          before[day.id] == day.count &&
+          files.length == day.count) {
+        listing.add(fileStore, files);
+        listing.loaded.add(day.id);
+      }
+    }
+    listing.more = days.any((d) => !listing.loaded.contains(d.id));
   }
 
   /// Files the shared store already knows for a view, shown instantly while
@@ -2569,4 +2621,35 @@ class AppController extends ChangeNotifier {
     unawaited(cache?.close());
     super.dispose();
   }
+}
+
+/// One load of the library: the view it was started for, and what it needs to
+/// tell whether it has been superseded.
+class _LoadRun {
+  _LoadRun({
+    required this.version,
+    required this.session,
+    required this.view,
+    required this.refresh,
+    required this.listingKey,
+  });
+
+  final int version;
+  final Account? session;
+  final BrowseTarget view;
+  final bool refresh;
+  final String? listingKey;
+
+  Destination get destination => view.destination;
+  List<String> get path => view.path;
+}
+
+/// What was remembered for a view before loading it again. [fresh] means it
+/// was current and has already been shown, so there is nothing to fetch.
+class _CachedListing {
+  _CachedListing(this.previous, this.known, {this.fresh = false});
+
+  final MediaListing? previous;
+  final List<CloudFile>? known;
+  final bool fresh;
 }
