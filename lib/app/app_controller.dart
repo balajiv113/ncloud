@@ -18,10 +18,11 @@ import '../features/library/media_listing.dart';
 import '../features/library/file_resolver.dart';
 import '../features/library/library_mutations.dart';
 import '../features/library/original_transfers.dart';
-import '../features/library/preview_memory.dart';
 import '../features/library/share_session.dart';
 import '../features/photos/photo_map_session.dart';
-import '../features/library/preview_batcher.dart';
+import '../features/library/preview_batcher.dart' show PreviewCancelled;
+import '../features/library/cached_resource.dart';
+import '../features/library/thumbnail_repository.dart';
 import '../core/cloud/cloud_backend.dart';
 import '../features/backup/workmanager_backup.dart';
 import '../features/backup/sync_schedule.dart';
@@ -134,15 +135,13 @@ class AppController extends ChangeNotifier {
       activePerson == null &&
       activeMapBounds == null;
   List<PhotoMapBounds>? activeMapBounds;
-  List<RecognizedPerson> people = [];
+  List<RecognizedPerson> get people => _people.value;
+  @visibleForTesting
+  set people(List<RecognizedPerson> value) => _people.value = value;
   RecognizedPerson? activePerson;
-  bool loadingPeople = false;
-  bool? peopleAvailable;
-  String? peopleError;
-  DateTime? _peopleUpdated;
-  Future<void>? _peopleTask;
-  int _peopleVersion = 0;
-  final Map<String, int> _facePreviewGenerations = {};
+  bool get loadingPeople => _people.loading;
+  bool? get peopleAvailable => _people.available;
+  String? get peopleError => _people.error;
   List<TimelineDay> get indexedDays => _activeListing?.days ?? [];
   List<CloudFile> _libraryFiles = [];
   List<CloudAlbum> nativeAlbums = [];
@@ -150,12 +149,9 @@ class AppController extends ChangeNotifier {
   bool smartAlbumOpen = false;
   String? nativeAlbumError;
   String? catalogueError;
-  final List<SmartAlbum> sharedAlbums = [];
-  String? sharedAlbumError;
-  bool loadingSharedAlbums = false;
-  DateTime? _sharedAlbumsUpdated;
-  Future<void>? _sharedAlbumsTask;
-  int _sharedAlbumsVersion = 0;
+  List<SmartAlbum> get sharedAlbums => _shared.value;
+  String? get sharedAlbumError => _shared.error;
+  bool get loadingSharedAlbums => _shared.loading;
   bool get sharedAlbumHome => tab == 5 && directory.isEmpty;
   List<String>? _demoPhotoRoot;
   List<String>? _autoPhotoRoot;
@@ -181,21 +177,85 @@ class AppController extends ChangeNotifier {
   bool _disposed = false;
   List<CloudFile> _demo = [];
 
-  /// Decoded-ready thumbnails keyed by file id and size, each tagged with
-  /// the file version it was rendered from. Survives revisions so a stale
-  /// thumbnail stays on screen until its replacement arrives.
-  static const thumbnailMemoryBudget = 64 * 1024 * 1024;
-  final PreviewMemory _thumbs = PreviewMemory(
-    byteBudget: thumbnailMemoryBudget,
-  );
-  final Map<String, Future<Uint8List>> _previewLoads = {};
-  final Map<String, int> _previewInterest = {};
-  int _previewGeneration = 0;
-  late final PreviewBatcher _previewBatcher = PreviewBatcher(
+  /// Every screen's photo and face thumbnails: memory, then disk, then server.
+  late final ThumbnailRepository _thumbnails = ThumbnailRepository(
     client: client,
-    session: () => account,
-    active: () => _browsingActive && !_disposed,
-    interested: (key) => (_previewInterest[key] ?? 0) > 0,
+    cache: cache,
+    account: () => account,
+    active: () => _browsingActive,
+    batchAvailable: () => timelineIndexAvailable == true,
+    offlineOriginal: offlineCopy,
+  );
+  ThumbnailRepository get thumbnails => _thumbnails;
+
+  /// Recognize clusters, revalidated at most every five minutes.
+  late final CachedResource<List<RecognizedPerson>> _people = CachedResource(
+    empty: const [],
+    freshFor: const Duration(minutes: 5),
+    account: () => account,
+    disposed: () => _disposed,
+    cache: cache,
+    key: (session) => 'people-v2|${session.storageKey}',
+    fetch: (session, _) => client.people(session, optional: true),
+    encode: (people, _) => {
+      'people': [for (final person in people) person.toJson()],
+    },
+    decode: (document) {
+      final rows = document['people'];
+      if (rows is! List) {
+        throw const FormatException('Unsupported cached people list.');
+      }
+      return (
+        value: [
+          for (final row in rows)
+            if (row is Map<String, dynamic>)
+              RecognizedPerson.fromJson(row)
+            else
+              throw const FormatException('Unsupported cached person.'),
+        ]..sort(RecognizedPerson.compareByCount),
+        updated: null,
+      );
+    },
+    onChanged: notifyListeners,
+    onRestored: (people) =>
+        unawaited(Future.wait(people.map(_thumbnails.restoreFace))),
+    replace: (old, next) async {
+      final byId = {for (final person in next) person.id: person};
+      for (final previous in old) {
+        final replacement = byId[previous.id];
+        if (replacement == null ||
+            !_thumbnails.sameFace(previous, replacement)) {
+          await _thumbnails.forgetFace(previous);
+        }
+      }
+    },
+    onDamaged: () => notice =
+        'The saved People list was damaged. Reloading from your server.',
+  );
+
+  /// Albums from folders shared with this account, reused for 15 minutes.
+  late final CachedResource<List<SmartAlbum>> _shared = CachedResource(
+    empty: const [],
+    freshFor: const Duration(minutes: 15),
+    account: () => account,
+    disposed: () => _disposed,
+    cache: cache,
+    key: (session) => 'incoming-albums-v1|${session.storageKey}',
+    fetch: _fetchSharedAlbums,
+    encode: (albums, updated) => {
+      'updated': updated.toIso8601String(),
+      'albums': [for (final album in albums) album.toJson()],
+    },
+    decode: (document) => (
+      value: [
+        for (final album in document['albums'] as List)
+          SmartAlbum.fromJson((album as Map).cast<String, dynamic>()),
+      ],
+      updated: DateTime.parse(document['updated'] as String),
+    ),
+    onChanged: notifyListeners,
+    onRestored: (albums) =>
+        _hydrate(albums.expand((album) => album.files.take(1))),
   );
   late final FileResolver _fileResolver = FileResolver(
     client: client,
@@ -220,7 +280,7 @@ class AppController extends ChangeNotifier {
     if (!active) {
       _thumbnailWarmupTimer?.cancel();
       _thumbnailWarmupTimer = null;
-      _previewBatcher.pause();
+      _thumbnails.pause();
     } else {
       _scheduleThumbnailWarmup();
       if (!_fetchingDays && _pendingDays.isNotEmpty && error == null) {
@@ -291,7 +351,7 @@ class AppController extends ChangeNotifier {
       final preparation = _prepareLibrary();
       unawaited(_prepareAlbums());
       unawaited(loadPeople());
-      unawaited(_prepareSharedAlbums(refresh: false));
+      unawaited(_shared.load());
       await preparation;
       try {
         await cache?.trim();
@@ -412,7 +472,7 @@ class AppController extends ChangeNotifier {
       final preparation = _prepareLibrary();
       unawaited(_prepareAlbums());
       unawaited(loadPeople());
-      unawaited(_prepareSharedAlbums(refresh: false));
+      unawaited(_shared.load());
       await preparation;
     } finally {
       _savingAccount = false;
@@ -630,12 +690,7 @@ class AppController extends ChangeNotifier {
       _catalogueEtag = null;
       _catalogueTask = null;
       _catalogueSession = null;
-      sharedAlbums.clear();
-      sharedAlbumError = null;
-      loadingSharedAlbums = false;
-      _sharedAlbumsUpdated = null;
-      _sharedAlbumsTask = null;
-      _sharedAlbumsVersion++;
+      _shared.reset();
       catalogueError = null;
       timelineIndexAvailable = null;
       _initialDays = null;
@@ -644,13 +699,7 @@ class AppController extends ChangeNotifier {
       activeCloudAlbum = null;
       activePerson = null;
       activeMapBounds = null;
-      people = [];
-      loadingPeople = false;
-      peopleAvailable = null;
-      peopleError = null;
-      _peopleUpdated = null;
-      _peopleTask = null;
-      _peopleVersion++;
+      _people.reset();
       smartAlbumOpen = false;
       _demoPhotoRoot = null;
       _autoPhotoRoot = null;
@@ -847,13 +896,13 @@ class AppController extends ChangeNotifier {
       }
       if (session == null) return;
       if (sharedAlbumHome) {
-        await _prepareSharedAlbums(refresh: refresh);
+        await _shared.load(refresh: refresh);
         return;
       }
       if (albumHome) {
         await Future.wait([
           _prepareAlbums(refresh: refresh),
-          _prepareSharedAlbums(refresh: refresh),
+          _shared.load(refresh: refresh),
           loadPeople(refresh: refresh),
         ]);
         return;
@@ -890,6 +939,7 @@ class AppController extends ChangeNotifier {
       if (previous != null && known!.length == previous.keys.length) {
         items = known;
         refreshing = true;
+        _hydrate(items.take(_hydrateLimit));
         notifyListeners();
         if (!refresh && previous.fresh(fileStore) && currentTab != 6) {
           if (previous.days != null) timelineIndexAvailable ??= true;
@@ -914,6 +964,7 @@ class AppController extends ChangeNotifier {
         if (seed.isNotEmpty && !keepItems) {
           items = seed;
           refreshing = true;
+          _hydrate(items.take(_hydrateLimit));
           notifyListeners();
         }
       }
@@ -1718,183 +1769,17 @@ class AppController extends ChangeNotifier {
         '${activeMapBounds == null ? '' : '|map:${activeMapBounds!.map((b) => b.query).join(';')}'}';
   }
 
-  Future<void> loadPeople({bool refresh = false}) async {
-    final session = account;
-    if (demo || session == null || _disposed) return;
-    if (_peopleTask case final pending? when !refresh) return pending;
-    if (!refresh &&
-        _peopleUpdated != null &&
-        DateTime.now().difference(_peopleUpdated!) <
-            const Duration(minutes: 5)) {
-      return;
-    }
-    final generation = ++_peopleVersion;
-    final key = 'people-v2|${session.storageKey}';
-    bool current() =>
-        !_disposed &&
-        generation == _peopleVersion &&
-        (account?.sameOwner(session) ?? false);
-    loadingPeople = true;
-    peopleError = null;
-    notifyListeners();
-    final task = () async {
-      try {
-        if (people.isEmpty && !refresh) {
-          final saved = await cache?.readDocument(key);
-          if (!current()) return;
-          if (saved != null) {
-            try {
-              final rows = saved['people'];
-              if (rows is! List) {
-                throw const FormatException('Unsupported cached people list.');
-              }
-              people = [
-                for (final row in rows)
-                  if (row is Map<String, dynamic>)
-                    RecognizedPerson.fromJson(row)
-                  else
-                    throw const FormatException('Unsupported cached person.'),
-              ]..sort(RecognizedPerson.compareByCount);
-            } on FormatException {
-              notice =
-                  'The saved People list was damaged. Reloading from your server.';
-            }
-            notifyListeners();
-          }
-        }
-        final result = await client.people(session, optional: true);
-        if (!current()) return;
-        final next = {
-          for (final person in result ?? <RecognizedPerson>[])
-            person.id: person,
-        };
-        for (final previous in people) {
-          final replacement = next[previous.id];
-          if (replacement == null ||
-              _personPreviewVersion(previous) !=
-                  _personPreviewVersion(replacement)) {
-            final faceKey = _personPreviewKey(previous)!;
-            _thumbs.remove(faceKey);
-            _facePreviewGenerations.remove(faceKey);
-            await cache?.removeThumbnail(faceKey);
-            if (!current()) return;
-          }
-        }
-        peopleAvailable = result != null;
-        people = result ?? [];
-        _peopleUpdated = DateTime.now();
-        await cache?.writeDocument(key, {
-          'people': [for (final person in people) person.toJson()],
-        });
-      } catch (e) {
-        if (current()) peopleError = errorMessage(e);
-      } finally {
-        if (current()) {
-          loadingPeople = false;
-          notifyListeners();
-        }
-      }
-    }();
-    _peopleTask = task;
-    try {
-      await task;
-    } finally {
-      if (identical(_peopleTask, task)) _peopleTask = null;
-    }
-  }
+  Future<void> loadPeople({bool refresh = false}) =>
+      demo ? Future.value() : _people.load(refresh: refresh);
 
-  String? _personPreviewKey(RecognizedPerson person) {
-    final session = account;
-    return session == null
-        ? null
-        : 'face-v1|${session.storageKey}|${Uri.encodeComponent(person.id)}';
-  }
+  Uint8List? cachedPersonPreview(RecognizedPerson person) =>
+      _thumbnails.cachedFace(person);
 
-  String _personPreviewVersion(RecognizedPerson person) =>
-      '${Uri.encodeComponent(person.cover ?? '')}|${person.coverEtag ?? ''}';
+  Future<Uint8List?> restorePersonPreview(RecognizedPerson person) =>
+      _thumbnails.restoreFace(person);
 
-  Uint8List? cachedPersonPreview(RecognizedPerson person) {
-    final saved = _thumbs.peek(_personPreviewKey(person));
-    return saved?.version == _personPreviewVersion(person)
-        ? saved?.bytes
-        : null;
-  }
-
-  Future<Uint8List?> restorePersonPreview(RecognizedPerson person) async {
-    final generation = _peopleVersion;
-    final key = _personPreviewKey(person);
-    if (key == null) return null;
-    if (cachedPersonPreview(person) case final saved?) return saved;
-    final saved = await cache?.readThumbnail(key);
-    if (saved == null ||
-        saved.version != _personPreviewVersion(person) ||
-        generation != _peopleVersion ||
-        key != _personPreviewKey(person) ||
-        _disposed) {
-      return null;
-    }
-    _rememberPreview(key, saved.bytes, saved.version);
-    return saved.bytes;
-  }
-
-  Future<Uint8List> personPreview(RecognizedPerson person) async {
-    final session = account;
-    final generation = _peopleVersion;
-    final key = _personPreviewKey(person);
-    if (session == null || key == null) {
-      throw const CloudException('Sign in to load people.');
-    }
-    final version = _personPreviewVersion(person);
-    if (_thumbs.peek(key) case final saved?
-        when saved.version == version &&
-            _facePreviewGenerations[key] == generation) {
-      return saved.bytes;
-    }
-    final loadKey = '$key|$version|$generation';
-    if (_previewLoads[loadKey] case final pending?) return pending;
-    final task = () async {
-      Uint8List bytes;
-      try {
-        bytes = await client.personPreview(session, person);
-      } on CloudException catch (error) {
-        if (generation == _peopleVersion &&
-            key == _personPreviewKey(person) &&
-            !_disposed &&
-            (error.statusCode == 404 || error.statusCode == 410)) {
-          _thumbs.remove(key);
-          _facePreviewGenerations.remove(key);
-          await cache?.removeThumbnail(key);
-        }
-        rethrow;
-      }
-      if (generation != _peopleVersion ||
-          key != _personPreviewKey(person) ||
-          _disposed) {
-        throw const PreviewCancelled();
-      }
-      _rememberPreview(key, bytes, version);
-      _facePreviewGenerations.remove(key);
-      _facePreviewGenerations[key] = generation;
-      while (_facePreviewGenerations.length > 4000) {
-        _facePreviewGenerations.remove(_facePreviewGenerations.keys.first);
-      }
-      await cache?.writeThumbnail(key, bytes, version: version);
-      if (generation != _peopleVersion ||
-          key != _personPreviewKey(person) ||
-          _disposed) {
-        throw const PreviewCancelled();
-      }
-      return bytes;
-    }();
-    _previewLoads[loadKey] = task;
-    try {
-      return await task;
-    } finally {
-      if (identical(_previewLoads[loadKey], task)) {
-        _previewLoads.remove(loadKey);
-      }
-    }
-  }
+  Future<Uint8List> personPreview(RecognizedPerson person) =>
+      _thumbnails.face(person);
 
   Future<void> _prepareAlbums({bool refresh = false}) async {
     final session = account;
@@ -1925,95 +1810,32 @@ class AppController extends ChangeNotifier {
     }
   }
 
-  Future<void> _prepareSharedAlbums({required bool refresh}) async {
-    final pending = _sharedAlbumsTask;
-    if (!refresh && pending != null) return pending;
-    final session = account!;
-    final generation = ++_sharedAlbumsVersion;
-    final task = () async {
-      final key = 'incoming-albums-v1|${session.storageKey}';
-      sharedAlbumError = null;
-      loadingSharedAlbums = true;
-      notifyListeners();
-      try {
-        if (_sharedAlbumsUpdated == null) {
-          final saved = await cache?.readDocument(key);
-          if (account != session ||
-              generation != _sharedAlbumsVersion ||
-              _disposed) {
-            return;
-          }
-          if (saved != null) {
-            sharedAlbums
-              ..clear()
-              ..addAll(
-                (saved['albums'] as List).map(
-                  (a) =>
-                      SmartAlbum.fromJson((a as Map).cast<String, dynamic>()),
-                ),
-              );
-            _sharedAlbumsUpdated = DateTime.parse(saved['updated'] as String);
-            notifyListeners();
-          }
-        }
-        if (!refresh &&
-            _sharedAlbumsUpdated != null &&
-            DateTime.now().difference(_sharedAlbumsUpdated!) <
-                const Duration(minutes: 15)) {
-          return;
-        }
-        final folders = await client.incomingSharedFolders(session);
-        final found = <SmartAlbum>[];
-        for (final path in folders) {
-          if (account != session ||
-              generation != _sharedAlbumsVersion ||
-              _disposed) {
-            return;
-          }
-          final covers = (await client.timeline(
-            session,
-            TimelineQuery.page(path: path, limit: 1),
-          ))!.items!;
-          if (covers.isNotEmpty) {
-            found.add(SmartAlbum(path: path, files: covers));
-          }
-        }
-        if (account != session ||
-            generation != _sharedAlbumsVersion ||
-            _disposed) {
-          return;
-        }
-        found.sort(
-          (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
-        );
-        sharedAlbums
-          ..clear()
-          ..addAll(found);
-        _sharedAlbumsUpdated = DateTime.now();
-        notifyListeners();
-        await cache?.writeDocument(key, {
-          'updated': _sharedAlbumsUpdated!.toIso8601String(),
-          'albums': sharedAlbums.map((a) => a.toJson()).toList(),
-        });
-      } catch (e) {
-        if (account == session &&
-            generation == _sharedAlbumsVersion &&
-            !_disposed) {
-          sharedAlbumError = errorMessage(e);
-          notifyListeners();
-        }
-      }
-    }();
-    _sharedAlbumsTask = task;
-    try {
-      await task;
-    } finally {
-      if (identical(_sharedAlbumsTask, task)) {
-        _sharedAlbumsTask = null;
-        loadingSharedAlbums = false;
-        notifyListeners();
-      }
+  static const _coverLookups = 4;
+
+  Future<List<SmartAlbum>> _fetchSharedAlbums(
+    Account session,
+    bool Function() current,
+  ) async {
+    final folders = await client.incomingSharedFolders(session);
+    final found = <SmartAlbum>[];
+    for (var start = 0; start < folders.length; start += _coverLookups) {
+      if (!current()) return found;
+      final batch = await Future.wait([
+        for (final path in folders.skip(start).take(_coverLookups))
+          () async {
+            final covers = (await client.timeline(
+              session,
+              TimelineQuery.page(path: path, limit: 1),
+            ))!.items!;
+            return covers.isEmpty
+                ? null
+                : SmartAlbum(path: path, files: covers);
+          }(),
+      ]);
+      found.addAll(batch.nonNulls);
     }
+    return found
+      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
   }
 
   Future<void> _loadCatalogue(Account session, {required bool refresh}) async {
@@ -2084,6 +1906,10 @@ class AppController extends ChangeNotifier {
             shared: item['shared'] as bool,
           );
         }).toList();
+        _hydrate([
+          ..._catalogue.expand((album) => album.files.take(1)),
+          ...nativeAlbums.map((album) => album.cover).nonNulls,
+        ]);
         notifyListeners();
         final updated = DateTime.tryParse(saved['updated'] as String? ?? '');
         _catalogueUpdated = updated;
@@ -2256,14 +2082,8 @@ class AppController extends ChangeNotifier {
     _catalogueVersion++;
     _catalogueTask = null;
     _catalogueSession = null;
-    if (_sharedAlbumsUpdated != null) _sharedAlbumsUpdated = epoch;
-    _sharedAlbumsVersion++;
-    _peopleVersion++;
-    _peopleTask = null;
-    _peopleUpdated = null;
-    loadingPeople = false;
-    _sharedAlbumsTask = null;
-    loadingSharedAlbums = false;
+    _shared.invalidate();
+    _people.invalidate();
     discoveringAlbums = false;
     _initialDays = null;
     notifyListeners();
@@ -2468,16 +2288,11 @@ class AppController extends ChangeNotifier {
       }, 'Upload complete');
 
   void _clearPreviews() {
-    _previewGeneration++;
     _thumbnailWarmupTimer?.cancel();
     _thumbnailWarmupQueue.clear();
     _thumbnailWarmupKnown.clear();
     _fileResolver.clear();
-    _thumbs.clear();
-    _facePreviewGenerations.clear();
-    _previewLoads.clear();
-    _previewInterest.clear();
-    _previewBatcher.clear();
+    _thumbnails.clear();
   }
 
   /// Prime disk-backed thumbnails beyond the viewport in small batches.
@@ -2492,9 +2307,11 @@ class AppController extends ChangeNotifier {
           file.captureDay! < today - warmYears * 366) {
         continue;
       }
-      final key = _previewKey(file, 384);
+      final key = _thumbnails.key(file, 384);
       if (key != null &&
-          _thumbnailWarmupKnown.add('$key|${_previewVersion(file)}')) {
+          _thumbnailWarmupKnown.add(
+            '$key|${ThumbnailRepository.versionOf(file) ?? ''}',
+          )) {
         _thumbnailWarmupQueue.add(file);
       }
     }
@@ -2596,122 +2413,31 @@ class AppController extends ChangeNotifier {
     );
   }
 
-  String? _previewKey(CloudFile file, int size) {
-    final session = account;
-    if (session == null) return null;
-    return '${session.storageKey}|${file.id ?? file.key}|$size';
-  }
-
-  static String _previewVersion(CloudFile file) {
-    final etag = (file.etag ?? '').replaceAll('"', '');
-    return etag.isNotEmpty
-        ? etag
-        : '${file.modified?.microsecondsSinceEpoch}|${file.size}';
-  }
-
-  void _rememberPreview(String key, Uint8List bytes, String version) {
-    _thumbs.put(key, bytes, version);
-  }
-
-  /// Thumbnail already in memory, possibly from an older file revision, so
-  /// tiles can paint on their first frame without a loading state.
-  Uint8List? cachedPreview(CloudFile file, {int size = 384}) {
-    final key = _previewKey(file, size);
-    final entry = _thumbs.get(key);
-    if (entry == null) return null;
-    return entry.bytes;
-  }
+  /// Thumbnail already in memory, possibly from an older file revision.
+  Uint8List? cachedPreview(CloudFile file, {int size = 384}) =>
+      _thumbnails.cached(file, size: size);
 
   /// Whether [cachedPreview] matches the file's current revision.
-  bool previewCurrent(CloudFile file, {int size = 384}) {
-    final key = _previewKey(file, size);
-    return key != null && _thumbs.peek(key)?.version == _previewVersion(file);
-  }
+  bool previewCurrent(CloudFile file, {int size = 384}) =>
+      _thumbnails.current(file, size: size);
 
-  /// Current thumbnail for [file]: memory, then disk, then the server.
-  /// A cached thumbnail of an older revision is handed to [stale] at once
-  /// while the new one downloads. Callers must [releasePreview] if they stop
-  /// waiting, so requests for tiles scrolled away are dropped.
+  /// See [ThumbnailRepository.preview].
   Future<Uint8List> preview(
     CloudFile file, {
     bool retry = false,
     int size = 384,
     void Function(Uint8List bytes)? stale,
-  }) {
-    final session = account;
-    final key = _previewKey(file, size);
-    if (session == null || key == null) {
-      return Future.error(const CloudException('Reconnect to load previews.'));
-    }
-    final version = _previewVersion(file);
-    final generation = _previewGeneration;
-    void checkCurrent() {
-      if (_disposed ||
-          !identical(account, session) ||
-          generation != _previewGeneration) {
-        throw const PreviewCancelled();
-      }
-    }
+  }) => _thumbnails.preview(file, retry: retry, size: size, stale: stale);
 
-    final memory = _thumbs.peek(key);
-    if (!retry && memory?.version == version) {
-      cachedPreview(file, size: size);
-      return Future.value(memory!.bytes);
-    }
-    final loadKey = '$key|$version';
-    _previewInterest[loadKey] = (_previewInterest[loadKey] ?? 0) + 1;
-    final existing = _previewLoads[loadKey];
-    if (existing != null && !retry) return existing;
-    final disk = cache;
-    Future<Uint8List> load() async {
-      if (!retry && disk != null) {
-        final stored = await disk.readThumbnail(key);
-        checkCurrent();
-        if (stored != null) {
-          if (stored.version == version) {
-            _rememberPreview(key, stored.bytes, version);
-            return stored.bytes;
-          }
-          if (memory == null) stale?.call(stored.bytes);
-        }
-      }
-      checkCurrent();
-      final bytes = await _previewBatcher.fetch(
-        session,
-        file,
-        size,
-        loadKey,
-        batch: timelineIndexAvailable == true,
-      );
-      checkCurrent();
-      _rememberPreview(key, bytes, version);
-      unawaited(disk?.writeThumbnail(key, bytes, version: version));
-      return bytes;
-    }
+  static const _hydrateLimit = 120;
 
-    late final Future<Uint8List> pending;
-    pending = load().whenComplete(() {
-      if (identical(_previewLoads[loadKey], pending)) {
-        _previewLoads.remove(loadKey);
-        _previewInterest.remove(loadKey);
-      }
-    });
-    _previewLoads[loadKey] = pending;
-    return pending;
-  }
+  /// Brings stored thumbnails for restored content into memory.
+  void _hydrate(Iterable<CloudFile> files) =>
+      unawaited(_thumbnails.hydrate(files.where((f) => f.isMedia)));
 
   /// A tile no longer needs [file]'s thumbnail.
-  void releasePreview(CloudFile file, {int size = 384}) {
-    final key = _previewKey(file, size);
-    if (key == null) return;
-    final loadKey = '$key|${_previewVersion(file)}';
-    final interest = (_previewInterest[loadKey] ?? 0) - 1;
-    if (interest > 0) {
-      _previewInterest[loadKey] = interest;
-    } else {
-      _previewInterest.remove(loadKey);
-    }
-  }
+  void releasePreview(CloudFile file, {int size = 384}) =>
+      _thumbnails.release(file, size: size);
 
   /// Previously saved original for offline replay, if any.
   Future<File?> offlineCopy(CloudFile file) async {
@@ -2846,12 +2572,10 @@ class AppController extends ChangeNotifier {
   void dispose() {
     _folderSync?.dispose();
     _disposed = true;
-    _previewBatcher.dispose();
+    _thumbnails.dispose();
     _warmTimer?.cancel();
     _thumbnailWarmupTimer?.cancel();
     _catalogueVersion++;
-    _sharedAlbumsVersion++;
-    _peopleVersion++;
     _loadVersion++;
     _loginVersion++;
     _wakeLogin();

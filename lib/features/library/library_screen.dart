@@ -1467,15 +1467,7 @@ class _LibraryScreenState extends State<LibraryScreen>
             name: a.name,
             subtitle: a.shared ? 'Shared album' : 'Cloud album',
             count: '${a.count} items',
-            cover: a.coverId == null
-                ? null
-                : CloudFile(
-                    path: ['album-cover', ...a.reference],
-                    name: a.name,
-                    isDirectory: false,
-                    id: a.coverId,
-                    contentType: 'image/jpeg',
-                  ),
+            cover: a.cover,
             open: () {
               setState(() => _reset(keepAlbumSection: true));
               if (_scroll.hasClients) _scroll.jumpTo(0);

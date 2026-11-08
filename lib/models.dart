@@ -214,6 +214,18 @@ class CloudAlbum {
   final int count;
   final String? coverId;
   final bool shared;
+
+  /// The cover as a file known only by id; its revision and path are unknown
+  /// until a listing provides them.
+  CloudFile? get cover => coverId == null
+      ? null
+      : CloudFile(
+          path: ['album-cover', ...reference],
+          name: name,
+          isDirectory: false,
+          id: coverId,
+          contentType: 'image/jpeg',
+        );
 }
 
 class SmartAlbum {

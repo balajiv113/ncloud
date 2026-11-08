@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 
 import '../../app/app_controller.dart';
+import '../../features/library/thumbnail_repository.dart';
 import '../../models.dart';
 
 class MediaTile extends StatefulWidget {
@@ -28,7 +29,7 @@ class _MediaTileState extends State<MediaTile> {
   File? _original;
   bool _failed = false;
   bool _instant = false;
-  bool _waiting = false;
+  ThumbnailRequest? _request;
   int _generation = 0;
 
   @override
@@ -47,21 +48,20 @@ class _MediaTileState extends State<MediaTile> {
         oldWidget.file.etag != widget.file.etag ||
         oldWidget.previewSize != widget.previewSize ||
         oldWidget.controller != widget.controller) {
-      _release(oldWidget);
+      _release();
       _load(keep: oldWidget.file.key == widget.file.key);
     }
   }
 
   @override
   void dispose() {
-    _release(widget);
+    _release();
     super.dispose();
   }
 
-  void _release(MediaTile tile) {
-    if (!_waiting) return;
-    _waiting = false;
-    tile.controller.releasePreview(tile.file, size: tile.previewSize);
+  void _release() {
+    _request?.release();
+    _request = null;
   }
 
   /// Paints any cached thumbnail immediately, then fetches only if it is
@@ -69,76 +69,42 @@ class _MediaTileState extends State<MediaTile> {
   void _load({bool retry = false, bool keep = false}) {
     if (widget.file.demoColor != null) return;
     final generation = ++_generation;
-    final c = widget.controller;
-    final cached = c.cachedPreview(widget.file, size: widget.previewSize);
-    final thumbnail = widget.previewSize > 384
-        ? c.cachedPreview(widget.file)
-        : null;
-    _bytes = cached ?? thumbnail ?? (keep ? _bytes : null);
+    final thumbnails = widget.controller.thumbnails;
+    final file = widget.file;
+    final size = widget.previewSize;
+    _bytes = thumbnails.paintable(file, size: size) ?? (keep ? _bytes : null);
     _instant = _bytes != null;
     _failed = false;
     _original = null;
-    if (!retry &&
-        cached != null &&
-        c.previewCurrent(widget.file, size: widget.previewSize)) {
-      return;
-    }
-    if (!retry && cached == null && widget.file.isImage && c.cache != null) {
-      // A saved original replays without any network request.
-      c.offlineCopy(widget.file).then((copy) {
-        if (!mounted || generation != _generation) return;
-        if (copy != null) {
-          setState(() => _original = copy);
-        } else {
-          _request(generation, retry);
+    if (!retry && thumbnails.current(file, size: size)) return;
+    final request = thumbnails.load(
+      file,
+      size: size,
+      retry: retry,
+      stale: (bytes) {
+        if (mounted && generation == _generation && _bytes == null) {
+          setState(() => _bytes = bytes);
         }
-      });
-      return;
-    }
-    _request(generation, retry);
-  }
-
-  void _request(int generation, bool retry) {
-    final c = widget.controller;
-    _waiting = true;
-    c
-        .preview(
-          widget.file,
-          retry: retry,
-          size: widget.previewSize,
-          stale: (bytes) {
-            if (mounted && generation == _generation && _bytes == null) {
-              setState(() => _bytes = bytes);
-            }
-          },
-        )
-        .then(
-          (bytes) {
-            if (!mounted || generation != _generation) return;
-            _waiting = false;
-            if (!identical(bytes, _bytes)) setState(() => _bytes = bytes);
-          },
-          onError: (Object error) {
-            if (!mounted || generation != _generation) return;
-            _waiting = false;
-            if (error is PreviewCancelled) {
-              _load();
-            } else if (_bytes == null) {
-              _useOffline(generation);
-            }
-          },
-        );
-  }
-
-  Future<void> _useOffline(int generation) async {
-    final original = widget.file.isImage
-        ? await widget.controller.offlineCopy(widget.file)
-        : null;
-    if (!mounted || generation != _generation) return;
-    setState(() {
-      _original = original;
-      _failed = original == null;
-    });
+      },
+    );
+    _request = request;
+    request.result.then(
+      (image) {
+        if (!mounted || generation != _generation) return;
+        setState(() {
+          _original = image.original;
+          if (image.bytes != null) _bytes = image.bytes;
+        });
+      },
+      onError: (Object error) {
+        if (!mounted || generation != _generation) return;
+        if (error is PreviewCancelled) {
+          _load();
+        } else if (_bytes == null) {
+          setState(() => _failed = true);
+        }
+      },
+    );
   }
 
   void _retry() => setState(() => _load(retry: true));
