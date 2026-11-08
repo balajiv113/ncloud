@@ -981,6 +981,40 @@ void main() {
       expect(await controller.offlineCopy(pending), isNull);
     });
 
+    test('download metadata records the revision actually requested', () async {
+      final client = NextcloudClient(
+        transport: MockClient((request) async {
+          if (request.method == 'SEARCH') {
+            return http.Response(
+              multistatus(
+                responseEntry(properties: '<d:getetag>new</d:getetag>'),
+              ),
+              207,
+            );
+          }
+          expect(request.headers['If-Match'], '"old"');
+          return http.Response.bytes(List<int>.filled(2048, 1), 200);
+        }),
+      );
+      addTearDown(client.close);
+      const file = CloudFile(
+        path: [CloudFile.pendingRoot, '42'],
+        name: 'Beach & sun.jpg',
+        isDirectory: false,
+        contentType: 'image/jpeg',
+        id: '42',
+        size: 2048,
+        etag: 'old',
+      );
+      final result = await client.download(
+        account,
+        file,
+        expectedRevision: 'old',
+      );
+      expect(result.file.etag, 'old');
+      expect(await result.stream.expand((chunk) => chunk).length, 2048);
+    });
+
     test(
       'offline download rejects a missing revision before network access',
       () async {

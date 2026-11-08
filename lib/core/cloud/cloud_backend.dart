@@ -214,7 +214,7 @@ abstract interface class CloudBackend {
   );
 
   /// Accepts pathless items. If [expectedRevision] is supplied, fails unless
-  /// that revision is read; returned metadata identifies the downloaded file.
+  /// that revision is read and returns it in the downloaded file's metadata.
   Future<CloudDownload> download(
     Account account,
     CloudFile file, {

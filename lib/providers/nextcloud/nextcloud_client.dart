@@ -1696,7 +1696,10 @@ class NextcloudClient implements CloudBackend {
         await response.stream.drain<void>().timeout(_timeout);
         throw statusError(response.statusCode);
       }
-      return CloudDownload(file, response.stream);
+      return CloudDownload(
+        expectedRevision == null ? file : file.withRevision(expectedRevision),
+        response.stream,
+      );
     } on TimeoutException {
       throw CloudException(
         expectedRevision == null

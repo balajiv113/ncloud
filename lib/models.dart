@@ -162,6 +162,22 @@ class CloudFile {
     etag: etag,
   );
 
+  CloudFile withRevision(String? revision) => CloudFile(
+    path: path,
+    name: name,
+    isDirectory: isDirectory,
+    contentType: contentType,
+    size: size,
+    modified: modified,
+    id: id,
+    favorite: favorite,
+    demoColor: demoColor,
+    albumReference: albumReference,
+    taken: taken,
+    captureDay: captureDay,
+    etag: revision,
+  );
+
   CloudFile withCaptureDate(
     DateTime date,
     String? revision, {
