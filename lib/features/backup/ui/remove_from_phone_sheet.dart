@@ -335,6 +335,13 @@ class _RemoveFromPhoneSheetState extends State<RemoveFromPhoneSheet> {
           const SizedBox(height: 12),
           Text('These stay on your phone:', style: theme.textTheme.bodySmall),
           for (final line in lines) Text('• $line'),
+          const SizedBox(height: 8),
+          for (final kept in plan.kept.take(5))
+            if (kept.detail != null)
+              Text(
+                '${kept.path.last}: ${kept.detail}',
+                style: theme.textTheme.bodySmall,
+              ),
         ],
         const SizedBox(height: 16),
         FilledButton(
