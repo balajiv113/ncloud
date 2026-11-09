@@ -1,3 +1,4 @@
+import 'package:ncloud/features/backup/background/backup_scheduler.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -5,18 +6,18 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ncloud/features/backup/folder_sync_screen.dart';
+import 'package:ncloud/features/backup/ui/backup_setup_screen.dart';
 import 'package:ncloud/app/app_controller.dart';
-import 'package:ncloud/features/backup/folder_sync.dart';
-import 'package:ncloud/features/backup/headless_backup.dart';
+import 'package:ncloud/features/backup/state/backup_controller.dart';
+import 'package:ncloud/features/backup/background/headless_backup.dart';
 import 'package:ncloud/models.dart';
 import 'package:ncloud/providers/nextcloud/nextcloud_account.dart';
-import 'package:ncloud/features/backup/sync_run_lock.dart';
-import 'package:ncloud/features/backup/sync_schedule.dart';
+import 'package:ncloud/features/backup/platform/sync_run_lock.dart';
+import 'package:ncloud/features/backup/model/backup_schedule.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import '../../app_test.dart' show MemoryStore;
-import 'folder_sync_test.dart'
+import 'backup_controller_test.dart'
     show CloudFolders, DeviceFolders, TestSyncBackground;
 import '../../nextcloud_client_test.dart' show account;
 
@@ -55,14 +56,14 @@ void main() {
   late DeviceFolders device;
   late CloudFolders cloud;
   late RecordingScheduler scheduler;
-  late FolderSyncController ui;
+  late BackupController ui;
   late TestSyncBackground background;
   final lock = InProcessSyncRunLock();
 
   BackupSchedule schedule() =>
       BackupSchedule(created: created, hour: 10, minute: 20);
 
-  FolderSyncController controller() => FolderSyncController(
+  BackupController controller() => BackupController(
     client: cloud,
     account: () => account,
     access: device,
@@ -526,7 +527,7 @@ void main() {
     final app = AppController(
       store: MemoryStore(),
       client: cloud,
-      folderSyncController: ui,
+      backupController: ui,
     )..account = account;
     await tester.pumpWidget(
       MaterialApp(home: BackupSetupScreen(controller: app)),

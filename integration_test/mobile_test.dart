@@ -8,18 +8,18 @@ import 'package:http/testing.dart';
 import 'package:ncloud/app/browse_target.dart';
 import 'package:ncloud/app/app_controller.dart';
 import 'package:ncloud/core/storage/file_store.dart';
-import 'package:ncloud/features/backup/folder_sync.dart';
-import 'package:ncloud/features/backup/ios_album_backup.dart';
+import 'package:ncloud/features/backup/state/backup_controller.dart';
+import 'package:ncloud/features/backup/background/ios_album_backup.dart';
 import 'package:ncloud/app/shell/app_shell.dart';
 import 'package:ncloud/core/storage/local_cache.dart';
 import 'package:ncloud/models.dart';
 import 'package:ncloud/providers/nextcloud/nextcloud_client.dart';
-import 'package:ncloud/features/backup/sync_run_lock.dart';
-import 'package:ncloud/features/backup/sync_schedule.dart';
-import 'package:ncloud/features/backup/workmanager_backup.dart';
+import 'package:ncloud/features/backup/platform/sync_run_lock.dart';
+import 'package:ncloud/features/backup/model/backup_schedule.dart';
+import 'package:ncloud/features/backup/background/android_backup.dart';
 
 import '../test/app_test.dart' show MemoryStore;
-import '../test/features/backup/folder_sync_test.dart' show CloudFolders;
+import '../test/features/backup/backup_controller_test.dart' show CloudFolders;
 import '../test/nextcloud_client_test.dart'
     show account, multistatus, responseEntry;
 
@@ -229,7 +229,7 @@ Future<String> _testNativeContract() async {
   final root = await Directory.systemTemp.createTemp('ncloud-pair-contract-');
   final journal = SyncJournal(path: '${root.path}/pairs.sqlite3');
   final cloud = CloudFolders();
-  final sync = FolderSyncController(
+  final sync = BackupController(
     client: cloud,
     account: () => account,
     journal: journal,
@@ -353,7 +353,7 @@ Future<String> _testRealAlbum() async {
     readAccount: () async => account,
     initialize: initializeBackupDispatcher,
   );
-  final sync = FolderSyncController(
+  final sync = BackupController(
     client: cloud,
     account: () => account,
     access: access,

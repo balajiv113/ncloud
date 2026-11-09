@@ -1,13 +1,15 @@
+import 'package:ncloud/features/backup/background/backup_scheduler.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ncloud/app/app_controller.dart';
-import 'package:ncloud/features/backup/folder_sync.dart';
-import 'package:ncloud/features/backup/folder_sync_screen.dart';
-import 'package:ncloud/features/backup/sync_rules.dart';
-import 'package:ncloud/features/backup/sync_schedule.dart';
+import 'package:ncloud/features/backup/state/backup_controller.dart';
+import 'package:ncloud/features/backup/ui/backup_setup_screen.dart';
+import 'package:ncloud/features/backup/ui/folder_backup_screen.dart';
+import 'package:ncloud/features/backup/model/sync_rules.dart';
+import 'package:ncloud/features/backup/model/backup_schedule.dart';
 
 import '../../app_test.dart' show MemoryStore;
-import 'folder_sync_test.dart' show CloudFolders;
+import 'backup_controller_test.dart' show CloudFolders;
 import '../../nextcloud_client_test.dart' as fixtures;
 
 class PickerAccess implements FolderAccess, PhotoAlbumAccess {
@@ -37,7 +39,7 @@ class PickerAccess implements FolderAccess, PhotoAlbumAccess {
 
 class BrowsingCloud extends CloudFolders {}
 
-class MemoryBackupController extends FolderSyncController {
+class MemoryBackupController extends BackupController {
   MemoryBackupController({required PickerAccess picker, bool ios = false})
     : super(
         client: CloudFolders(),
@@ -54,7 +56,7 @@ class MemoryBackupController extends FolderSyncController {
   @override
   Future<void> refreshResults() async {}
   @override
-  Future<void> run(FolderPair pair, {bool headless = false}) async {
+  Future<void> run(FolderPair pair) async {
     singleRuns++;
   }
 
@@ -126,7 +128,7 @@ void main() {
     app = AppController(
       store: MemoryStore(),
       client: BrowsingCloud(),
-      folderSyncController: sync,
+      backupController: sync,
     )..account = fixtures.account;
   }
 
@@ -138,7 +140,7 @@ void main() {
     setup();
     sync.pairs = [savedPair('Camera'), savedPair('Travel')];
     await tester.pumpWidget(
-      MaterialApp(home: FolderSyncScreen(controller: app)),
+      MaterialApp(home: FolderBackupScreen(controller: app)),
     );
     await tester.pumpAndSettle();
     expect(
@@ -162,7 +164,7 @@ void main() {
     final pair = savedPair('Documents');
     sync.pairs = [pair];
     await tester.pumpWidget(
-      MaterialApp(home: FolderSyncScreen(controller: app)),
+      MaterialApp(home: FolderBackupScreen(controller: app)),
     );
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('Edit Documents'));

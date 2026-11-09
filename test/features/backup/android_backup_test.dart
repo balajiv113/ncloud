@@ -1,8 +1,8 @@
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ncloud/features/backup/folder_sync.dart';
-import 'package:ncloud/features/backup/sync_schedule.dart';
-import 'package:ncloud/features/backup/workmanager_backup.dart';
+import 'package:ncloud/features/backup/state/backup_controller.dart';
+import 'package:ncloud/features/backup/model/backup_schedule.dart';
+import 'package:ncloud/features/backup/background/android_backup.dart';
 import 'package:workmanager/workmanager.dart';
 
 class RecordingWorkmanager extends WorkmanagerPlatform {

@@ -1,16 +1,17 @@
+import 'backup_scheduler.dart';
 import 'dart:io';
 
 import 'package:flutter/widgets.dart';
 import 'package:workmanager/workmanager.dart';
 
-import '../../app/provider_factory.dart';
-import '../account/session_store.dart';
-import 'folder_sync.dart';
+import '../../../app/provider_factory.dart';
+import '../../account/session_store.dart';
+import '../state/backup_controller.dart';
 import 'headless_backup.dart';
 import 'ios_album_backup.dart';
-import '../../models.dart';
-import 'sync_run_lock.dart';
-import 'sync_schedule.dart';
+import '../../../models.dart';
+import '../platform/sync_run_lock.dart';
+import '../model/backup_schedule.dart';
 
 const backupTask = 'ncloud.folder-backup';
 
