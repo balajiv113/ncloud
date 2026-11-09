@@ -113,4 +113,19 @@ void main() {
       isFalse,
     );
   });
+
+  test('each kind of view remembers its own result', () {
+    final view = LibraryViewState();
+    final timeline = [file('t.jpg')];
+    final drive = [file('d.jpg')];
+    final first = view.visibleFiles(timeline, drive: false, collection: false);
+    view.visibleFiles(drive, drive: true, collection: false);
+    expect(
+      identical(
+        view.visibleFiles(timeline, drive: false, collection: false),
+        first,
+      ),
+      isTrue,
+    );
+  });
 }
