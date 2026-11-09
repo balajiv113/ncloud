@@ -16,21 +16,21 @@ Server-album members return sparse provider metadata without sending the app's l
 
 Folder inspection supports metadata-only revision checks without enumerating children. This keeps cache freshness and change monitoring inexpensive while avoiding a separate revision operation in the cloud interface.
 
-Preview requests use one batch-friendly backend operation with positional partial results. `features/library/preview_batcher.dart` prioritizes visible requests, retries missing entries individually and preserves session cancellation; the Nextcloud adapter chooses the relevant preview endpoints.
+Preview requests use one batch-friendly backend operation with positional partial results. `core/thumbnails/preview_batcher.dart` prioritizes visible requests, retries missing entries individually and preserves session cancellation; the Nextcloud adapter chooses the relevant preview endpoints.
 
-`features/library/preview_memory.dart` shares the bounded in-memory LRU between photo and face previews, independently of provider batching.
+`core/thumbnails/preview_memory.dart` shares the bounded in-memory LRU between photo and face previews, independently of provider batching.
 
 Async file resolution and previews are scoped to their initiating session. Clearing the preview cache invalidates in-flight results as well as stored entries; late responses cannot refill it. Resuming browsing starts a current change check instead of publishing a failure from the previous inactive session.
 
-On-demand file resolution is owned by `features/library/file_resolver.dart`, which shares concurrent requests and invalidates them on cache or session changes. The cloud contract still exposes ID-based resolution; moving location handling fully inside provider operations remains future work.
+On-demand file resolution is owned by `features/files/file_resolver.dart`, which shares concurrent requests and invalidates them on cache or session changes. The cloud contract still exposes ID-based resolution; moving location handling fully inside provider operations remains future work.
 
-`features/library/original_transfers.dart` owns original download validation, temporary staging and offline publication. Providers accept pathless downloads and return the downloaded file's metadata; the app controller retains the transfer lock until offline membership is saved.
+`features/files/original_transfers.dart` owns original download validation, temporary staging and offline publication. Providers accept pathless downloads and return the downloaded file's metadata; the app controller retains the transfer lock until offline membership is saved.
 
 Share panels use a library-owned session bound to the account that opened them, rather than calling the provider from the widget. Account changes prevent stale share results or actions from crossing sessions.
 
 File actions resolve locations only when their operation needs them. Share sessions and playback preparation reject account changes; providers prepare seekable playback directly from pathless items, while matching saved originals can be replayed without a path lookup.
 
-`features/library/library_mutations.dart` applies batch mutations and reconciles the file cache. Batches remain bound to their initiating account; a session change stops subsequent operations and prevents stale results from modifying the replacement account's cache.
+`features/files/library_mutations.dart` applies batch mutations and reconciles the file cache. Batches remain bound to their initiating account; a session change stops subsequent operations and prevents stale results from modifying the replacement account's cache.
 
 Photo map requests are coordinated by a photo-feature session that merges wrapped viewport clusters and stops superseded or account-stale requests.
 
@@ -44,11 +44,34 @@ People discovery uses Memories' Recognize clusters directly. The list may includ
 
 People, face-cover and map-cluster identities are opaque strings in the shared model; Nextcloud validates and converts its numeric identifiers inside the adapter. Older disposable People metadata is rebuilt.
 
-`shared/ui/` contains reusable cross-feature media previews and folder selection; `core/ui/` contains generic messages and error presentation. Library-only screens, dialogs, viewer actions, cached listing membership, paging and foreground change monitoring stay in `features/library/`; `features/photos/timeline_scrubber.dart` owns scrolling gestures and accessibility. The scrubber remains available to screen readers while visually hidden, with date announcements and increase/decrease actions.
+## Code layout
+
+```
+app/              composition root: AppController (state and load flow), BrowseTarget (what is shown),
+                  provider_factory, StatusSink
+app/shell/        the app shell (AppShell): app bar, bottom dock, destination transitions and swipes, selection,
+                  search, view options, banners; LibraryScope hands destination views what they need
+core/             cloud/ (backend contract), storage/ (SQLite, file cache, listing membership),
+                  thumbnails/ (one cache for photos and faces, batching, prefetch), cached_resource, ui/
+features/timeline/  the Timeline and every photo grid: sections, grid, scrubber, memories, welcome warm-up,
+                    foreground change monitor
+features/albums/    the Albums list (Smart, shared and server albums), catalogue and album header
+features/people/ features/map/   People bubbles; the photo map
+features/drive/     the folder browser and uploads
+features/files/     file actions, sharing, trash, downloads, mutations and operations
+features/viewer/    the full-screen photo and video viewer
+features/account/ features/settings/ features/backup/
+providers/nextcloud/  the one cloud adapter
+shared/ui/          cross-feature widgets (media tile, file list, folder picker, empty state)
+```
+
+Destinations are views the shell mounts for the current `BrowseTarget`: `TimelineView` for the Timeline, Favorites, offline photos and album, person or map-area photos; `DriveView` for folders; the Albums list for the overview. Each view reads shared state through a `LibraryScope` and does not own selection, scrolling or navigation.
+
+`core/ui/` contains generic messages and error presentation. Cached listing membership lives in `core/storage/`, paging and the foreground change monitor in `features/timeline/`; `features/timeline/timeline_scrubber.dart` owns scrolling gestures and accessibility.
 
 Library screens receive an account-bound change monitor from the controller instead of accessing the provider. The monitor restarts when the account configuration changes and ignores hints from the previous session.
 
-The login screen belongs to `features/account/`; reusable error presentation lives in `core/ui/`, while library-specific dialogs and sharing stay in `features/library/`.
+The login screen belongs to `features/account/`; reusable error presentation lives in `core/ui/`, while file dialogs and sharing live in `features/files/`.
 
 The account feature owns browser-login polling, including pause/resume and bounded transient retries; the app coordinator owns session persistence and cancellation.
 
@@ -62,7 +85,7 @@ This remains a preview, not a production-certified release. Production acceptanc
 
 Settings → **Support diagnostics** shows at most 40 failures from the current process. Only UTC time, a fixed failure category and an optional HTTP status are kept in memory. Exception messages, stack traces, filenames, server addresses and credentials are not captured. Nothing is uploaded; **Copy** is explicit, **Clear** removes the events, and disconnect/restart clears them. This is diagnostic information, not a durable audit log.
 
-Regression checks include viewport-limited construction for a million-photo timeline, bounded encoded-preview memory, and 10,000 random index lookups across 100,000 dates (10.1 million timeline entries). The lookup test reports host elapsed time with a generous 10-second regression ceiling; it is not a mobile frame-rate or startup benchmark. Run `flutter test test/timeline_layout_test.dart test/preview_test.dart` for these checks and `flutter analyze` plus `flutter test` before release.
+Regression checks include viewport-limited construction for a million-photo timeline, bounded encoded-preview memory, and 10,000 random index lookups across 100,000 dates (10.1 million timeline entries). The lookup test reports host elapsed time with a generous 10-second regression ceiling; it is not a mobile frame-rate or startup benchmark. Run `flutter test test/features/timeline/timeline_layout_test.dart test/preview_test.dart` for these checks and `flutter analyze` plus `flutter test` before release.
 
 CI runs shared Dart/API checks, Android builds and iOS simulator checks independently. Both platforms execute the same `integration_test/mobile_test.dart` fixture and `test_driver/mobile_test.dart` driver: real native staging/discard, typed network/power conditions, account locks, nested Drive navigation, empty folders and persistent SQLite reopen without refetching folder listings. Android additionally checks headless engines and foreground-service lifecycle; iOS additionally checks PhotoKit, scene lifecycle, permission UI and background scheduling. Native implementations retain focused OS-specific unit tests rather than duplicating the shared Dart contract.
 
@@ -231,7 +254,7 @@ Android USB testing: enable Developer options → USB debugging and accept your 
 
 ## Architecture and APIs
 
-`lib/models.dart` contains typed account/file/share/trash models and URL validation. `lib/providers/nextcloud/` handles Login Flow v2, OCS user lookup (DAV user ID may differ from login email), WebDAV listing/search/transfers/organization, sharing links, trash restore and authenticated previews. `app/app_controller.dart` coordinates session storage, race-safe paged loading, and foreground transfers. `library_screen.dart` implements the four-space UX; `asset_viewer.dart` handles viewing/video/slideshows; `library_actions.dart` contains shared actions and destination/share/trash/account surfaces. `screens.dart` contains sign-in and shared forms.
+`lib/models.dart` contains typed account/file/share/trash models and URL validation. `lib/providers/nextcloud/` handles Login Flow v2, OCS user lookup (DAV user ID may differ from login email), WebDAV listing/search/transfers/organization, sharing links, trash restore and authenticated previews. `app/app_controller.dart` coordinates session storage, race-safe paged loading, and foreground transfers. `app/shell/app_shell.dart` implements the shell; `asset_viewer.dart` handles viewing/video/slideshows; `library_actions.dart` contains shared actions and destination/share/trash/account surfaces. `screens.dart` contains sign-in and shared forms.
 
 Credentials use iOS Keychain / Android encrypted storage. HTTPS is required, authenticated redirects are not followed, and login endpoints must remain on the configured origin. No certificate bypass, main-password persistence, analytics, or third-party image service is used. Explicit offline originals stay in app-support storage until disconnect or uninstall; share/save transfers use temporary storage. Thumbnails are held in bounded memory and disk caches.
 

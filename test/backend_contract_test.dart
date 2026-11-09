@@ -4,13 +4,13 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ncloud/features/library/domain/browse_target.dart';
+import 'package:ncloud/app/browse_target.dart';
 import 'package:ncloud/app/app_controller.dart';
-import 'package:ncloud/features/library/domain/change_monitor.dart';
-import 'package:ncloud/features/library/domain/file_resolver.dart';
-import 'package:ncloud/features/library/domain/library_mutations.dart';
-import 'package:ncloud/features/library/library_screen.dart';
-import 'package:ncloud/features/library/domain/media_listing.dart';
+import 'package:ncloud/features/timeline/change_monitor.dart';
+import 'package:ncloud/features/files/file_resolver.dart';
+import 'package:ncloud/features/files/library_mutations.dart';
+import 'package:ncloud/app/shell/app_shell.dart';
+import 'package:ncloud/core/storage/media_listing.dart';
 import 'package:ncloud/core/cloud/cloud_backend.dart';
 import 'package:ncloud/core/storage/local_cache.dart';
 import 'package:ncloud/core/storage/file_store.dart';
@@ -696,7 +696,7 @@ void main() {
         MaterialApp(
           home: ListenableBuilder(
             listenable: controller,
-            builder: (_, _) => LibraryScreen(controller: controller),
+            builder: (_, _) => AppShell(controller: controller),
           ),
         ),
       );

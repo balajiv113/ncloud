@@ -3,8 +3,8 @@ import 'package:flutter/material.dart';
 import 'app/app_controller.dart';
 import 'core/storage/local_cache.dart';
 import 'features/account/login_screen.dart';
-import 'features/library/library_screen.dart';
-import 'features/library/warm_start_screen.dart';
+import 'app/shell/app_shell.dart';
+import 'features/timeline/warm_start_screen.dart';
 import 'app/provider_factory.dart';
 
 void main() {
@@ -72,7 +72,7 @@ class _NcloudAppState extends State<NcloudApp> with WidgetsBindingObserver {
           return WarmStartScreen(controller: widget.controller);
         }
         return widget.controller.connected
-            ? LibraryScreen(controller: widget.controller)
+            ? AppShell(controller: widget.controller)
             : LoginScreen(controller: widget.controller);
       },
     ),

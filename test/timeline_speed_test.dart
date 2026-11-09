@@ -7,7 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:ncloud/app/app_controller.dart';
 import 'package:ncloud/providers/nextcloud/nextcloud_client.dart';
-import 'package:ncloud/features/library/library_screen.dart';
+import 'package:ncloud/app/shell/app_shell.dart';
 
 import 'app_test.dart' show MemoryStore;
 import 'memories_test.dart' show davForIds, indexedTransport, jsonResponse;
@@ -48,7 +48,7 @@ void main() {
         MaterialApp(
           home: ListenableBuilder(
             listenable: c,
-            builder: (_, _) => LibraryScreen(controller: c),
+            builder: (_, _) => AppShell(controller: c),
           ),
         ),
       );
