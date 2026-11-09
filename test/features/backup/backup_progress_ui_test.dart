@@ -117,6 +117,14 @@ void main() {
     test('a clean run says so, and one problem is singular', () {
       expect(BackupNumbers.fromState({'found': 5}).summaryLine, '5 backed up');
       expect(
+        BackupNumbers.fromState({
+          'found': 4,
+          'recognised': 1,
+          'moved': 1,
+        }).summaryLine,
+        '4 backed up · 1 already on your server · 1 moved on your server',
+      );
+      expect(
         BackupNumbers.fromState({'found': 5, 'blocked': 1}).problemLine,
         '1 file could not be backed up',
       );

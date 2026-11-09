@@ -125,12 +125,17 @@ class BackupNumbers {
   String? get summaryLine => found == 0
       ? null
       : problems == 0
-      ? '${formatCount(found)} backed up$_movedNote'
-      : '${formatCount(backedUp)} of ${formatCount(found)} backed up$_movedNote';
+      ? '${formatCount(found)} backed up$_notes'
+      : '${formatCount(backedUp)} of ${formatCount(found)} backed up$_notes';
 
-  /// " · 12 moved on the server" when files were moved to match the device.
-  String get _movedNote =>
-      moved == 0 ? '' : ' · ${formatCount(moved)} moved on your server';
+  /// How files were settled without being uploaded, so the count can be
+  /// matched against the server: " · 1 already on your server · 2 moved on
+  /// your server".
+  String get _notes =>
+      (recognised == 0
+          ? ''
+          : ' · ${formatCount(recognised)} already on your server') +
+      (moved == 0 ? '' : ' · ${formatCount(moved)} moved on your server');
 
   /// "29 could not be backed up", or null when everything went well.
   String? get problemLine => problems == 0
