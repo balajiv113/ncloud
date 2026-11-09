@@ -116,6 +116,15 @@ void main() {
 
     test('a clean run says so, and one problem is singular', () {
       expect(BackupNumbers.fromState({'found': 5}).summaryLine, '5 backed up');
+      // A run that stopped before the last file is not called complete.
+      expect(
+        BackupNumbers.fromState({
+          'found': 4,
+          'toUpload': 4,
+          'transferred': 3,
+        }).summaryLine,
+        '3 of 4 backed up',
+      );
       expect(
         BackupNumbers.fromState({
           'found': 4,

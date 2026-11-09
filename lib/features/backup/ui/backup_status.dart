@@ -109,8 +109,16 @@ class BackupNumbers {
 
   int get settled => transferred + recognised + moved + failed;
 
-  /// Files on the server after the last run, as far as the run could tell.
-  int get backedUp => found > problems ? found - problems : 0;
+  /// Files the run was to upload and has not finished, whether it stopped
+  /// early or is still going.
+  int get unfinished => toUpload > settled ? toUpload - settled : 0;
+
+  /// Files confirmed on the server: everything found, less what failed and
+  /// what was still waiting when the run ended.
+  int get backedUp {
+    final done = found - problems - unfinished;
+    return done > 0 ? done : 0;
+  }
 
   /// "3,204 of 12,460", or null before the amount of work is known.
   String? get progressLine => toUpload > 0
@@ -124,7 +132,7 @@ class BackupNumbers {
   /// "12,431 of 12,460 backed up", or null when nothing was found.
   String? get summaryLine => found == 0
       ? null
-      : problems == 0
+      : backedUp == found
       ? '${formatCount(found)} backed up$_notes'
       : '${formatCount(backedUp)} of ${formatCount(found)} backed up$_notes';
 
