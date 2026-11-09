@@ -8,7 +8,9 @@ import '../../../core/ui/messages.dart' show showError;
 import '../../../shared/ui/folder_picker.dart' show chooseFolder;
 import '../model/sync_rules.dart';
 import '../model/backup_schedule.dart';
+import '../platform/album_folders.dart';
 import '../platform/device_library.dart';
+import 'album_folders_sheet.dart';
 
 class BackupSetupScreen extends StatefulWidget {
   const BackupSetupScreen({super.key, required this.controller, this.pair});
@@ -68,6 +70,28 @@ class _BackupSetupScreenState extends State<BackupSetupScreen> {
       if (mounted) setState(() => _busy = false);
     }
   }
+
+  /// Chooses which albums get a folder of their own in the whole-library backup.
+  Future<void> _chooseAlbums() => _perform(() async {
+    final source = _source;
+    if (source == null) return;
+    final chosen = albumsOf(source.token) ?? const <AlbumChoice>[];
+    final available = [
+      for (final album in await sync.photoAlbums())
+        if (album.token != cameraRollToken)
+          AlbumChoice(album.token, album.name),
+    ];
+    if (!mounted) return;
+    final result = await showModalBottomSheet<List<AlbumChoice>>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (_) => AlbumFoldersSheet(available: available, chosen: chosen),
+    );
+    if (mounted && result != null) {
+      setState(() => _source = cameraRollWith(result));
+    }
+  });
 
   Future<void> _pick() => _perform(() async {
     DeviceFolder? selected;
@@ -199,6 +223,17 @@ class _BackupSetupScreenState extends State<BackupSetupScreen> {
           trailing: const Icon(Icons.chevron_right),
           onTap: _busy ? null : _pick,
         ),
+        if (sync.ios && _source != null && isCameraRoll(_source!.token))
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Albums in their own folders'),
+            subtitle: Text(switch (albumsOf(_source!.token)!) {
+              [] => 'None: everything in Camera Roll',
+              final albums => albums.map((a) => a.name).join(', '),
+            }),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: _busy ? null : _chooseAlbums,
+          ),
         if (_libraryPermission == LibraryPermission.partial)
           Padding(
             padding: const EdgeInsets.only(bottom: 8),

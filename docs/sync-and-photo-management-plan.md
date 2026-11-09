@@ -11,6 +11,7 @@ Status: step 1 is built for device-folder backups. The rest is still a plan.
 | No per-file server listing; receipts read in groups; newest first | Duplicate review, Reorganise, Needs attention list |
 | One bad file no longer ends a run; retries, circuit breaker, Try again | Android change trigger for near-instant pickup |
 | Live count, percent, time left and a list of problems on each card | |
+| iPhone album folders: albums in priority order inside Camera Roll, each photo stored once, moves followed | Verified on a device (the combining is Dart and tested; the native calls it uses already existed) |
 | A preview (dry run) before the first backup, and from the card menu at any time | |
 | Android "All photos & videos" source: flat album folders, permissions, limited access, covered folders skipped | Verified on a device (the Kotlin has only been written, not compiled) |
 | iPhone "Camera Roll": the whole library as one album | Verified on a device (the Swift has only been written, not compiled) |
