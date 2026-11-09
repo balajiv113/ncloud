@@ -160,7 +160,7 @@ import workmanager_apple
         queue.asyncAfter(deadline: .now() + 5) { finish(false) }
         return
       }
-      guard ["list", "export", "stage", "import", "discard", "clearStaging"].contains(call.method) else {
+      guard ["list", "export", "deleteListed", "stage", "import", "discard", "clearStaging"].contains(call.method) else {
         result(FlutterMethodNotImplemented)
         return
       }
@@ -185,6 +185,9 @@ import workmanager_apple
             try self.validate(path)
             switch call.method {
             case "list": value = try self.albums.list(token: token, path: path)
+            case "deleteListed":
+              guard let names = args["names"] as? [String], !names.isEmpty else { throw self.failure() }
+              value = try self.albums.deleteListed(token: token, names: names)
             case "export":
               guard let version = args["version"] as? String else {
                 throw AlbumBackupError(code: "photos_changed", message: "Refresh the album before exporting its originals.")

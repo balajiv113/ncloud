@@ -178,7 +178,12 @@ class FakeDevice implements FolderAccess {
   /// Runs before each export; throw to make the provider fail that file.
   FutureOr<void> Function(String name)? beforeExport;
 
-  void add(String path, List<int> bytes, {int modified = 1700000000000}) {
+  void add(
+    String path,
+    List<int> bytes, {
+    int modified = 1700000000000,
+    String? id,
+  }) {
     final name = path.split('/').last;
     entries[path] = DeviceEntry(
       name,
@@ -186,6 +191,7 @@ class FakeDevice implements FolderAccess {
       bytes.length,
       modified,
       contentType: 'image/jpeg',
+      id: id,
     );
     contents[path] = bytes;
   }
@@ -240,4 +246,36 @@ class FakeDevice implements FolderAccess {
   dynamic noSuchMethod(Invocation invocation) => throw UnsupportedError(
     'Unexpected device call: ${invocation.memberName}',
   );
+}
+
+/// A device that can also move files to the phone's trash, asking first.
+class RemovableDevice extends FakeDevice implements RemovableAccess {
+  RemovableDevice(super.staging);
+
+  /// How many system prompts were shown, and the size of each batch.
+  final prompts = <int>[];
+
+  /// The prompt after which the user says no, counting from 1.
+  int? declineAt;
+
+  /// Runs before a prompt, to change things behind the app's back.
+  void Function(int prompt)? beforePrompt;
+
+  @override
+  Future<List<List<String>>> moveToTrash(
+    String token,
+    List<RemovalFile> files,
+  ) async {
+    prompts.add(files.length);
+    beforePrompt?.call(prompts.length);
+    if (declineAt == prompts.length) return const [];
+    final removed = <List<String>>[];
+    for (final f in files) {
+      if (entries.remove(f.path.join('/')) != null) {
+        contents.remove(f.path.join('/'));
+        removed.add(f.path);
+      }
+    }
+    return removed;
+  }
 }

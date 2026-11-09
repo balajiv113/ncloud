@@ -80,12 +80,23 @@ abstract interface class FolderAccess {
   Future<SyncConditions> conditions();
 }
 
+/// A file to remove from the phone, with the entry it was listed as.
+typedef RemovalFile = ({List<String> path, DeviceEntry entry});
+
+/// Sources that can move files to the phone's own trash, after the phone has
+/// asked the user. Nothing here is ever called without the user's tap.
+abstract interface class RemovableAccess {
+  /// Moves [files] of the source [token] to the trash and returns the paths
+  /// that were actually removed. Fewer than asked means the user declined.
+  Future<List<List<String>>> moveToTrash(String token, List<RemovalFile> files);
+}
+
 abstract interface class PhotoAlbumAccess {
   Future<List<DeviceFolder>> albums();
 }
 
 class NativeFolderAccess
-    implements FolderAccess, PhotoAlbumAccess, LibraryAccess {
+    implements FolderAccess, PhotoAlbumAccess, LibraryAccess, RemovableAccess {
   static const channel = MethodChannel('app.ncloud/folder_sync');
 
   /// The library as last listed, so the folders below the top are answered
@@ -169,6 +180,48 @@ class NativeFolderAccess
     });
     if (file == null) throw StateError('Could not prepare the source file.');
     return File(file);
+  }
+
+  @override
+  Future<List<List<String>>> moveToTrash(
+    String token,
+    List<RemovalFile> files,
+  ) async {
+    if (files.isEmpty) return const [];
+    if (token == DeviceFolder.libraryToken) {
+      final paths = <String, List<String>>{};
+      for (final f in files) {
+        final id = f.entry.id ?? _tree?.file(f.path)?.id;
+        if (id == null) {
+          throw StateError(
+            'That photo is no longer in the library. Scan again.',
+          );
+        }
+        paths[id] = f.path;
+      }
+      final removed = await channel.invokeListMethod<String>('mediaTrash', {
+        'ids': paths.keys.toList(),
+      });
+      return [
+        for (final id in removed ?? const <String>[])
+          if (paths[id] != null) paths[id]!,
+      ];
+    }
+    if (token.startsWith('photoset:') || token.startsWith('photos:')) {
+      // Every photo of the whole library is known under the library's own
+      // listing, which a combined listing keeps current.
+      final names = {for (final f in files) f.path.last: f.path};
+      final removed = await channel.invokeListMethod<String>('deleteListed', {
+        'token': token.startsWith('photoset:') ? cameraRollToken : token,
+        'path': const <String>[],
+        'names': names.keys.toList(),
+      });
+      return [
+        for (final name in removed ?? const <String>[])
+          if (names[name] != null) names[name]!,
+      ];
+    }
+    throw UnsupportedError('Removing files is not available for this source.');
   }
 
   @override

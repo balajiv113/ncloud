@@ -8,6 +8,7 @@ import '../../../core/ui/messages.dart' show showError;
 import '../engine/sync_errors.dart' show sourceNeedsReselect;
 import 'backup_setup_screen.dart';
 import 'backup_preview_sheet.dart';
+import 'remove_from_phone_sheet.dart';
 import 'backup_status.dart';
 import 'failures_sheet.dart';
 
@@ -71,6 +72,17 @@ class _FolderBackupScreenState extends State<FolderBackupScreen> {
     );
     if (go == true) await _perform(() => sync.run(pair));
   }
+
+  /// Clears one album from the phone once its files are confirmed on the
+  /// server.
+  Future<void> _removeFromPhone(FolderPair pair) => showModalBottomSheet<void>(
+    context: context,
+    showDragHandle: true,
+    isScrollControlled: true,
+    isDismissible: false,
+    enableDrag: false,
+    builder: (_) => RemoveFromPhoneSheet(sync: sync, pair: pair),
+  );
 
   Future<void> _backUpAgain(FolderPair pair) async {
     final confirmed = await showDialog<bool>(
@@ -199,15 +211,25 @@ class _FolderBackupScreenState extends State<FolderBackupScreen> {
                 PopupMenuButton<String>(
                   tooltip: 'More for ${pair.name}',
                   enabled: !sync.busy && !active,
-                  onSelected: (choice) => choice == 'preview'
-                      ? _preview(pair, start: false)
-                      : _backUpAgain(pair),
-                  itemBuilder: (_) => const [
-                    PopupMenuItem(
+                  onSelected: (choice) => switch (choice) {
+                    'preview' => _preview(pair, start: false),
+                    'remove' => _removeFromPhone(pair),
+                    _ => _backUpAgain(pair),
+                  },
+                  itemBuilder: (_) => [
+                    const PopupMenuItem(
                       value: 'preview',
                       child: Text('Preview what will be backed up'),
                     ),
-                    PopupMenuItem(value: 'again', child: Text('Back up again')),
+                    const PopupMenuItem(
+                      value: 'again',
+                      child: Text('Back up again'),
+                    ),
+                    if (sync.canRemoveFromPhone(pair))
+                      const PopupMenuItem(
+                        value: 'remove',
+                        child: Text('Remove from this phone…'),
+                      ),
                   ],
                 ),
               ],

@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ncloud/app/app_controller.dart';
 import 'package:ncloud/features/backup/engine/backup_preview.dart';
+import 'package:ncloud/features/backup/engine/phone_removal.dart';
 import 'package:ncloud/features/backup/state/backup_controller.dart';
 import 'package:ncloud/features/backup/ui/backup_status.dart';
 import 'package:ncloud/features/backup/ui/folder_backup_screen.dart';
@@ -33,6 +35,12 @@ class _Backup extends BackupController {
   int again = 0;
   int runs = 0;
   Future<BackupPreview> Function()? onPreview;
+  bool removable = true;
+  List<RemovalTarget> targets = [];
+  RemovalPlan? removalPlan;
+  Object? removalError;
+  RemovalResult? removalResult;
+  RemovalPlan? removed;
 
   @override
   Future<void> load() async {}
@@ -48,6 +56,31 @@ class _Backup extends BackupController {
   Future<void> run(FolderPair pair) async => runs++;
   @override
   Future<BackupPreview> preview(FolderPair pair) => onPreview!();
+  @override
+  bool canRemoveFromPhone(FolderPair pair) => removable;
+  @override
+  Future<List<RemovalTarget>> removalTargetsOf(FolderPair pair) async =>
+      targets;
+  @override
+  Future<RemovalPlan> planRemovalOf(
+    FolderPair pair,
+    RemovalTarget target,
+  ) async {
+    if (removalError != null) throw removalError!;
+    return removalPlan!;
+  }
+
+  @override
+  Future<RemovalResult> removeFromPhoneWith(
+    FolderPair pair,
+    RemovalPlan plan, {
+    void Function(int removed, int total)? onProgress,
+    bool Function()? shouldStop,
+  }) async {
+    removed = plan;
+    onProgress?.call(plan.removable.length, plan.removable.length);
+    return removalResult!;
+  }
 }
 
 FolderPair pair() => FolderPair(
@@ -388,6 +421,161 @@ void main() {
         find.widgetWithText(FilledButton, 'Nothing to back up'),
       );
       expect(start.onPressed, isNull);
+    });
+
+    const shots = RemovalTarget(
+      'Screenshots',
+      ['Screenshots'],
+      8,
+      3 * 1024 * 1024,
+    );
+
+    RemovableFile file(String name) => RemovableFile(
+      ['Screenshots', name],
+      DeviceEntry(name, false, 1024 * 1024, 1),
+      const Receipt(
+        path: ['x'],
+        version: 'v',
+        target: ['x'],
+        targetVersion: 'e|1',
+      ),
+    );
+
+    Future<void> openRemoval(WidgetTester tester) async {
+      sync.pairs = [pair()..lastRun = DateTime(2025)];
+      sync.results['p'] = {'status': 'success', 'found': 10};
+      sync.targets = [shots];
+      await show(tester);
+      await tester.tap(find.byTooltip('More for Camera'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Remove from this phone…'));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('the menu offers removal only for photo sources', (
+      tester,
+    ) async {
+      sync.removable = false;
+      sync.pairs = [pair()..lastRun = DateTime(2025)];
+      sync.results['p'] = {'status': 'success', 'found': 10};
+      await show(tester);
+      await tester.tap(find.byTooltip('More for Camera'));
+      await tester.pumpAndSettle();
+      expect(find.text('Back up again'), findsOneWidget);
+      expect(find.text('Remove from this phone…'), findsNothing);
+    });
+
+    testWidgets('removal shows what is safe and what stays, and asks twice', (
+      tester,
+    ) async {
+      sync.removalPlan = RemovalPlan(
+        target: shots,
+        removable: [file('a.png'), file('b.png'), file('c.png')],
+        kept: const [
+          KeptFile(['Screenshots', 'new.png'], KeepReason.notBackedUp),
+          KeptFile(['Screenshots', 'gone.png'], KeepReason.notOnServer),
+        ],
+      );
+      sync.removalResult = const RemovalResult(
+        removed: 3,
+        bytes: 3 * 1024 * 1024,
+        stopped: false,
+      );
+      await openRemoval(tester);
+      expect(find.text('Screenshots'), findsOneWidget);
+      expect(find.text('8 files · 3.0 MB'), findsOneWidget);
+      await tester.tap(find.text('Screenshots'));
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining('3 files, 3.0 MB, are safely'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('1 not backed up yet'), findsOneWidget);
+      expect(find.textContaining('1 no longer on your server'), findsOneWidget);
+      await tester.tap(find.text('Move 3 to the trash'));
+      await tester.pumpAndSettle();
+      expect(find.text('Move 3 files to the trash?'), findsOneWidget);
+      expect(find.textContaining('30 days'), findsOneWidget);
+      expect(sync.removed, isNull, reason: 'nothing happens before the yes');
+      await tester.tap(find.text('Continue'));
+      await tester.pumpAndSettle();
+      expect(sync.removed!.removable, hasLength(3));
+      expect(find.textContaining('Moved 3 files (3.0 MB)'), findsOneWidget);
+    });
+
+    testWidgets('keeping them at the confirmation removes nothing', (
+      tester,
+    ) async {
+      sync.removalPlan = RemovalPlan(
+        target: shots,
+        removable: [file('a.png')],
+        kept: const [],
+      );
+      await openRemoval(tester);
+      await tester.tap(find.text('Screenshots'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Move 1 to the trash'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Keep them'));
+      await tester.pumpAndSettle();
+      expect(sync.removed, isNull);
+    });
+
+    testWidgets('an album with nothing safe to remove cannot be started', (
+      tester,
+    ) async {
+      sync.removalPlan = RemovalPlan(
+        target: shots,
+        removable: const [],
+        kept: const [
+          KeptFile(['Screenshots', 'a.png'], KeepReason.notBackedUp),
+        ],
+      );
+      await openRemoval(tester);
+      await tester.tap(find.text('Screenshots'));
+      await tester.pumpAndSettle();
+      expect(find.text('Nothing here can be removed yet.'), findsOneWidget);
+      final button = tester.widget<FilledButton>(
+        find.widgetWithText(FilledButton, 'Nothing to remove'),
+      );
+      expect(button.onPressed, isNull);
+    });
+
+    testWidgets('a stopped removal says why', (tester) async {
+      sync.removalPlan = RemovalPlan(
+        target: shots,
+        removable: [file('a.png')],
+        kept: const [],
+      );
+      sync.removalResult = const RemovalResult(
+        removed: 0,
+        bytes: 0,
+        stopped: true,
+        reason:
+            'Some files changed since the check, so nothing more was removed.',
+      );
+      await openRemoval(tester);
+      await tester.tap(find.text('Screenshots'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Move 1 to the trash'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Continue'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('nothing more was removed'), findsOneWidget);
+    });
+
+    testWidgets('a phone that cannot do it says so', (tester) async {
+      sync.removalError = PlatformException(
+        code: 'unsupported',
+        message: 'Removing photos needs Android 11 or later.',
+      );
+      await openRemoval(tester);
+      await tester.tap(find.text('Screenshots'));
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Removing photos needs Android 11 or later.'),
+        findsOneWidget,
+      );
     });
 
     testWidgets('an empty folder says there is nothing yet', (tester) async {

@@ -6,12 +6,13 @@ Status: step 1 is built for device-folder backups. The rest is still a plan.
 | --- | --- |
 | Fingerprints sent with every upload; the server verifies and stores them | Moves for backups made before fingerprints (needs the one-time preview) |
 | A file already on the server is recognised, never uploaded twice | Counting "removed from your server" (needs a server scan) |
-| Moves and copies on the device are followed on the server | Remove from this phone, by album or folder (decided for the next release) |
+| Moves and copies on the device are followed on the server | |
 | Back up again (card menu) | iPhone Photos library source and Files folders |
 | No per-file server listing; receipts read in groups; newest first | Duplicate review, Reorganise, Needs attention list |
 | One bad file no longer ends a run; retries, circuit breaker, Try again | |
 | Live count, percent, time left and a list of problems on each card | |
 | Android "also when new photos arrive": a WorkManager media-change trigger, set again after each run | Verified on a device (the trigger itself has only been written, not run) |
+| Remove from this phone, one album or folder at a time: verified against the server, batches of 200, phone's trash | Verified on a device (Kotlin and Swift written, not compiled; the checks and batching are Dart and tested) |
 | iPhone album folders: albums in priority order inside Camera Roll, each photo stored once, moves followed | Verified on a device (the combining is Dart and tested; the native calls it uses already existed) |
 | A preview (dry run) before the first backup, and from the card menu at any time | |
 | Android "All photos & videos" source: flat album folders, permissions, limited access, covered folders skipped | Verified on a device (the Kotlin has only been written, not compiled) |
@@ -158,8 +159,8 @@ This is the only thing that ever deletes on the phone, and it is always your tap
   cannot be proven (not backed up yet, changed since, removed from the server) stays,
   and is listed.
 * **You see the result first:** "412 photos, 3.1 GB, are safely on your server; 6
-  are not, so they stay." Optional keeps: "keep the last 30 days" and "keep
-  favourites".
+  are not, so they stay." Optional keeps ("keep the last 30 days", "keep
+  favourites") and arbitrary Android folders are not in the first version.
 * **Batches, with the phone asking each time.** A big album is done in batches of a
   few hundred, each with the phone's own confirmation and a progress count. You can
   stop between batches, and what is done is done. Each batch is verified again.
