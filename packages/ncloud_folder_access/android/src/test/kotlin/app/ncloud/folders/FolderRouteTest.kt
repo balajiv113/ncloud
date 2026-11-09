@@ -10,7 +10,7 @@ class FolderRouteTest {
         assertEquals("pick", folderRoute("pick", true))
         assertEquals("conditions", folderRoute("conditions", false))
         assertEquals("workerNotification", folderRoute("workerNotification", false))
-        for (method in listOf("list", "export", "stage", "import", "discard")) {
+        for (method in listOf("list", "export", "stage", "import", "discard", "clearStaging")) {
             assertEquals("transfer", folderRoute(method, false))
         }
         for (method in listOf("acquire", "release")) {

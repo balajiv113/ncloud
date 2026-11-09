@@ -244,4 +244,41 @@ void main() {
       expect(cloud.uploads, 1);
     },
   );
+
+  test(
+    'wiping an account removes its backup records and staged files',
+    () async {
+      final pair = await add('Camera');
+      await journal.writeState(pair.id, {'attempt': 1});
+      final staged = await device.stage();
+      expect(staged.existsSync(), isTrue);
+      await sync.disconnect();
+      await sync.wipe();
+      expect(await journal.pair(pair.id), isNull);
+      expect(await journal.state(pair.id), isEmpty);
+      expect(await journal.accountEnabled(syncAccount(account)), isFalse);
+      expect(device.clears, 1);
+      expect(staged.existsSync(), isFalse);
+    },
+  );
+
+  test(
+    'clearing one account leaves another account\'s backups alone',
+    () async {
+      final mine = await add('Camera');
+      final other = FolderPair(
+        id: 'other-pair',
+        account: 'https://elsewhere.example|bob',
+        name: 'Other',
+        folder: const DeviceFolder('token', 'Other', 'identity'),
+        remote: const ['Backup'],
+      );
+      await journal.save(other);
+      await journal.writeState(other.id, {'attempt': 2});
+      await journal.clearAccount(syncAccount(account));
+      expect(await journal.pair(mine.id), isNull);
+      expect(await journal.pair(other.id), isNotNull);
+      expect((await journal.state(other.id))['attempt'], 2);
+    },
+  );
 }

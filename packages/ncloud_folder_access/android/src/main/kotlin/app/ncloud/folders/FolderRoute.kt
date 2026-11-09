@@ -5,6 +5,6 @@ internal fun folderRoute(method: String, hasActivity: Boolean): String = when (m
     "conditions" -> "conditions"
     "workerNotification" -> "workerNotification"
     "acquire", "release" -> "lock"
-    "list", "export", "stage", "import", "discard" -> "transfer"
+    "list", "export", "stage", "import", "discard", "clearStaging" -> "transfer"
     else -> "unsupported"
 }

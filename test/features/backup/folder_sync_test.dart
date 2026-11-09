@@ -104,6 +104,14 @@ class DeviceFolders implements FolderAccess {
   @override
   Future<void> discard(File staged) => staged.delete();
 
+  int clears = 0;
+
+  @override
+  Future<void> clearStaging() async {
+    clears++;
+    if (await staging.exists()) await staging.delete(recursive: true);
+  }
+
   @override
   Future<SyncConditions> conditions() async {
     conditionChecks++;

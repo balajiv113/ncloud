@@ -160,7 +160,7 @@ import workmanager_apple
         queue.asyncAfter(deadline: .now() + 5) { finish(false) }
         return
       }
-      guard ["list", "export", "stage", "import", "discard"].contains(call.method) else {
+      guard ["list", "export", "stage", "import", "discard", "clearStaging"].contains(call.method) else {
         result(FlutterMethodNotImplemented)
         return
       }
@@ -174,6 +174,11 @@ import workmanager_apple
           } else if call.method == "discard" {
             let file = try self.stageFile(args["staged"] as? String)
             if self.manager.fileExists(atPath: file.path) { try self.manager.removeItem(at: file) }
+            value = nil
+          } else if call.method == "clearStaging" {
+            for file in try self.manager.contentsOfDirectory(at: self.staging, includingPropertiesForKeys: nil) {
+              try self.manager.removeItem(at: file)
+            }
             value = nil
           } else if let token = args["token"] as? String, token.hasPrefix("photos:") {
             guard let path = args["path"] as? [String] else { throw self.failure() }
