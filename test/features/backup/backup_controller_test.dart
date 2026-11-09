@@ -852,6 +852,24 @@ void main() {
     },
   );
 
+  test(
+    'a run that put files on the server says so; one that did not stays quiet',
+    () async {
+      var changed = 0;
+      sync.onServerChanged = () => changed++;
+      await device.put('a.jpg', 'first');
+      final value = await pair();
+      await sync.run(value);
+      expect(cloud.uploads, 1);
+      expect(changed, 1);
+      await sync.run(value);
+      expect(changed, 1, reason: 'nothing new, nothing to reload');
+      await device.put('b.jpg', 'second');
+      await sync.run(value);
+      expect(changed, 2);
+    },
+  );
+
   test('a preview changes nothing and matches the run that follows', () async {
     await device.put('a.jpg', 'first');
     await device.put('b.jpg', 'second');

@@ -44,7 +44,7 @@ class AppController extends ChangeNotifier implements StatusSink {
     this.pathlessTimeline = false,
     BackupController? backupController,
   }) {
-    _backup = backupController;
+    _backup = backupController?..onServerChanged = _backupChangedServer;
     cache?.onWriteError = (message) {
       if (_disposed || notice == message) return;
       notice = message;
@@ -62,7 +62,17 @@ class AppController extends ChangeNotifier implements StatusSink {
   /// Optional persistent cache; tests run purely in memory without it.
   final LocalCache? cache;
   BackupController? _backup;
-  BackupController get backup => _backup ??= _createBackup();
+  BackupController get backup =>
+      _backup ??= _createBackup()..onServerChanged = _backupChangedServer;
+
+  /// A backup put files on the server, so what Drive, the Timeline and the
+  /// albums show is out of date.
+  void _backupChangedServer() {
+    if (_disposed || account == null) return;
+    unawaited(
+      _refreshAfterChange(coversChanged: false, current: () => !_disposed),
+    );
+  }
 
   BackupController _createBackup() {
     final journal = SyncJournal();
