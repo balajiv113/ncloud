@@ -295,21 +295,23 @@ void main() {
     },
   );
 
-  test(
-    'failed transfer does not consume occurrence or produce receipt; retry resumes',
-    () async {
-      final pair = await add();
-      await device.put('photo.jpg', 'original');
-      cloud.interrupted = true;
-      await runner().run(pair.id, pair.revision);
-      expect((await journal.state(pair.id))['status'], 'error');
-      expect(await journal.receipt(pair.id, 'local', ['photo.jpg']), isNull);
-      cloud.interrupted = false;
-      await runner().run(pair.id, pair.revision);
-      expect(cloud.uploads, 1);
-      expect((await journal.state(pair.id))['status'], 'success');
-    },
-  );
+  test('a failed file leaves no receipt and the next run uploads it', () async {
+    final pair = await add();
+    await device.put('photo.jpg', 'original');
+    cloud.interrupted = true;
+    await runner().run(pair.id, pair.revision);
+    expect((await journal.state(pair.id))['status'], 'partial');
+    expect(await journal.receipt(pair.id, 'local', ['photo.jpg']), isNull);
+    cloud.interrupted = false;
+    // The run finished, so that day's occurrence is used; the file is tried
+    // again at the next one.
+    await runner().run(pair.id, pair.revision);
+    expect(cloud.uploads, 0);
+    now = now.add(const Duration(days: 1));
+    await runner().run(pair.id, pair.revision);
+    expect(cloud.uploads, 1);
+    expect((await journal.state(pair.id))['status'], 'success');
+  });
 
   test(
     'foreground-service fallback and locked secure credentials fail visibly without transfers',

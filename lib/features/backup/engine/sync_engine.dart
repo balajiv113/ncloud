@@ -1,42 +1,34 @@
-import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 import '../../../core/cloud/cloud_backend.dart';
 import '../../../models.dart';
-import 'conflict_name.dart';
 import '../platform/folder_access.dart';
-import 'pair_policy.dart';
 import '../state/sync_journal.dart';
+import 'conflict_name.dart';
+import 'failure_policy.dart';
+import 'fingerprint.dart';
+import 'pair_policy.dart';
+import 'sync_progress.dart';
+
+export 'sync_progress.dart';
 
 /// Thrown by a stop check when the run should end early, such as when the user
 /// pauses or the app leaves the foreground.
 class SyncStopped implements Exception {}
 
-/// What the running backup is doing, for the screen and the notification.
-class SyncProgress {
-  String phase = '';
-
-  /// Files uploaded and confirmed on the server during this run.
-  int transferred = 0;
-
-  /// Uploads renamed because their destination already existed.
-  int conflicts = 0;
-
-  void reset() {
-    phase = '';
-    transferred = 0;
-    conflicts = 0;
-  }
-}
-
-const _maxEntries = 100000;
+/// The most device files one pair may hold. It bounds memory, not time.
+const _maxEntries = 300000;
 const _maxDepth = 64;
 
-FormatException _tooLarge() =>
-    const FormatException('This pair exceeds the supported scan size.');
+/// A file that keeps failing is left alone after this many runs, until the
+/// user retries or the file changes.
+const _maxAttempts = 5;
 
-String _key(List<String> path) => jsonEncode(path);
+FormatException _tooLarge() => const FormatException(
+  'This pair holds more files than can be backed up as one. '
+  'Choose a smaller folder.',
+);
 
 /// The revision of a server file, which a receipt records after an upload.
 /// A server that supplies none cannot be backed up to safely.
@@ -49,12 +41,34 @@ String remoteVersion(CloudFile file) {
   return '${file.etag}|${file.size}';
 }
 
+/// A file on the device that the pair's rules allow.
+class _Item {
+  _Item(this.path, this.entry);
+
+  final List<String> path;
+  final DeviceEntry entry;
+
+  /// The path as one string, to look the file up by.
+  late final String key = _pathKey(path);
+
+  /// Whether an earlier run recorded a failure for it, to be cleared on success.
+  bool hadFailure = false;
+}
+
+/// The key the journal stores a path under.
+String _pathKey(List<String> path) => jsonEncode(path);
+
 /// Uploads the files of one device folder that the server does not have yet.
 ///
-/// Every transfer creates a new file: nothing is deleted, overwritten, moved
-/// or edited, and a destination that already exists gets a renamed copy. A
-/// receipt is written only after the server confirmed an upload, so an
-/// interrupted run resumes where it stopped.
+/// Every transfer creates a new file: nothing is deleted, overwritten, moved or
+/// edited, and a destination that already exists gets a renamed copy. A receipt
+/// is written only after the server confirmed an upload, so an interrupted run
+/// resumes where it stopped.
+///
+/// It is built to stay cheap with a very large library. The server is never
+/// asked to list a folder to confirm an upload, receipts are read in groups,
+/// and one file that cannot be backed up is recorded and skipped instead of
+/// ending the run.
 class SyncEngine {
   SyncEngine({
     required this.client,
@@ -63,7 +77,10 @@ class SyncEngine {
     required this.progress,
     required this.check,
     required this.onChanged,
-  });
+    DateTime Function()? clock,
+    Future<void> Function(Duration)? pause,
+  }) : _clock = clock ?? DateTime.now,
+       _pause = pause ?? Future<void>.delayed;
 
   final CloudBackend client;
   final FolderAccess access;
@@ -73,9 +90,23 @@ class SyncEngine {
   /// Throws [SyncStopped] when the run should end. Called between every step.
   final void Function(FolderPair pair) check;
   final void Function() onChanged;
+  final DateTime Function() _clock;
+  final Future<void> Function(Duration) _pause;
+
+  DateTime _notified = DateTime.fromMillisecondsSinceEpoch(0);
+  DateTime? _networkChecked;
 
   void _status(String phase) {
     progress.phase = phase;
+    onChanged();
+  }
+
+  /// Tells the screen something changed, at most a few times a second, so a
+  /// fast run does not spend its time redrawing.
+  void _tick() {
+    final now = _clock();
+    if (now.difference(_notified) < const Duration(milliseconds: 250)) return;
+    _notified = now;
     onChanged();
   }
 
@@ -84,32 +115,43 @@ class SyncEngine {
     checkSyncPath(pair.cloudRoot);
     validateConcurrency(pair.uploadConcurrency);
     _status('Checking Wi-Fi');
-    await _requireNetwork(pair);
+    await _requireNetwork(pair, fresh: true);
     _status('Reading selected device folder');
     // A complete inventory precedes any transfer, so a permission error is
     // never mistaken for an empty source.
     final local = await _scanDevice(pair);
-    _status('Reading cloud destination');
+    progress.found = local.length;
+    _status('Checking what is already backed up');
+    final todo = await _classify(pair, local);
+    _status('Preparing the destination');
     await _ensureCloudRoot(session, pair);
-    final remote = await _scanCloud(session, pair);
-    await _upload(session, pair, local, remote);
+    if (todo.isNotEmpty) {
+      _status('Uploading');
+      await _upload(session, pair, todo);
+    }
     check(pair);
   }
 
-  Future<void> _requireNetwork(FolderPair pair) async {
+  Future<void> _requireNetwork(FolderPair pair, {bool fresh = false}) async {
     check(pair);
     if (!pair.wifiOnly) return;
+    final now = _clock();
+    // Asking the phone for every file would cost more than the check is worth.
+    if (!fresh &&
+        _networkChecked != null &&
+        now.difference(_networkChecked!) < const Duration(seconds: 10)) {
+      return;
+    }
     if (!(await access.conditions()).wifi) {
       throw const FormatException('Waiting for Wi-Fi. Connect and retry.');
     }
+    _networkChecked = now;
   }
 
   /// Every file under the device folder that the pair's rules allow.
-  Future<Map<String, (List<String>, DeviceEntry)>> _scanDevice(
-    FolderPair pair,
-  ) async {
+  Future<List<_Item>> _scanDevice(FolderPair pair) async {
     final album = pair.folder.kind == DeviceSourceKind.photoAlbum;
-    final found = <String, (List<String>, DeviceEntry)>{};
+    final found = <_Item>[];
     final folders = <List<String>>[[]];
     var visited = 0;
     while (folders.isNotEmpty) {
@@ -141,115 +183,177 @@ class SyncEngine {
             'The folder provider supplies no file size.',
           );
         }
-        found[_key(child)] = (child, item);
+        found.add(_Item(child, item));
       }
     }
     return found;
   }
 
+  /// Works out which files need uploading: those with no receipt for their
+  /// current version, newest first so recent photos arrive soonest. Receipts
+  /// are read in groups, so the cost grows with the library, not with the
+  /// library times the number of queries.
+  Future<List<_Item>> _classify(FolderPair pair, List<_Item> local) async {
+    final todo = <_Item>[];
+    final anyFailures = await journal.failureCount(pair.id) > 0;
+    const group = 400;
+    for (var start = 0; start < local.length; start += group) {
+      check(pair);
+      final chunk = local.sublist(
+        start,
+        (start + group).clamp(0, local.length),
+      );
+      final receipts = await journal.receiptsFor(pair.id, [
+        for (final item in chunk) item.path,
+      ]);
+      final failures = anyFailures
+          ? await journal.failuresFor(pair.id, [
+              for (final item in chunk) item.path,
+            ])
+          : const <String, StoredFailure>{};
+      for (final item in chunk) {
+        final version = item.entry.version;
+        if (receipts[item.key]?.version == version) {
+          progress.alreadyBackedUp++;
+          continue;
+        }
+        final failure = failures[item.key];
+        if (failure != null) {
+          item.hadFailure = true;
+          if (failure.version == version && failure.attempts >= _maxAttempts) {
+            progress.blocked++;
+            continue;
+          }
+        }
+        todo.add(item);
+      }
+    }
+    todo.sort((a, b) => b.entry.modified.compareTo(a.entry.modified));
+    progress
+      ..toUpload = todo.length
+      ..bytesTotal = todo.fold(
+        0,
+        (sum, i) => sum + (i.entry.size > 0 ? i.entry.size : 0),
+      );
+    return todo;
+  }
+
   /// Makes sure the pair's cloud folder exists, creating it when it does not.
   Future<void> _ensureCloudRoot(Account session, FolderPair pair) async {
-    final children = (await client.listFolder(session, pair.remote)).children;
+    final root = await client.stat(session, pair.cloudRoot);
     check(pair);
-    final folder = children
-        .where((file) => file.name == pair.folder.name)
-        .singleOrNull;
-    if (folder == null) {
-      await client.createFolder(session, pair.cloudRoot);
-    } else if (!folder.isDirectory) {
+    if (root == null) {
+      await client.ensureFolder(session, pair.cloudRoot);
+    } else if (!root.isDirectory) {
       throw const FormatException(
         'A file blocks the selected folder name on the server. Choose another destination.',
       );
     }
   }
 
-  /// Every file already under the pair's cloud folder that its rules allow.
-  Future<Map<String, (List<String>, CloudFile)>> _scanCloud(
-    Account session,
-    FolderPair pair,
-  ) async {
-    final found = <String, (List<String>, CloudFile)>{};
-    final folders = <List<String>>[[]];
-    var visited = 0;
-    while (folders.isNotEmpty) {
-      check(pair);
-      if (++visited > _maxEntries) throw _tooLarge();
-      final path = folders.removeLast();
-      final listing = await client.listFolder(session, [
-        ...pair.cloudRoot,
-        ...path,
-      ]);
-      for (final item in listing.children) {
-        // Never follow a listing outside the folder that was requested.
-        final expected = [...pair.cloudRoot, ...path, item.name];
-        checkSyncPath(expected);
-        if (_key(expected) != _key(item.path) || item.albumReference != null) {
-          throw const FormatException(
-            'The server returned an unexpected file path.',
-          );
-        }
-        final child = [...path, item.name];
-        if (child.length > _maxDepth || found.length > _maxEntries) {
-          throw _tooLarge();
-        }
-        if (item.isDirectory) {
-          if (pair.rules.visits(child)) folders.add(child);
-          continue;
-        }
-        if (!pair.rules.allows(child, contentType: item.contentType)) continue;
-        remoteVersion(item);
-        found[_key(child)] = (child, item);
-      }
-    }
-    return found;
-  }
-
   Future<void> _upload(
     Account session,
     FolderPair pair,
-    Map<String, (List<String>, DeviceEntry)> local,
-    Map<String, (List<String>, CloudFile)> remote,
+    List<_Item> todo,
   ) async {
-    final uploader = _Uploader(this, session, pair, remote);
-    await runConcurrently(
-      local.values.toList(),
-      pair.uploadConcurrency,
-      uploader.upload,
-    );
+    progress.begin(_clock());
+    final worker = _Uploader(this, session, pair);
+    try {
+      await runConcurrently(todo, pair.uploadConcurrency, worker.upload);
+    } finally {
+      await worker.finish();
+    }
   }
 }
 
-/// One run's uploads: decides each file's destination and sends it.
+/// One run's uploads: sends each file, with retries, and records the outcome.
 class _Uploader {
-  _Uploader(this.engine, this.session, this.pair, this.remote);
+  _Uploader(this.engine, this.session, this.pair);
 
   final SyncEngine engine;
   final Account session;
   final FolderPair pair;
-  final Map<String, (List<String>, CloudFile)> remote;
+  final FailureBreaker _breaker = FailureBreaker();
 
-  /// Destinations chosen by uploads still in progress.
-  final Set<String> _reserved = {};
+  /// Folders known to exist, so a folder is checked once however many files go
+  /// into it. A creation in progress is shared by the workers waiting on it.
+  final Map<String, Future<void>> _folders = {};
 
-  /// Folder creation is serialized so parallel uploads do not race on it.
-  Future<void> _folders = Future<void>.value();
+  final List<Receipt> _pending = [];
+  DateTime _flushed = DateTime.fromMillisecondsSinceEpoch(0);
+  DateTime _saved = DateTime.fromMillisecondsSinceEpoch(0);
+  Future<void> _writing = Future<void>.value();
 
   CloudBackend get _client => engine.client;
   FolderAccess get _access => engine.access;
   SyncJournal get _journal => engine.journal;
+  SyncProgress get _progress => engine.progress;
 
-  Future<void> upload((List<String>, DeviceEntry) entry) async {
-    final (path, file) = entry;
+  Future<void> upload(_Item item) async {
     engine.check(pair);
-    if (await _alreadyUploaded(path, file)) return;
-    var target = path;
-    while (remote.containsKey(_key(target)) ||
-        _reserved.contains(_key(target))) {
-      target = _conflict(target);
+    for (var attempt = 0; ; attempt++) {
+      try {
+        await _send(item);
+        _breaker.succeeded();
+        if (item.hadFailure) await _journal.clearFailure(pair.id, item.path);
+        return;
+      } on SyncStopped {
+        rethrow;
+      } on Object catch (error) {
+        final kind = classifyFailure(error);
+        if (kind == FailureKind.fatal) rethrow;
+        if (kind == FailureKind.transient) {
+          final wait = retryDelay(attempt);
+          if (wait != null) {
+            await _wait(wait);
+            continue;
+          }
+        }
+        await _fail(
+          item,
+          error,
+          attempt + 1,
+          connection: kind == FailureKind.transient,
+        );
+        return;
+      }
     }
-    _reserved.add(_key(target));
+  }
+
+  /// Waits for [duration] in short steps, so a stop request is still heard.
+  Future<void> _wait(Duration duration) async {
+    var left = duration;
+    const step = Duration(milliseconds: 500);
+    while (left > Duration.zero) {
+      engine.check(pair);
+      final now = left < step ? left : step;
+      await engine._pause(now);
+      left -= now;
+    }
+  }
+
+  /// Records that [item] could not be backed up and moves on. A run that keeps
+  /// failing for a reason that is not about the file stops instead.
+  Future<void> _fail(
+    _Item item,
+    Object error,
+    int attempts, {
+    required bool connection,
+  }) async {
+    final failure = describeFileFailure(item.path, error, attempts: attempts);
+    _progress.failed++;
+    await _journal.recordFailure(pair.id, failure, item.entry.version);
+    if (_breaker.failed(failure.message, connection: connection)) {
+      throw CloudException(_breaker.message, retryable: connection);
+    }
+  }
+
+  Future<void> _send(_Item item) async {
+    final path = item.path;
+    final file = item.entry;
     await engine._requireNetwork(pair);
-    engine._status('Uploading ${file.name}');
+    _progress.current = file.name;
+    engine._tick();
     File? staged;
     try {
       staged = await _access.export(pair.folder.token, path, file);
@@ -260,90 +364,151 @@ class _Uploader {
           'The source changed while preparing it. Run again.',
         );
       }
-      await _ensureParents(target);
+      final fingerprint = await fingerprintOf(staged);
       engine.check(pair);
-      await engine._requireNetwork(pair);
-      await _client.uploadNew(
-        session,
-        [...pair.cloudRoot, ...target],
-        staged.openRead(),
-        size,
-      );
-      final confirmed = await _confirm(target, size);
-      final version = remoteVersion(confirmed);
-      await _journal.confirm(pair.id, path, file.version, target, version);
-      remote[_key(target)] = (target, confirmed);
-      engine.progress.transferred++;
-      await _journal.writeState(pair.id, {
-        'transferred': engine.progress.transferred,
-        'phase': engine.progress.phase,
-      });
-      engine.onChanged();
+      var target = path;
+      for (var renamed = 0; ; renamed++) {
+        await _ensureParents(target);
+        engine.check(pair);
+        await engine._requireNetwork(pair);
+        try {
+          final result = await _client.uploadNew(
+            session,
+            [...pair.cloudRoot, ...target],
+            staged.openRead(),
+            size,
+            sha1: fingerprint,
+            modified: DateTime.fromMillisecondsSinceEpoch(file.modified),
+          );
+          final etag = result.etag;
+          if (etag == null || etag.isEmpty) {
+            throw const FormatException(
+              'The server did not supply a file revision. Sync stopped safely.',
+            );
+          }
+          await _record(item, target, '$etag|$size', fingerprint, size);
+          _progress.uploaded(size, engine._clock());
+          engine._tick();
+          return;
+        } on CloudException catch (error) {
+          if (error.statusCode != 412) rethrow;
+          // Something is already there. The same file means an earlier run
+          // uploaded it and lost its receipt; anything else keeps both.
+          final existing = await _client.stat(session, [
+            ...pair.cloudRoot,
+            ...target,
+          ]);
+          if (existing != null &&
+              !existing.isDirectory &&
+              existing.size == size &&
+              existing.sha1 == fingerprint &&
+              existing.etag?.isNotEmpty == true) {
+            await _record(
+              item,
+              target,
+              '${existing.etag}|${existing.size}',
+              fingerprint,
+              size,
+            );
+            _progress.wasOnServer(size);
+            engine._tick();
+            return;
+          }
+          if (renamed >= 3) {
+            throw CloudException(
+              'No free name was found for ${path.last} on the server.',
+            );
+          }
+          target = _conflict(target);
+        }
+      }
     } finally {
       if (staged != null) await _access.discard(staged);
     }
   }
 
-  /// Whether a receipt shows this exact file was already uploaded and the
-  /// server still has it unchanged.
-  Future<bool> _alreadyUploaded(List<String> path, DeviceEntry file) async {
-    final receipt = await _journal.receipt(pair.id, 'local', path);
-    if (receipt == null || receipt['version'] != file.version) return false;
-    final target = (jsonDecode(receipt['target'] as String) as List)
-        .cast<String>();
-    final onServer = remote[_key(target)];
-    return onServer != null &&
-        remoteVersion(onServer.$2) == receipt['target_version'];
-  }
-
   List<String> _conflict(List<String> path) {
-    engine.progress.conflicts++;
+    _progress.conflicts++;
     return conflictName(path, 'device');
   }
 
-  /// The server's record of the upload, which must match what was sent.
-  Future<CloudFile> _confirm(List<String> target, int size) async {
-    final listing = await _client.listFolder(session, [
-      ...pair.cloudRoot,
-      ...target.take(target.length - 1),
-    ]);
-    final confirmed = listing.children
-        .where((item) => item.name == target.last && !item.isDirectory)
-        .single;
-    if (confirmed.size != size) {
-      throw const FormatException(
-        'Upload size was not confirmed. Run again to reconcile.',
-      );
+  /// Makes sure every folder above [target] exists, checking each folder once.
+  Future<void> _ensureParents(List<String> target) async {
+    for (var depth = 1; depth < target.length; depth++) {
+      final folder = target.take(depth).toList();
+      final key = _pathKey(folder);
+      final known = _folders[key];
+      if (known != null) {
+        await known;
+        continue;
+      }
+      final creating = _ensureFolder(folder);
+      _folders[key] = creating;
+      try {
+        await creating;
+      } on Object {
+        // Let the next file try again.
+        _folders.remove(key);
+        rethrow;
+      }
     }
-    return confirmed;
   }
 
-  Future<void> _ensureParents(List<String> target) async {
-    final previous = _folders;
-    final ready = Completer<void>();
-    _folders = ready.future;
-    try {
-      await previous;
-      var parent = List.of(pair.cloudRoot);
-      for (final segment in target.take(target.length - 1)) {
-        engine.check(pair);
-        final children = (await _client.listFolder(session, parent)).children;
-        engine.check(pair);
-        final match = children
-            .where((file) => file.name == segment)
-            .singleOrNull;
-        parent = [...parent, segment];
-        if (match == null) {
-          await _client.createFolder(session, parent);
-        } else if (!match.isDirectory) {
-          throw const FormatException(
-            'A file blocks a destination folder. Choose another destination.',
-          );
-        }
-      }
-    } finally {
-      ready.complete();
+  Future<void> _ensureFolder(List<String> folder) async {
+    final path = [...pair.cloudRoot, ...folder];
+    final found = await _client.stat(session, path);
+    if (found == null) {
+      await _client.ensureFolder(session, path);
+    } else if (!found.isDirectory) {
+      throw const FormatException(
+        'A file blocks a destination folder. Choose another destination.',
+      );
     }
+  }
+
+  Future<void> _record(
+    _Item item,
+    List<String> target,
+    String version,
+    String fingerprint,
+    int size,
+  ) async {
+    _pending.add(
+      Receipt(
+        path: item.path,
+        version: item.entry.version,
+        target: target,
+        targetVersion: version,
+        fingerprint: fingerprint,
+        size: size,
+      ),
+    );
+    final now = engine._clock();
+    if (_pending.length >= 25 ||
+        now.difference(_flushed) > const Duration(seconds: 3)) {
+      await _flush();
+    }
+    if (now.difference(_saved) > const Duration(seconds: 2)) {
+      _saved = now;
+      await _journal.writeState(pair.id, {
+        ..._progress.toJson(),
+        'phase': _progress.phase,
+      });
+    }
+  }
+
+  /// Writes the receipts gathered so far, one batch at a time.
+  Future<void> _flush() {
+    final batch = List.of(_pending);
+    _pending.clear();
+    _flushed = engine._clock();
+    return _writing = _writing.then((_) => _journal.confirmAll(pair.id, batch));
+  }
+
+  /// Saves what is left, whether the run finished or stopped.
+  Future<void> finish() async {
+    await _flush();
+    await _writing;
   }
 }
 

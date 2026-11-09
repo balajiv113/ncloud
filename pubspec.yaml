@@ -10,6 +10,7 @@ dependencies:
   flutter:
     sdk: flutter
   http: ^1.6.0
+  crypto: ^3.0.6
   xml: ^6.6.1
   flutter_secure_storage: ^9.2.4
   file_picker: ^10.3.7

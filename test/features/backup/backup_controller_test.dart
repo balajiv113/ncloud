@@ -217,21 +217,50 @@ class CloudFolders implements CloudBackend {
     }
   }
 
+  final checksums = <String, String?>{};
+
   @override
-  Future<void> uploadNew(
+  Future<UploadResult> uploadNew(
     Account account,
     List<String> path,
     Stream<List<int>> bytes,
-    int size,
-  ) async {
+    int size, {
+    String? sha1,
+    DateTime? modified,
+  }) async {
     await holdUpload?.call();
     beforeUpload?.call();
     final name = path.join('/');
-    if (files.containsKey(name)) throw const CloudException('Already exists');
+    if (files.containsKey(name)) {
+      throw const CloudException('Already exists', statusCode: 412);
+    }
     final content = await bytes.expand((chunk) => chunk).toList();
     if (interrupted) throw const CloudException('Transfer interrupted');
     files[name] = (content, ++revision);
+    checksums[name] = sha1;
     uploads++;
+    return UploadResult(etag: '"$revision"');
+  }
+
+  @override
+  Future<RemoteStat?> stat(Account account, List<String> path) async {
+    final name = path.join('/');
+    if (listingFails) throw const CloudException('Listing failed');
+    if (folders.contains(name)) return const RemoteStat(isDirectory: true);
+    final value = files[name];
+    return value == null
+        ? null
+        : RemoteStat(
+            isDirectory: false,
+            size: value.$1.length,
+            etag: '"${value.$2}"',
+            sha1: checksums[name],
+          );
+  }
+
+  @override
+  Future<void> ensureFolder(Account account, List<String> path) async {
+    folders.add(path.join('/'));
   }
 
   @override
@@ -479,10 +508,16 @@ void main() {
       };
       final value = await pair(concurrency: 3, inBackground: true);
       await sync.run(value);
-      expect(sync.error, 'First upload failed');
-      expect(started, 3);
-      expect(cloud.uploads, 2);
-      expect(sync.transferred, 2);
+      // One file failing does not end the run: the other five upload.
+      expect(sync.error, isNull);
+      expect(started, 6);
+      expect(cloud.uploads, 5);
+      expect(sync.transferred, 5);
+      final state = sync.results[value.id]!;
+      expect(state['status'], 'partial');
+      expect(state['failed'], 1);
+      expect(state['firstFailure'], 'First upload failed');
+      expect(await sync.journal.failureCount(value.id), 1);
       expect(sync.activeId, isNull);
       expect(device.staging.listSync(), isEmpty);
       expect(background.stops, 1);
@@ -490,6 +525,8 @@ void main() {
       await sync.run(value);
       expect(sync.error, isNull);
       expect(cloud.uploads, 6);
+      expect(sync.results[value.id]!['status'], 'success');
+      expect(await sync.journal.failureCount(value.id), 0);
     },
   );
 
@@ -609,7 +646,7 @@ void main() {
   });
 
   test(
-    'previously flattened files stay untouched when backup includes the source folder',
+    'a file with a receipt is not uploaded again, and an older copy stays untouched',
     () async {
       await device.put('nested/file.txt', 'original');
       final value = await pair();
@@ -624,21 +661,13 @@ void main() {
       );
       await sync.run(value);
       expect(sync.error, isNull);
-      expect(
-        cloud.files.keys,
-        containsAll([
-          'Backup/nested/file.txt',
-          'Backup/Selected/nested/file.txt',
-        ]),
-      );
-      expect(
-        cloud.files.values.map((f) => utf8.decode(f.$1)),
-        everyElement('original'),
-      );
-      expect(cloud.uploads, 1);
+      // A receipt means the file is backed up, so nothing is uploaded again and
+      // the older copy is left exactly as it is.
+      expect(cloud.files.keys, ['Backup/nested/file.txt']);
+      expect(cloud.uploads, 0);
       await sync.run(value);
       expect(sync.error, isNull);
-      expect(cloud.uploads, 1);
+      expect(cloud.uploads, 0);
       expect(device.imports, 0);
     },
   );
@@ -723,7 +752,7 @@ void main() {
     },
   );
 
-  test('failed remote scan never starts transfers', () async {
+  test('a failed destination check never starts transfers', () async {
     await device.put('keep.txt', 'local');
     final value = await pair();
     cloud.listingFails = true;
@@ -740,7 +769,8 @@ void main() {
       final value = await pair();
       cloud.interrupted = true;
       await sync.run(value);
-      expect(sync.error, isNotNull);
+      expect(sync.error, isNull);
+      expect(sync.results[value.id]!['status'], 'partial');
       expect(
         await sync.journal.receipt(value.id, 'local', ['file.txt']),
         isNull,
@@ -750,21 +780,28 @@ void main() {
       await sync.run(value);
       expect(sync.error, isNull);
       expect(cloud.uploads, 1);
+      expect(sync.results[value.id]!['status'], 'success');
     },
   );
 
-  test('destination races never overwrite cloud files', () async {
+  test('destination races never overwrite; both versions are kept', () async {
     await device.put('file.txt', 'source');
     final value = await pair();
     cloud.beforeUpload = () =>
         cloud.put('Backup/Selected/file.txt', 'racing content');
     await sync.run(value);
-    expect(sync.error, isNotNull);
+    expect(sync.error, isNull);
+    // What arrived first is untouched, and the upload went beside it.
     expect(
       utf8.decode(cloud.files['Backup/Selected/file.txt']!.$1),
       'racing content',
     );
-    expect(await sync.journal.receipt(value.id, 'local', ['file.txt']), isNull);
+    final copy = cloud.files.keys.singleWhere(
+      (name) => name.contains('ncloud device'),
+    );
+    expect(utf8.decode(cloud.files[copy]!.$1), 'source');
+    final receipt = await sync.journal.receipt(value.id, 'local', ['file.txt']);
+    expect(receipt, isNotNull);
   });
 
   test('Wi-Fi policy blocks work without losing pending files', () async {
@@ -868,7 +905,8 @@ void main() {
       await sync.run(value);
       expect(sync.error, isNull);
       expect(cloud.uploads, 1);
-      expect(calls.where((method) => method == 'conditions'), hasLength(4));
+      // Wi-Fi is checked at the start of each run and not again for every file.
+      expect(calls.where((method) => method == 'conditions'), hasLength(2));
       expect(calls, isNot(contains('pick')));
       expect(device.picks, 0);
     },

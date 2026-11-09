@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
@@ -1874,12 +1875,14 @@ class NextcloudClient implements CloudBackend {
   }
 
   @override
-  Future<void> uploadNew(
+  Future<UploadResult> uploadNew(
     Account account,
     List<String> path,
     Stream<List<int>> bytes,
-    int size,
-  ) async {
+    int size, {
+    String? sha1,
+    DateTime? modified,
+  }) async {
     validateName(path.last);
     final request = _UploadRequest(davUri(account, path), bytes)
       ..contentLength = size
@@ -1889,21 +1892,87 @@ class NextcloudClient implements CloudBackend {
         'Content-Type': 'application/octet-stream',
         'If-None-Match': '*',
         'User-Agent': 'ncloud/0.5.5',
+        // The server checks the content against this and keeps it.
+        'OC-Checksum': ?sha1 == null ? null : 'SHA1:$sha1',
+        'X-OC-Mtime': ?modified == null
+            ? null
+            : '${modified.millisecondsSinceEpoch ~/ 1000}',
       });
+    // A slow link needs time in proportion to the file: allow for 256 KB/s.
+    final allowance = Duration(seconds: math.max(600, size ~/ 262144));
     try {
       final response = await http.Response.fromStream(
-        await _transport.send(request).timeout(const Duration(minutes: 10)),
+        await _transport.send(request).timeout(allowance),
       ).timeout(_timeout);
       _expect(response, {201, 204});
+      return UploadResult(
+        etag: response.headers['oc-etag'] ?? response.headers['etag'],
+        fileId: response.headers['oc-fileid'],
+      );
     } on TimeoutException {
       throw const CloudException(
-        'Upload timed out. Refresh the folder to check whether the file arrived.',
+        'Upload timed out. It will be retried.',
+        retryable: true,
       );
     } on http.ClientException {
       throw const CloudException(
-        'Upload interrupted. Refresh the folder before trying again.',
+        'Upload interrupted. It will be retried.',
+        retryable: true,
       );
     }
+  }
+
+  @override
+  Future<RemoteStat?> stat(Account account, List<String> path) async {
+    final response = await _request(
+      'PROPFIND',
+      davUri(account, path),
+      account: account,
+      headers: {'Depth': '0', 'Content-Type': 'application/xml; charset=utf-8'},
+      body: '''
+        <d:propfind xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns">
+          <d:prop><d:resourcetype/><d:getcontentlength/><d:getetag/><oc:checksums/></d:prop>
+        </d:propfind>
+      ''',
+    );
+    if (response.statusCode == 404) return null;
+    _expect(response, {207});
+    final document = XmlDocument.parse(response.body);
+    final props = document
+        .findAllElements('prop', namespace: 'DAV:')
+        .firstOrNull;
+    if (props == null) return null;
+    String? text(String name, [String ns = 'DAV:']) =>
+        props.getElement(name, namespace: ns)?.innerText;
+    // The server lists every checksum it holds in one element, separated by
+    // spaces, in no fixed order.
+    final sha1 = props
+        .getElement('checksums', namespace: 'http://owncloud.org/ns')
+        ?.findAllElements('checksum', namespace: 'http://owncloud.org/ns')
+        .expand((e) => e.innerText.split(RegExp(r'\s+')))
+        .where((value) => value.toUpperCase().startsWith('SHA1:'))
+        .map((value) => value.substring(5).toLowerCase())
+        .firstOrNull;
+    return RemoteStat(
+      isDirectory: props
+          .findAllElements('collection', namespace: 'DAV:')
+          .isNotEmpty,
+      size: int.tryParse(text('getcontentlength') ?? '') ?? 0,
+      etag: text('getetag'),
+      sha1: sha1,
+    );
+  }
+
+  @override
+  Future<void> ensureFolder(Account account, List<String> path) async {
+    validateName(path.last);
+    final response = await _request(
+      'MKCOL',
+      davUri(account, path),
+      account: account,
+    );
+    // 405 means it is already there.
+    _expect(response, {201, 405});
   }
 
   @override
