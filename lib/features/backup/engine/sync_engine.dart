@@ -484,8 +484,11 @@ class _Uploader {
           if (existing != null &&
               !existing.isDirectory &&
               existing.size == size &&
-              existing.sha1 == fingerprint &&
-              existing.etag?.isNotEmpty == true) {
+              existing.etag?.isNotEmpty == true &&
+              await _holds(existing, [
+                ...pair.cloudRoot,
+                ...target,
+              ], fingerprint)) {
             await _record(
               item,
               target,
@@ -651,6 +654,23 @@ class _Uploader {
     _progress.wasMoved(size);
     engine._tick();
     return true;
+  }
+
+  /// Whether the server file is exactly [fingerprint]. A file uploaded by an
+  /// older version carries no checksum, so its content is read back and
+  /// compared; that is slower, but it is the only way to be sure it is the same
+  /// file and not a different one with the same name and size.
+  Future<bool> _holds(
+    RemoteStat existing,
+    List<String> path,
+    String fingerprint,
+  ) async {
+    if (existing.sha1 != null) return existing.sha1 == fingerprint;
+    final download = await _client.download(
+      session,
+      CloudFile(path: path, name: path.last, isDirectory: false),
+    );
+    return await fingerprintOfStream(download.stream) == fingerprint;
   }
 
   List<String> _conflict(List<String> path) {

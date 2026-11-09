@@ -551,6 +551,47 @@ void main() {
     );
   });
 
+  group('backing up again', () {
+    test('finds files an older version uploaded without a checksum', () async {
+      server.dropFingerprints = true;
+      for (var i = 0; i < 5; i++) {
+        device.add('f$i.jpg', bytes(i));
+      }
+      await run();
+      await journal.resetReceipts('p');
+      await run();
+      expect(server.files.length, 5);
+      expect(server.uploads, 5);
+      expect(progress.conflicts, 0);
+      expect(progress.recognised, 5);
+      expect(server.downloads, 5);
+    });
+
+    test('does not read files back when the server has the checksum', () async {
+      for (var i = 0; i < 5; i++) {
+        device.add('f$i.jpg', bytes(i));
+      }
+      await run();
+      await journal.resetReceipts('p');
+      await run();
+      expect(server.files.length, 5);
+      expect(server.downloads, 0);
+    });
+
+    test(
+      'keeps both when the name and size match but the content differs',
+      () async {
+        server.dropFingerprints = true;
+        device.add('a.jpg', bytes(1));
+        await run();
+        await journal.resetReceipts('p');
+        device.add('a.jpg', [9, 9, 9, ...bytes(1).skip(3)]);
+        await run();
+        expect(server.files.length, 2);
+      },
+    );
+  });
+
   group('a file that changes on the device', () {
     test(
       'touched but unchanged is not uploaded again, even without a stored checksum',
