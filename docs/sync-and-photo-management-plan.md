@@ -26,26 +26,26 @@ both platforms. Only a thin layer underneath differs.
 
 ### 1. A link with a few plain settings, not modes
 
-A **link** joins a *source on the phone* to a *folder on the server*. Each link has
-the same few settings, each a plain question with plain answers:
+A **link** joins a *source on the phone* to a *folder on the server*. A link does
+the same thing every time, with no behaviour to pick:
+
+* **New photos and files** on the phone are uploaded.
+* **A photo moved to another album or folder** on the phone is moved to the
+  matching folder on the server. A move loses nothing: it is the same file in a new
+  folder, so this is always on.
+* **A photo deleted on the phone** stays on the server, always. Removing things
+  from the server is a separate, visible step you take in the app (see "Cleaning
+  up the server").
+
+The only settings are about *when*, and one for folders:
 
 | Setting | Answers | Default |
 | --- | --- | --- |
-| **New photos on my phone** | Always uploaded | (fixed) |
-| **When I move a photo on my phone** | Move it on the server too / Leave the server alone | Move it |
-| **Bring server changes to this phone** (folders only) | Off / On | Off |
 | When it runs | Wi-Fi only, charging only, daily time | Wi-Fi only |
-
-Deleting on the phone is deliberately **not** a setting. A photo deleted on the
-phone stays on the server, always. Removing things from the server is a separate,
-visible step you take in the app (see "Cleaning up the server").
+| **Bring server changes to this phone** (folders only) | Off / On | Off |
 
 There is no "mode" to understand. Someone who only wants a backup changes nothing.
 Someone who tidies albums on the phone gets their moves.
-
-Moving is safe to follow by default: a move loses nothing, because the file is the
-same file in a new folder. Nothing on the server is ever deleted because of
-something done on the phone.
 
 Sources a link can use:
 
@@ -136,16 +136,17 @@ answer, with the safeguards below, if it turns out you want it:
 The phone is never changed by the app, with two exceptions you ask for: *Free up
 space*, and folders bringing server changes down.
 
-## Switching settings
+## The first time after an update
 
-Settings can be changed at any time, in any direction. They share one ledger, so
-changing them never re-uploads anything and never forgets what was synced.
+Moves are followed from now on. Photos you moved on the phone *before* a link
+followed moves may sit in a different server folder than on the phone. The first
+run therefore shows a one-time preview: "38 photos are in a different folder than
+on your phone. Move them to match?" with the exact list. Nothing moves until you
+confirm. After that, moves just happen.
 
-Choosing **Move it** shows the photos that sit in a different folder than on the
-phone and offers to move them, with the exact list. Nothing moves until you
-confirm. Choosing **Leave the server alone** simply stops following moves.
-
-A change made while a run is going takes effect when that run finishes.
+Settings can be changed at any time. They share one ledger, so changing them never
+re-uploads anything and never forgets what was synced. A change made while a run
+is going takes effect when that run finishes.
 
 ## What happens when I delete an album or folder on the phone?
 
@@ -190,8 +191,6 @@ days, behind the system confirmation.
 folders. One photo-and-videos link backs up both as `Camera/` and `Trips/` on the
 server. Later you move a photo from `Camera` to `Trips`. Next run it is recognised
 (same photo, new folder) and **moved** on the server. Nothing is uploaded twice.
-If you chose "Leave the server alone", it stays in `Camera/` and you can move it
-in Drive.
 
 **2. Albums I want gone.** Delete the album on the phone: the server keeps
 everything. When you want the server cleaned too, open **Not on your phone any
@@ -347,5 +346,6 @@ device are their first check, so each is kept small and lands on its own.
    later?
 2. **Free up space** is in the first Android release, since it is what lets you
    empty the phone after backing up. (Proposed: yes.)
-3. Existing folder backups keep running exactly as they are until you opt in.
-   (Proposed: yes; their move setting starts as "Leave the server alone".)
+3. Existing folder backups get moves too, since a move loses nothing. The first
+   time, they show the one-time "move them to match?" preview and wait for your
+   tap. (Proposed: yes.)
