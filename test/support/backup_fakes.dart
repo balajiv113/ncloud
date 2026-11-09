@@ -73,6 +73,20 @@ class FakeServer implements CloudBackend {
     return UploadResult(etag: files[name]!.etag);
   }
 
+  int downloads = 0;
+
+  @override
+  Future<CloudDownload> download(
+    Account account,
+    CloudFile file, {
+    String? expectedRevision,
+  }) async {
+    downloads++;
+    final value = files[file.path.join('/')];
+    if (value == null) throw const CloudException('gone', statusCode: 404);
+    return CloudDownload(file, Stream.value(value.bytes));
+  }
+
   int moves = 0;
 
   @override

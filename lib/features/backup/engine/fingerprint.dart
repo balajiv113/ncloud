@@ -10,3 +10,8 @@ import 'package:crypto/crypto.dart';
 /// upload and checks the upload against it.
 Future<String> fingerprintOf(File file) async =>
     (await sha1.bind(file.openRead()).first).toString();
+
+/// The same fingerprint of bytes that are being read, such as a file on the
+/// server.
+Future<String> fingerprintOfStream(Stream<List<int>> bytes) async =>
+    (await sha1.bind(bytes).first).toString();
