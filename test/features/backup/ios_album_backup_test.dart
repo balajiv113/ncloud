@@ -69,7 +69,11 @@ class BatchRunner implements HeadlessBackupRunner {
   final Future<void> Function(String id, String revision) callback;
   bool stopped = false;
   @override
-  Future<bool> run(String pairId, String revision) async {
+  Future<bool> run(
+    String pairId,
+    String revision, {
+    bool onChange = false,
+  }) async {
     await callback(pairId, revision);
     return true;
   }

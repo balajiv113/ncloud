@@ -32,6 +32,7 @@ class _BackupSetupScreenState extends State<BackupSetupScreen> {
   FolderPair? _pair;
   List<String>? _destination;
   bool _daily = false;
+  bool _onNewPhotos = false;
   bool _wifiOnly = true;
   bool _busy = false;
   TimeOfDay _time = const TimeOfDay(hour: 14, minute: 0);
@@ -47,6 +48,7 @@ class _BackupSetupScreenState extends State<BackupSetupScreen> {
     _exclude = TextEditingController(text: pair?.rules.excludeText ?? '');
     _wifiOnly = pair?.wifiOnly ?? true;
     _daily = pair?.schedule != null;
+    _onNewPhotos = pair?.schedule?.onNewPhotos ?? false;
     if (pair?.schedule case final schedule?) {
       _time = TimeOfDay(hour: schedule.hour, minute: schedule.minute);
     }
@@ -180,6 +182,7 @@ class _BackupSetupScreenState extends State<BackupSetupScreen> {
             _time.hour,
             _time.minute,
             previous: _pair?.schedule,
+            onNewPhotos: sync.android && _onNewPhotos,
           )
         : null;
     await sync.add(
@@ -303,6 +306,19 @@ class _BackupSetupScreenState extends State<BackupSetupScreen> {
                 ? null
                 : (value) => setState(() => _daily = value!),
           ),
+          if (_daily && sync.android)
+            SwitchListTile.adaptive(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Also when new photos arrive'),
+              subtitle: const Text(
+                'Back up a minute or so after photos or videos are added, '
+                'not only at the daily time.',
+              ),
+              value: _onNewPhotos,
+              onChanged: _busy
+                  ? null
+                  : (value) => setState(() => _onNewPhotos = value),
+            ),
           if (_daily)
             ListTile(
               contentPadding: EdgeInsets.zero,

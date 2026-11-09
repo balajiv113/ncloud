@@ -14,6 +14,18 @@ class RecordingWorkmanager extends WorkmanagerPlatform {
   ExistingPeriodicWorkPolicy? policy;
   Duration? frequency;
   String? unique, task, cancelled;
+  final cancelledAll = <String>[];
+  final oneOffs =
+      <
+        ({
+          String unique,
+          String task,
+          Map<String, dynamic>? data,
+          Duration? delay,
+          Constraints? constraints,
+          ExistingWorkPolicy? policy,
+        })
+      >[];
 
   @override
   Future<void> initialize(
@@ -50,8 +62,34 @@ class RecordingWorkmanager extends WorkmanagerPlatform {
   }
 
   @override
+  Future<void> registerOneOffTask(
+    String uniqueName,
+    String taskName, {
+    Map<String, dynamic>? inputData,
+    Duration? initialDelay,
+    Constraints? constraints,
+    ExistingWorkPolicy? existingWorkPolicy,
+    BackoffPolicy? backoffPolicy,
+    Duration? backoffPolicyDelay,
+    String? tag,
+    OutOfQuotaPolicy? outOfQuotaPolicy,
+    ForegroundServiceConfig? foregroundServiceConfig,
+    bool expedited = false,
+  }) async {
+    oneOffs.add((
+      unique: uniqueName,
+      task: taskName,
+      data: inputData,
+      delay: initialDelay,
+      constraints: constraints,
+      policy: existingWorkPolicy,
+    ));
+  }
+
+  @override
   Future<void> cancelByUniqueName(String uniqueName) async {
     cancelled = uniqueName;
+    cancelledAll.add(uniqueName);
   }
 }
 
@@ -98,6 +136,56 @@ void main() {
       expect(platform.policy, ExistingPeriodicWorkPolicy.update);
       await scheduler.cancel('pair');
       expect(platform.cancelled, AndroidBackupScheduler.job('pair'));
+    },
+  );
+
+  test(
+    'a backup that wants new photos sets a content trigger, and only then',
+    () async {
+      Workmanager();
+      final previous = WorkmanagerPlatform.instance;
+      final platform = RecordingWorkmanager()..failInitialization = false;
+      WorkmanagerPlatform.instance = platform;
+      addTearDown(() => WorkmanagerPlatform.instance = previous);
+      final scheduler = AndroidBackupScheduler(android: true);
+      final daily = BackupSchedule(created: DateTime(2026, 1, 1), hour: 10);
+      await scheduler.put('pair', 'rev', daily, wifiOnly: true);
+      expect(platform.oneOffs, isEmpty);
+      expect(platform.cancelledAll, [AndroidBackupScheduler.changeJob('pair')]);
+
+      final eager = BackupSchedule(
+        created: DateTime(2026, 1, 1),
+        hour: 10,
+        onNewPhotos: true,
+      );
+      await scheduler.put('pair', 'rev', eager, wifiOnly: true);
+      final trigger = platform.oneOffs.single;
+      expect(trigger.unique, AndroidBackupScheduler.changeJob('pair'));
+      expect(trigger.task, backupChangeTask);
+      expect(trigger.data, {'pairId': 'pair', 'revision': 'rev'});
+      expect(trigger.policy, ExistingWorkPolicy.replace);
+      expect(trigger.delay, const Duration(minutes: 1));
+      expect(trigger.constraints!.networkType, NetworkType.connected);
+      expect(
+        [for (final t in trigger.constraints!.contentUriTriggers!) t!.uri],
+        [
+          'content://media/external/images/media',
+          'content://media/external/video/media',
+        ],
+      );
+      expect(
+        trigger.constraints!.contentUriTriggers!.every(
+          (t) => t!.triggerForDescendants,
+        ),
+        isTrue,
+      );
+
+      platform.cancelledAll.clear();
+      await scheduler.cancel('pair');
+      expect(platform.cancelledAll, [
+        AndroidBackupScheduler.changeJob('pair'),
+        AndroidBackupScheduler.job('pair'),
+      ]);
     },
   );
 
