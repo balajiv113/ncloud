@@ -281,8 +281,8 @@ device are their first check, so each is kept small and lands on its own.
    the original? New version is tidier, especially for documents edited many times.
    If the server copy was changed on the server in the meantime, both are kept.
    (Proposed: new version.)
-2. **Removed from the server, still on the phone.** Treat as removed on purpose and
-   not upload again, with **Back up again** on the card. (Proposed: yes.)
+2. **Removed from the server, still on the phone.** Treated as removed on purpose
+   and not uploaded again, with **Back up again** on the card. (Settled.)
 3. **Free up space** is in the first Android release, since it is how you empty the
    phone after backing up. (Proposed: yes.)
 4. Existing folder backups get moves too, behind the one-time "move them to match?"
