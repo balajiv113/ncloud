@@ -2,9 +2,9 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ncloud/features/library/domain/browse_target.dart';
+import 'package:ncloud/app/browse_target.dart';
 import 'package:ncloud/app/app_controller.dart';
-import 'package:ncloud/features/library/library_screen.dart';
+import 'package:ncloud/app/shell/app_shell.dart';
 
 import 'support/sample_library.dart';
 
@@ -28,7 +28,7 @@ Future<AppController> _library(
       ),
       home: ListenableBuilder(
         listenable: controller,
-        builder: (_, _) => LibraryScreen(controller: controller),
+        builder: (_, _) => AppShell(controller: controller),
       ),
     ),
   );

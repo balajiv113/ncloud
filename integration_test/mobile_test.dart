@@ -5,12 +5,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_driver/driver_extension.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
-import 'package:ncloud/features/library/domain/browse_target.dart';
+import 'package:ncloud/app/browse_target.dart';
 import 'package:ncloud/app/app_controller.dart';
 import 'package:ncloud/core/storage/file_store.dart';
 import 'package:ncloud/features/backup/folder_sync.dart';
 import 'package:ncloud/features/backup/ios_album_backup.dart';
-import 'package:ncloud/features/library/library_screen.dart';
+import 'package:ncloud/app/shell/app_shell.dart';
 import 'package:ncloud/core/storage/local_cache.dart';
 import 'package:ncloud/models.dart';
 import 'package:ncloud/providers/nextcloud/nextcloud_client.dart';
@@ -130,7 +130,7 @@ Future<void> main() async {
           builder: (_, value, _) => ListenableBuilder(
             listenable: value,
             builder: (_, _) =>
-                LibraryScreen(key: ObjectKey(value), controller: value),
+                AppShell(key: ObjectKey(value), controller: value),
           ),
         ),
       ),

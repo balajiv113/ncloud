@@ -4,12 +4,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
-import 'package:ncloud/features/library/domain/browse_target.dart';
+import 'package:ncloud/app/browse_target.dart';
 import 'package:ncloud/app/app_controller.dart';
 import 'package:ncloud/core/storage/file_store.dart';
-import 'package:ncloud/features/library/library_screen.dart';
+import 'package:ncloud/app/shell/app_shell.dart';
 import 'package:ncloud/core/storage/local_cache.dart';
-import 'package:ncloud/features/library/domain/media_listing.dart';
+import 'package:ncloud/core/storage/media_listing.dart';
 import 'package:ncloud/models.dart';
 import 'package:ncloud/providers/nextcloud/nextcloud_client.dart';
 
@@ -154,7 +154,7 @@ void main() {
           MaterialApp(
             home: ListenableBuilder(
               listenable: controller,
-              builder: (_, _) => LibraryScreen(controller: controller),
+              builder: (_, _) => AppShell(controller: controller),
             ),
           ),
         );
