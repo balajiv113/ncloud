@@ -275,15 +275,11 @@ device are their first check, so each is kept small and lands on its own.
 
 ## Questions to settle before step 1
 
-1. **Edited files.** When a photo or document is edited on the phone, should the
-   server copy get a **new version** of the same file (Nextcloud keeps the old
-   version, restorable), or should the edit be uploaded as a separate copy next to
-   the original? New version is tidier, especially for documents edited many times.
-   If the server copy was changed on the server in the meantime, both are kept.
-   (Proposed: new version.)
+1. **Edited files.** The server copy gets a **new version** of the same file
+   (Nextcloud keeps the old version, restorable). If the server copy was changed on
+   the server in the meantime, both are kept. (Settled.)
 2. **Removed from the server, still on the phone.** Treated as removed on purpose
    and not uploaded again, with **Back up again** on the card. (Settled.)
-3. **Free up space** is in the first Android release, since it is how you empty the
-   phone after backing up. (Proposed: yes.)
+3. **Free up space** is in the next release, not the first one. (Settled.)
 4. Existing folder backups get moves too, behind the one-time "move them to match?"
    preview. (Proposed: yes.)
