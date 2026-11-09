@@ -4,99 +4,9 @@ import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
 
-import 'folder_access.dart';
-import '../../models.dart';
-import 'sync_rules.dart';
-import 'sync_schedule.dart';
+import '../model/folder_pair.dart';
 
-String syncAccount(Account account) => account.storageKey;
-
-class FolderPair {
-  FolderPair({
-    required this.id,
-    required this.account,
-    required this.name,
-    required this.folder,
-    required this.remote,
-    this.wifiOnly = true,
-    this.lastRun,
-    this.rules = const SyncRules.all(),
-    this.uploadConcurrency = 1,
-    this.schedule,
-    this.revision = '',
-    this.requiresSetup = false,
-  });
-  final String id;
-  final String account;
-  final String name;
-  final DeviceFolder folder;
-  final List<String> remote;
-  final bool wifiOnly;
-  DateTime? lastRun;
-  final SyncRules rules;
-  final int uploadConcurrency;
-  final BackupSchedule? schedule;
-  final String revision;
-  final bool requiresSetup;
-
-  List<String> get cloudRoot => [...remote, folder.name];
-
-  Map<String, Object?> toJson() => {
-    'id': id,
-    'account': account,
-    'name': name,
-    'token': folder.token,
-    'folderName': folder.name,
-    'identity': folder.identity,
-    'sourceKind': folder.kind.name,
-    'remote': remote,
-    'wifiOnly': wifiOnly,
-    'lastRun': lastRun?.toIso8601String(),
-    'rules': rules.toJson(),
-    'uploadConcurrency': uploadConcurrency,
-    'schedule': schedule?.toJson(),
-    'revision': revision,
-    if (requiresSetup) 'requiresSetup': true,
-  };
-
-  factory FolderPair.fromJson(Map<String, dynamic> value) {
-    final requiresSetup =
-        value['requiresSetup'] == true ||
-        (value['mode'] != null && value['mode'] != 'backup');
-    return FolderPair(
-      id: value['id'] as String,
-      account: value['account'] as String,
-      name: value['name'] as String,
-      folder: DeviceFolder(
-        value['token'] as String,
-        value['folderName'] as String,
-        value['identity'] as String,
-        kind: DeviceSourceKind.values.byName(
-          value['sourceKind'] as String? ?? DeviceSourceKind.folder.name,
-        ),
-      ),
-      remote: (value['remote'] as List).cast<String>(),
-      wifiOnly: value['wifiOnly'] as bool,
-      lastRun: DateTime.tryParse(value['lastRun'] as String? ?? ''),
-      rules: SyncRules.fromJson(
-        (value['rules'] as Map).cast<String, dynamic>(),
-      ),
-      uploadConcurrency: value['uploadConcurrency'] as int,
-      schedule: requiresSetup || value['schedule'] == null
-          ? null
-          : BackupSchedule.fromJson(
-              (value['schedule'] as Map).cast<String, dynamic>(),
-            ),
-      revision:
-          value['schedule'] is Map &&
-              (value['schedule'] as Map)['kind'] != null &&
-              (value['schedule'] as Map)['kind'] != 'daily'
-          ? 'daily-${value['revision']}'
-          : value['revision'] as String? ?? '',
-      requiresSetup: requiresSetup,
-    );
-  }
-}
+export '../model/folder_pair.dart';
 
 class SyncJournal {
   static const iosAlbumService = 'ios-album-service';
@@ -271,27 +181,23 @@ class SyncJournal {
     return rows.singleOrNull;
   }
 
+  /// Records that [local] at [localVersion] was uploaded to [remote], which the
+  /// server holds at [remoteVersion]. Later runs skip the file while both are
+  /// unchanged.
   Future<void> confirm(
     String pair,
     List<String> local,
     String localVersion,
     List<String> remote,
     String remoteVersion,
-  ) async => (await db).transaction((txn) async {
-    for (final (side, path, version, target, targetVersion) in [
-      ('local', local, localVersion, remote, remoteVersion),
-      ('remote', remote, remoteVersion, local, localVersion),
-    ]) {
-      await txn.insert('receipts', {
-        'pair': pair,
-        'side': side,
-        'path': jsonEncode(path),
-        'version': version,
-        'target': jsonEncode(target),
-        'target_version': targetVersion,
-      }, conflictAlgorithm: ConflictAlgorithm.replace);
-    }
-  });
+  ) async => (await db).insert('receipts', {
+    'pair': pair,
+    'side': 'local',
+    'path': jsonEncode(local),
+    'version': localVersion,
+    'target': jsonEncode(remote),
+    'target_version': remoteVersion,
+  }, conflictAlgorithm: ConflictAlgorithm.replace);
 
   Future<void> forget(String id) async => (await db).transaction((txn) async {
     await txn.delete('run_state', where: 'pair=?', whereArgs: [id]);

@@ -1,9 +1,10 @@
+import 'backup_scheduler.dart';
 import 'dart:io';
 
-import 'folder_sync.dart';
+import '../state/backup_controller.dart';
 import 'headless_backup.dart';
-import '../../models.dart';
-import 'sync_schedule.dart';
+import '../../../models.dart';
+import '../model/backup_schedule.dart';
 
 const iosAlbumTask = 'app.ncloud.album-backup';
 

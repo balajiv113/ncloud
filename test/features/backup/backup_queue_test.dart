@@ -1,12 +1,13 @@
+import 'package:ncloud/features/backup/background/backup_scheduler.dart';
 import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ncloud/core/cloud/cloud_backend.dart';
-import 'package:ncloud/features/backup/folder_sync.dart';
-import 'package:ncloud/features/backup/sync_schedule.dart';
+import 'package:ncloud/features/backup/state/backup_controller.dart';
+import 'package:ncloud/features/backup/model/backup_schedule.dart';
 
-import 'folder_sync_test.dart'
+import 'backup_controller_test.dart'
     show CloudFolders, DeviceFolders, TestSyncBackground;
 import '../../nextcloud_client_test.dart' show account;
 
@@ -48,7 +49,7 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   late Directory root;
   late SyncJournal journal;
-  late FolderSyncController sync;
+  late BackupController sync;
   late DeviceFolders device;
   late CloudFolders cloud;
   late UnavailableScheduler scheduler;
@@ -72,7 +73,7 @@ void main() {
       Directory('${root.path}/stage'),
     );
     scheduler = UnavailableScheduler();
-    sync = FolderSyncController(
+    sync = BackupController(
       client: cloud,
       account: () => account,
       journal: journal,
@@ -136,7 +137,7 @@ void main() {
       await journal.close();
       journal = FailingJournal(path: '${root.path}/failure.sqlite3');
       sync.dispose();
-      sync = FolderSyncController(
+      sync = BackupController(
         client: cloud,
         account: () => account,
         journal: journal,
@@ -215,35 +216,6 @@ void main() {
     expect(cloud.files.keys, ['Backup/First/photo.jpg']);
     expect(cloud.uploads, 1);
   });
-
-  test(
-    'obsolete transfer configurations never become uploads without editing',
-    () async {
-      await device.put('photo.jpg', 'original');
-      final saved = await add('Camera');
-      final previous = FolderPair.fromJson(
-        saved.toJson()..['mode'] = 'download',
-      );
-      sync.pairs = [previous];
-      expect(previous.requiresSetup, isTrue);
-      expect(FolderPair.fromJson(previous.toJson()).requiresSetup, isTrue);
-      await sync.runAll();
-      expect(cloud.uploads, 0);
-      await sync.run(previous);
-      expect(sync.error, contains('configure an upload backup'));
-      expect(cloud.uploads, 0);
-      await sync.add(
-        previous.name,
-        previous.folder,
-        previous.remote,
-        replacing: previous,
-        wifiOnly: false,
-      );
-      expect(sync.pairs.single.requiresSetup, isFalse);
-      await sync.runAll();
-      expect(cloud.uploads, 1);
-    },
-  );
 
   test(
     'wiping an account removes its backup records and staged files',

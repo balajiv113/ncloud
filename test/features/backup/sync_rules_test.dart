@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ncloud/features/backup/sync_rules.dart';
+import 'package:ncloud/features/backup/model/sync_rules.dart';
 
 void main() {
   test('empty include means all; exclude wins at every depth', () {

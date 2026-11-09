@@ -1,14 +1,15 @@
+import 'package:ncloud/features/backup/background/backup_scheduler.dart';
 import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ncloud/app/app_controller.dart';
 import 'package:ncloud/core/storage/local_cache.dart';
-import 'package:ncloud/features/backup/folder_sync.dart';
-import 'package:ncloud/features/backup/sync_schedule.dart';
+import 'package:ncloud/features/backup/state/backup_controller.dart';
+import 'package:ncloud/features/backup/model/backup_schedule.dart';
 
 import 'app_test.dart' show MemoryStore;
-import 'features/backup/folder_sync_test.dart'
+import 'features/backup/backup_controller_test.dart'
     show CloudFolders, DeviceFolders, TestSyncBackground;
 import 'nextcloud_client_test.dart' show account;
 import 'support/sample_library.dart';
@@ -54,7 +55,7 @@ void main() {
 
   Future<AppController> signedIn(MemoryStore store) async {
     late AppController controller;
-    final sync = FolderSyncController(
+    final sync = BackupController(
       client: CloudFolders(),
       account: () => controller.account,
       journal: journal,
@@ -67,7 +68,7 @@ void main() {
       store: store,
       client: SampleLibrary(),
       cache: cache,
-      folderSyncController: sync,
+      backupController: sync,
     )..account = account.withPhotoRoot(['Photos']);
     addTearDown(controller.dispose);
     await sync.load();

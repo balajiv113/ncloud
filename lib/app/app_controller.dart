@@ -1,3 +1,4 @@
+import '../features/backup/background/backup_scheduler.dart';
 import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
@@ -13,7 +14,7 @@ import '../diagnostics.dart';
 import 'status_sink.dart';
 import '../discovery_models.dart';
 import '../core/storage/file_store.dart';
-import '../features/backup/folder_sync.dart';
+import '../features/backup/state/backup_controller.dart';
 import '../core/storage/local_cache.dart';
 import '../models.dart';
 import '../features/files/library_operations.dart';
@@ -28,10 +29,9 @@ import '../core/cached_resource.dart';
 import '../core/thumbnails/thumbnail_prefetcher.dart';
 import '../core/thumbnails/thumbnail_repository.dart';
 import '../core/cloud/cloud_backend.dart';
-import '../features/backup/workmanager_backup.dart';
-import '../features/backup/sync_schedule.dart';
+import '../features/backup/background/android_backup.dart';
 import '../features/account/session_store.dart';
-import '../features/backup/ios_album_backup.dart';
+import '../features/backup/background/ios_album_backup.dart';
 export '../features/account/session_store.dart';
 export '../core/thumbnails/preview_batcher.dart' show PreviewCancelled;
 
@@ -44,9 +44,9 @@ class AppController extends ChangeNotifier implements StatusSink {
     required this.client,
     this.cache,
     this.pathlessTimeline = false,
-    FolderSyncController? folderSyncController,
+    BackupController? backupController,
   }) {
-    _folderSync = folderSyncController;
+    _backup = backupController;
     cache?.onWriteError = (message) {
       if (_disposed || notice == message) return;
       notice = message;
@@ -63,12 +63,12 @@ class AppController extends ChangeNotifier implements StatusSink {
 
   /// Optional persistent cache; tests run purely in memory without it.
   final LocalCache? cache;
-  FolderSyncController? _folderSync;
-  FolderSyncController get folderSync => _folderSync ??= _createFolderSync();
+  BackupController? _backup;
+  BackupController get backup => _backup ??= _createBackup();
 
-  FolderSyncController _createFolderSync() {
+  BackupController _createBackup() {
     final journal = SyncJournal();
-    return FolderSyncController(
+    return BackupController(
       client: client,
       account: () => account,
       journal: journal,
@@ -85,9 +85,9 @@ class AppController extends ChangeNotifier implements StatusSink {
   }
 
   void setSyncForeground(bool active) {
-    _folderSync?.setForeground(active);
+    _backup?.setForeground(active);
     if (active && connected && (Platform.isAndroid || Platform.isIOS)) {
-      unawaited(folderSync.load());
+      unawaited(backup.load());
     }
   }
 
@@ -377,7 +377,7 @@ class AppController extends ChangeNotifier implements StatusSink {
 
   /// Saves a newly accepted account and prepares its library.
   Future<void> _signedIn(Account result) async {
-    if (account != null) await folderSync.disconnect();
+    if (account != null) await backup.disconnect();
     await store.write(result.encode());
     account = result;
     setSyncForeground(true);
@@ -431,7 +431,7 @@ class AppController extends ChangeNotifier implements StatusSink {
       }
     }
 
-    final backup = _folderSync;
+    final backup = _backup;
     if (backup != null) {
       await step(backup.disconnect);
       await step(backup.wipe);
@@ -1831,7 +1831,7 @@ class AppController extends ChangeNotifier implements StatusSink {
 
   @override
   void dispose() {
-    _folderSync?.dispose();
+    _backup?.dispose();
     _disposed = true;
     _thumbnails.dispose();
     warmUp.cancel();

@@ -60,7 +60,10 @@ features/people/ features/map/   People bubbles; the photo map
 features/drive/     the folder browser and uploads
 features/files/     file actions, sharing, trash, downloads, mutations and operations
 features/viewer/    the full-screen photo and video viewer
-features/account/ features/settings/ features/backup/
+features/account/ features/settings/
+features/backup/      model/ (pairs, rules, schedule), engine/ (SyncEngine, SyncRunner, error text, pair policy),
+                     platform/ (device folders, run lock, Android service), background/ (WorkManager and iOS
+                     schedulers, headless runner), state/ (BackupController, journal), ui/
 providers/nextcloud/  the one cloud adapter
 shared/ui/          cross-feature widgets (media tile, file list, folder picker, empty state)
 ```

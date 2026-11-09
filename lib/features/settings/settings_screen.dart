@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../app/app_controller.dart';
 import '../../diagnostics.dart';
-import '../backup/folder_sync_screen.dart';
+import '../backup/ui/folder_backup_screen.dart';
 import '../../core/ui/messages.dart';
 
 class SettingsScreen extends StatelessWidget {
@@ -61,7 +61,7 @@ class SettingsScreen extends StatelessWidget {
               trailing: const Icon(Icons.chevron_right),
               onTap: () => Navigator.of(context).push<void>(
                 MaterialPageRoute(
-                  builder: (_) => FolderSyncScreen(controller: controller),
+                  builder: (_) => FolderBackupScreen(controller: controller),
                 ),
               ),
             ),

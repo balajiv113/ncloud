@@ -6,13 +6,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
-import 'package:ncloud/features/backup/folder_sync.dart';
+import 'package:ncloud/features/backup/state/backup_controller.dart';
 import 'package:ncloud/models.dart';
 import 'package:ncloud/providers/nextcloud/nextcloud_account.dart';
 import 'package:ncloud/providers/nextcloud/nextcloud_client.dart';
 import 'package:ncloud/core/cloud/cloud_backend.dart';
-import 'package:ncloud/features/backup/sync_rules.dart';
-import 'package:ncloud/features/backup/sync_background.dart';
+import 'package:ncloud/features/backup/model/sync_rules.dart';
+import 'package:ncloud/features/backup/platform/sync_background.dart';
 
 import '../../nextcloud_client_test.dart' show account;
 
@@ -259,21 +259,20 @@ void main() {
   late Directory root;
   late DeviceFolders device;
   late CloudFolders cloud;
-  late FolderSyncController sync;
+  late BackupController sync;
   late Account? session;
   late String journalPath;
   bool disposed = false;
   late TestSyncBackground background;
 
-  FolderSyncController controller({bool android = true}) =>
-      FolderSyncController(
-        client: cloud,
-        account: () => session,
-        access: device,
-        journal: SyncJournal(path: journalPath),
-        android: android,
-        backgroundService: background,
-      );
+  BackupController controller({bool android = true}) => BackupController(
+    client: cloud,
+    account: () => session,
+    access: device,
+    journal: SyncJournal(path: journalPath),
+    android: android,
+    backgroundService: background,
+  );
 
   Future<FolderPair> pair({
     SyncRules rules = const SyncRules.all(),
@@ -855,7 +854,7 @@ void main() {
         ),
       );
       sync.dispose();
-      sync = FolderSyncController(
+      sync = BackupController(
         client: cloud,
         account: () => session,
         access: NativeFolderAccess(),

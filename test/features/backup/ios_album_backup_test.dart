@@ -6,17 +6,18 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ncloud/app/app_controller.dart';
 import 'package:ncloud/diagnostics.dart';
-import 'package:ncloud/features/backup/folder_sync.dart';
-import 'package:ncloud/features/backup/folder_sync_screen.dart';
-import 'package:ncloud/features/backup/headless_backup.dart';
-import 'package:ncloud/features/backup/ios_album_backup.dart';
+import 'package:ncloud/features/backup/state/backup_controller.dart';
+import 'package:ncloud/features/backup/ui/folder_backup_screen.dart';
+import 'package:ncloud/features/backup/background/headless_backup.dart';
+import 'package:ncloud/features/backup/background/ios_album_backup.dart';
 import 'package:ncloud/models.dart';
-import 'package:ncloud/features/backup/sync_run_lock.dart';
-import 'package:ncloud/features/backup/sync_schedule.dart';
+import 'package:ncloud/features/backup/platform/sync_run_lock.dart';
+import 'package:ncloud/features/backup/engine/sync_runner.dart';
+import 'package:ncloud/features/backup/model/backup_schedule.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import '../../app_test.dart' show MemoryStore;
-import 'folder_sync_test.dart' show CloudFolders, DeviceFolders;
+import 'backup_controller_test.dart' show CloudFolders, DeviceFolders;
 import '../../nextcloud_client_test.dart' show account;
 
 const album = DeviceFolder(
@@ -85,7 +86,7 @@ void main() {
   late SyncJournal journal;
   late AlbumDevice device;
   late CloudFolders cloud;
-  late FolderSyncController ui;
+  late BackupController ui;
   late IosAlbumScheduler scheduler;
   late Account? session;
   final methods = <MethodCall>[];
@@ -105,6 +106,23 @@ void main() {
     await ui.load();
     await ui.add(source.name, source, ['Backup'], schedule: scheduling);
     return ui.pairs.last;
+  }
+
+  late SyncRunner last;
+
+  /// Runs a pair the way a background task does: without the app in front.
+  Future<void> runHeadless(FolderPair pair) async {
+    last = SyncRunner(
+      client: cloud,
+      access: device,
+      journal: journal,
+      runLock: InProcessSyncRunLock(),
+      foreground: () => false,
+      accountKey: () => syncAccount(session!),
+      onChanged: () {},
+      headless: true,
+    );
+    await last.run(session!, pair);
   }
 
   setUp(() async {
@@ -147,7 +165,7 @@ void main() {
       },
       ios: true,
     );
-    ui = FolderSyncController(
+    ui = BackupController(
       client: cloud,
       account: () => session,
       access: device,
@@ -177,19 +195,19 @@ void main() {
         DeviceSourceKind.photoAlbum,
       );
       await device.put('IMG_0001_assetA.HEIC', 'original-one');
-      await ui.run(pair, headless: true);
-      expect(ui.error, isNull);
+      await runHeadless(pair);
+      expect(last.error, isNull);
       expect(
         cloud.files['Backup/Trips/IMG_0001_assetA.HEIC']!.$1,
         'original-one'.codeUnits,
       );
-      await ui.run(pair, headless: true);
+      await runHeadless(pair);
       expect(cloud.uploads, 1);
       await device.put('IMG_0001_assetB.HEIC', 'original-two');
-      await ui.run(pair, headless: true);
+      await runHeadless(pair);
       expect(cloud.uploads, 2);
       await device.file(['IMG_0001_assetA.HEIC']).delete();
-      await ui.run(pair, headless: true);
+      await runHeadless(pair);
       expect(cloud.files, hasLength(2));
       expect(device.imports, 0);
       expect(device.picks, 0);
@@ -203,15 +221,15 @@ void main() {
       final pair = await add();
       await device.put('photo.HEIC', 'before');
       device.changed = true;
-      await ui.run(pair, headless: true);
-      expect(ui.error, contains('album changed'));
+      await runHeadless(pair);
+      expect(last.error, contains('album changed'));
       expect(cloud.uploads, 0);
       expect(await journal.receipt(pair.id, 'local', ['photo.HEIC']), isNull);
       device.changed = false;
-      await ui.run(pair, headless: true);
+      await runHeadless(pair);
       device.versions['photo.HEIC'] = 'edited';
       await device.put('photo.HEIC', 'after-edit');
-      await ui.run(pair, headless: true);
+      await runHeadless(pair);
       expect(cloud.uploads, 2);
       expect(cloud.files['Backup/Trips/photo.HEIC']!.$1, 'before'.codeUnits);
     },
@@ -263,8 +281,8 @@ void main() {
         source: const DeviceFolder('grant', 'Trips', 'grant'),
       );
       await device.put('photo.HEIC', 'original');
-      await ui.run(pair, headless: true);
-      expect(ui.error, isNotNull);
+      await runHeadless(pair);
+      expect(last.error, isNotNull);
       expect(cloud.uploads, 0);
     },
   );
@@ -499,11 +517,11 @@ void main() {
       final controller = AppController(
         store: MemoryStore(),
         client: cloud,
-        folderSyncController: ui,
+        backupController: ui,
       );
 
       await tester.pumpWidget(
-        MaterialApp(home: FolderSyncScreen(controller: controller)),
+        MaterialApp(home: FolderBackupScreen(controller: controller)),
       );
       await tester.pumpAndSettle();
       await tester.tap(find.byTooltip('Add backup'));
@@ -542,11 +560,11 @@ void main() {
       });
       await tester.pumpWidget(
         MaterialApp(
-          home: FolderSyncScreen(
+          home: FolderBackupScreen(
             controller: AppController(
               store: MemoryStore(),
               client: cloud,
-              folderSyncController: ui,
+              backupController: ui,
             ),
           ),
         ),

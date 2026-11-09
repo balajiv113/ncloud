@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'package:flutter/services.dart';
 
-import '../../core/cloud/cloud_backend.dart';
-import 'folder_sync.dart';
-import '../../models.dart';
-import 'sync_run_lock.dart';
+import '../../../core/cloud/cloud_backend.dart';
+import '../platform/folder_access.dart';
+import '../state/sync_journal.dart';
+import '../engine/sync_runner.dart';
+import '../../../models.dart';
+import '../platform/sync_run_lock.dart';
 
 abstract interface class HeadlessBackupRunner {
   Future<bool> run(String pairId, String revision);
@@ -34,7 +36,7 @@ class ScheduledBackupRunner implements HeadlessBackupRunner {
   final DateTime Function() clock;
   final Duration budget;
   final Future<void> Function()? prepareExecution;
-  FolderSyncController? _controller;
+  SyncRunner? _runner;
   String? _pairId;
   bool _stopped = false;
   String? _stopReason;
@@ -43,7 +45,7 @@ class ScheduledBackupRunner implements HeadlessBackupRunner {
   Future<void> stop(String reason) async {
     _stopped = true;
     _stopReason = reason;
-    _controller?.requestPause();
+    _runner?.requestStop();
     closeClient();
     if (_pairId case final id?) {
       await journal.writeState(id, {
@@ -84,7 +86,7 @@ class ScheduledBackupRunner implements HeadlessBackupRunner {
       checkpointError = error;
       checkpointStack = stack;
       _stopped = true;
-      _controller?.requestPause();
+      _runner?.requestStop();
       closeClient();
     }
 
@@ -98,21 +100,18 @@ class ScheduledBackupRunner implements HeadlessBackupRunner {
           !await journal.accountEnabled(owner)) {
         return true;
       }
-      final state = await journal.state(pairId);
-      final slot = pair.schedule!.dueSlot(clock());
-      if (slot == null ||
-          (state['revision'] == revision &&
-              pair.schedule!.handled(slot, state['slot'] as String?))) {
-        return true;
-      }
+      final slot = pair.dueSlot(await journal.state(pairId), clock());
+      if (slot == null) return true;
       _pairId = pairId;
-      final controller = _controller = FolderSyncController(
+      final runner = _runner = SyncRunner(
         client: client,
-        account: () => session,
         access: access,
         journal: journal,
-        android: false,
         runLock: _HeldRunLock(),
+        foreground: () => true,
+        accountKey: () => owner,
+        onChanged: () {},
+        headless: true,
         prepareExecution: prepareExecution,
       );
       // The timer only requests cancellation. The run retains its lock until
@@ -133,8 +132,8 @@ class ScheduledBackupRunner implements HeadlessBackupRunner {
               await stop('Backup cancelled. Completed transfers are saved.');
             } else {
               await journal.writeState(pairId, {
-                'phase': controller.phase,
-                'transferred': controller.transferred,
+                'phase': runner.progress.phase,
+                'transferred': runner.progress.transferred,
                 'heartbeat': clock().toUtc().toIso8601String(),
               });
             }
@@ -143,7 +142,7 @@ class ScheduledBackupRunner implements HeadlessBackupRunner {
           }
         }).catchError(rememberFailure);
       });
-      await controller.run(pair, headless: true);
+      await runner.run(session, pair);
       checkpoint.cancel();
       deadline.cancel();
       await pendingCheckpoint;
@@ -159,7 +158,7 @@ class ScheduledBackupRunner implements HeadlessBackupRunner {
         });
       }
       if (!_stopped &&
-          controller.error == null &&
+          runner.error == null &&
           (await journal.state(pairId))['status'] == 'success') {
         await journal.writeState(pairId, {
           'revision': revision,
@@ -173,7 +172,7 @@ class ScheduledBackupRunner implements HeadlessBackupRunner {
       deadline?.cancel();
       await pendingCheckpoint;
       await pendingStop;
-      _controller = null;
+      _runner = null;
       _pairId = null;
       await lock.release(owner);
     }
