@@ -60,10 +60,12 @@ String _pathKey(List<String> path) => jsonEncode(path);
 
 /// Uploads the files of one device folder that the server does not have yet.
 ///
-/// Every transfer creates a new file: nothing is deleted, overwritten, moved or
-/// edited, and a destination that already exists gets a renamed copy. A receipt
-/// is written only after the server confirmed an upload, so an interrupted run
-/// resumes where it stopped.
+/// Nothing is ever deleted or overwritten. An upload creates a new file, and a
+/// destination that already exists gets a renamed copy. The one change to what
+/// the server already holds is a move: when a file moved on the device, the
+/// server copy it was uploaded as is moved to match. A receipt is written only
+/// after the server confirmed an upload, so an interrupted run resumes where it
+/// stopped.
 ///
 /// It is built to stay cheap with a very large library. The server is never
 /// asked to list a folder to confirm an upload, receipts are read in groups,
@@ -96,6 +98,10 @@ class SyncEngine {
   DateTime _notified = DateTime.fromMillisecondsSinceEpoch(0);
   DateTime? _networkChecked;
 
+  /// The paths of every file on the device this run, to tell a file that moved
+  /// from one that was copied.
+  Set<String> _present = const {};
+
   void _status(String phase) {
     progress.phase = phase;
     onChanged();
@@ -121,6 +127,7 @@ class SyncEngine {
     // never mistaken for an empty source.
     final local = await _scanDevice(pair);
     progress.found = local.length;
+    _present = {for (final item in local) item.key};
     _status('Checking what is already backed up');
     final todo = await _classify(pair, local);
     _status('Preparing the destination');
@@ -366,6 +373,9 @@ class _Uploader {
       }
       final fingerprint = await fingerprintOf(staged);
       engine.check(pair);
+      // The same content may already be on the server under another path: a
+      // photo that moved on the device, or a copy of one. Recognise it.
+      if (await _reuseKnown(item, fingerprint, size)) return;
       var target = path;
       for (var renamed = 0; ; renamed++) {
         await _ensureParents(target);
@@ -425,6 +435,83 @@ class _Uploader {
     } finally {
       if (staged != null) await _access.discard(staged);
     }
+  }
+
+  /// Handles a file whose content this backup has already stored.
+  ///
+  /// If the earlier file is still on the device, this is a copy: it is recorded
+  /// against the same server file and nothing is uploaded. If the earlier file
+  /// is gone, the file moved, and the server copy is moved to match. A move only
+  /// happens when the server still holds exactly what was uploaded and the new
+  /// place is free; otherwise this returns false and the file is uploaded.
+  Future<bool> _reuseKnown(_Item item, String fingerprint, int size) async {
+    final known = [
+      // Receipts still waiting to be saved count: two identical files in one
+      // run must not both be uploaded.
+      for (final r in _pending)
+        if (r.fingerprint == fingerprint) r,
+      ...await _journal.receiptsWithFingerprint(pair.id, fingerprint),
+    ];
+    final others = [
+      for (final r in known)
+        if (_pathKey(r.path) != item.key) r,
+    ];
+    if (others.isEmpty) return false;
+    final stillThere = others.where(
+      (r) => engine._present.contains(_pathKey(r.path)),
+    );
+    if (stillThere.isNotEmpty) {
+      final original = stillThere.first;
+      await _record(
+        item,
+        original.target,
+        original.targetVersion,
+        fingerprint,
+        size,
+      );
+      _progress.wasOnServer(size);
+      engine._tick();
+      return true;
+    }
+    final earlier = others.first;
+    final from = [...pair.cloudRoot, ...earlier.target];
+    final here = await _client.stat(session, from);
+    final unchanged =
+        here != null &&
+        !here.isDirectory &&
+        (here.sha1 == fingerprint ||
+            (here.sha1 == null &&
+                '${here.etag}|${here.size}' == earlier.targetVersion));
+    if (!unchanged) return false;
+    final destination = item.path;
+    await _ensureParents(destination);
+    engine.check(pair);
+    try {
+      await _client.move(
+        session,
+        CloudFile(path: from, name: from.last, isDirectory: false),
+        [...pair.cloudRoot, ...destination],
+      );
+    } on CloudException catch (error) {
+      // Something is in the way. Upload as usual, which keeps both.
+      if (error.statusCode == 412) return false;
+      rethrow;
+    }
+    await _journal.moveReceipt(
+      pair.id,
+      earlier.path,
+      Receipt(
+        path: item.path,
+        version: item.entry.version,
+        target: destination,
+        targetVersion: earlier.targetVersion,
+        fingerprint: fingerprint,
+        size: size,
+      ),
+    );
+    _progress.wasMoved(size);
+    engine._tick();
+    return true;
   }
 
   List<String> _conflict(List<String> path) {

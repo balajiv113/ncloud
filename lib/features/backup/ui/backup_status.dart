@@ -45,6 +45,7 @@ class BackupNumbers {
     this.toUpload = 0,
     this.transferred = 0,
     this.recognised = 0,
+    this.moved = 0,
     this.failed = 0,
     this.blocked = 0,
     this.bytesDone = 0,
@@ -58,6 +59,7 @@ class BackupNumbers {
   final int toUpload;
   final int transferred;
   final int recognised;
+  final int moved;
   final int failed;
   final int blocked;
   final int bytesDone;
@@ -73,6 +75,7 @@ class BackupNumbers {
     toUpload: p.toUpload,
     transferred: p.transferred,
     recognised: p.recognised,
+    moved: p.moved,
     failed: p.failed,
     blocked: p.blocked,
     bytesDone: p.bytesDone,
@@ -92,6 +95,7 @@ class BackupNumbers {
       toUpload: toUpload,
       transferred: number('transferred'),
       recognised: number('recognised'),
+      moved: number('moved'),
       failed: number('failed'),
       blocked: number('blocked'),
       bytesDone: number('bytesDone'),
@@ -103,7 +107,7 @@ class BackupNumbers {
   /// Files that still need attention.
   int get problems => failed + blocked;
 
-  int get settled => transferred + recognised + failed;
+  int get settled => transferred + recognised + moved + failed;
 
   /// Files on the server after the last run, as far as the run could tell.
   int get backedUp => found > problems ? found - problems : 0;
@@ -121,8 +125,12 @@ class BackupNumbers {
   String? get summaryLine => found == 0
       ? null
       : problems == 0
-      ? '${formatCount(found)} backed up'
-      : '${formatCount(backedUp)} of ${formatCount(found)} backed up';
+      ? '${formatCount(found)} backed up$_movedNote'
+      : '${formatCount(backedUp)} of ${formatCount(found)} backed up$_movedNote';
+
+  /// " · 12 moved on the server" when files were moved to match the device.
+  String get _movedNote =>
+      moved == 0 ? '' : ' · ${formatCount(moved)} moved on your server';
 
   /// "29 could not be backed up", or null when everything went well.
   String? get problemLine => problems == 0

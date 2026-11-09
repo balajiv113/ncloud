@@ -22,6 +22,9 @@ class SyncProgress {
   /// Files that turned out to be on the server already, found while uploading.
   int recognised = 0;
 
+  /// Files moved on the server because they were moved on the device.
+  int moved = 0;
+
   /// Files that could not be backed up this run.
   int failed = 0;
 
@@ -40,7 +43,7 @@ class SyncProgress {
   double? _bytesPerSecond;
 
   /// Files finished this run, whichever way.
-  int get settled => transferred + recognised + failed;
+  int get settled => transferred + recognised + moved + failed;
 
   /// Files still to do, never negative.
   int get remaining => toUpload > settled ? toUpload - settled : 0;
@@ -81,6 +84,12 @@ class SyncProgress {
     bytesDone += bytes;
   }
 
+  /// Records that a file of [bytes] was moved on the server.
+  void wasMoved(int bytes) {
+    moved++;
+    bytesDone += bytes;
+  }
+
   /// Records that a file of [bytes] was uploaded, and updates the speed.
   void uploaded(int bytes, DateTime now) {
     transferred++;
@@ -100,7 +109,7 @@ class SyncProgress {
   void reset() {
     phase = '';
     found = toUpload = bytesTotal = transferred = bytesDone = 0;
-    alreadyBackedUp = recognised = failed = blocked = conflicts = 0;
+    alreadyBackedUp = recognised = moved = failed = blocked = conflicts = 0;
     current = null;
     _lastSample = null;
     _lastBytes = 0;
@@ -115,6 +124,7 @@ class SyncProgress {
     'bytesDone': bytesDone,
     'alreadyBackedUp': alreadyBackedUp,
     'recognised': recognised,
+    'moved': moved,
     'failed': failed,
     'blocked': blocked,
     'conflicts': conflicts,
