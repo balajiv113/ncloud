@@ -102,7 +102,13 @@ class FakeServer implements CloudBackend {
     }
     final value = files.remove(from);
     if (value == null) throw const CloudException('gone', statusCode: 404);
-    files[to] = value;
+    // A real server gives a moved file a new revision.
+    files[to] = (
+      bytes: value.bytes,
+      size: value.size,
+      etag: '"${++_revision}"',
+      sha1: value.sha1,
+    );
     moves++;
   }
 

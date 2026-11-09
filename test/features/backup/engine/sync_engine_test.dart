@@ -444,6 +444,14 @@ void main() {
         'Backup/Camera/b.jpg',
       ]);
       expect(progress.moved, 1);
+      // The server gave the moved file a new revision, and the receipt says so.
+      final moved = server.files['Backup/Camera/b.jpg']!;
+      expect(
+        (await journal.receiptsFor('p', [
+          ['b.jpg'],
+        ])).values.single.targetVersion,
+        '${moved.etag}|${moved.size}',
+      );
       // The receipt followed the file, and the old one is gone.
       final receipts = await journal.receiptsFor('p', [
         ['a.jpg'],

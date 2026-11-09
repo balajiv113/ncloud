@@ -149,6 +149,69 @@ void main() {
       expect(result.kept.single.reason, KeepReason.notOnServer);
     });
 
+    test(
+      'a file the server gave a new revision is proven by its checksum',
+      () async {
+        device.add('Trips/a.jpg', bytes(1));
+        await run();
+        // A move, or anything the server does, gives the file a new revision.
+        final old = server.files['Backup/Camera/Trips/a.jpg']!;
+        server.files['Backup/Camera/Trips/a.jpg'] = (
+          bytes: old.bytes,
+          size: old.size,
+          etag: '"another"',
+          sha1: old.sha1,
+        );
+        final result = await plan();
+        expect(result.removable.map((f) => f.path.last), ['a.jpg']);
+        expect(result.kept, isEmpty);
+      },
+    );
+
+    test('a new revision with a different checksum stays', () async {
+      device.add('Trips/a.jpg', bytes(1));
+      await run();
+      final old = server.files['Backup/Camera/Trips/a.jpg']!;
+      server.files['Backup/Camera/Trips/a.jpg'] = (
+        bytes: old.bytes,
+        size: old.size,
+        etag: '"another"',
+        sha1: 'not-the-same',
+      );
+      final result = await plan();
+      expect(result.removable, isEmpty);
+      expect(result.kept.single.reason, KeepReason.notOnServer);
+    });
+
+    test('a new revision with no checksum to compare stays', () async {
+      server.dropFingerprints = true;
+      device.add('Trips/a.jpg', bytes(1));
+      await run();
+      final old = server.files['Backup/Camera/Trips/a.jpg']!;
+      server.files['Backup/Camera/Trips/a.jpg'] = (
+        bytes: old.bytes,
+        size: old.size,
+        etag: '"another"',
+        sha1: null,
+      );
+      expect((await plan()).removable, isEmpty);
+    });
+
+    test(
+      'a file moved on the server by the backup can be removed from the phone',
+      () async {
+        device.add('a.jpg', bytes(1));
+        await run();
+        device.entries.remove('a.jpg');
+        device.contents.remove('a.jpg');
+        device.add('Trips/a.jpg', bytes(1));
+        await run();
+        expect(server.moves, 1);
+        final result = await plan();
+        expect(result.removable.map((f) => f.path.last), ['a.jpg']);
+      },
+    );
+
     test('a removed server folder keeps everything in it', () async {
       device.add('Trips/a.jpg', bytes(1));
       await run();
