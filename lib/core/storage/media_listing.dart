@@ -49,12 +49,28 @@ class MediaListing {
         !identical(_resolvedKeys, keys) ||
         _resolvedLength != keys.length ||
         _resolvedRevision != store.revision) {
-      _resolved = store.resolve(keys);
+      final next = store.resolve(keys);
+      // Other views write to the store all the time. Keeping the old list when
+      // none of this listing's files changed lets views that remember work done
+      // on it, such as sorting, keep doing so.
+      final previous = _resolved;
+      if (previous == null ||
+          previous.length != next.length ||
+          !_sameFiles(previous, next)) {
+        _resolved = next;
+      }
       _resolvedKeys = keys;
       _resolvedLength = keys.length;
       _resolvedRevision = store.revision;
     }
     return _resolved!;
+  }
+
+  static bool _sameFiles(List<CloudFile> a, List<CloudFile> b) {
+    for (var i = 0; i < a.length; i++) {
+      if (!identical(a[i], b[i])) return false;
+    }
+    return true;
   }
 
   /// Adds a fetched batch. Days it covers are replaced wholesale, so photos

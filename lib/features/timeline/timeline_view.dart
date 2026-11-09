@@ -67,7 +67,7 @@ class _TimelineViewState extends State<TimelineView> {
       view.density,
       localizations,
     );
-    final memo = view.timelineMemo;
+    final memo = view.timelineMemo(c.destination);
     if (memo.key == key) return memo.value! as _Derived;
     final media = files.where((f) => f.isMedia).toList();
     final derived = _Derived(

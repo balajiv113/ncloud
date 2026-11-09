@@ -30,6 +30,16 @@ void main() {
     expect(patched.first.favorite, isTrue);
   });
 
+  test('writes for other files do not change the resolved list', () {
+    final store = FileStore();
+    final listing = MediaListing()
+      ..add(store, [photo('a.jpg'), photo('b.jpg')]);
+    final first = listing.resolve(store);
+    store.putAll([photo('elsewhere.jpg')]);
+    store.putFolder(['Drive'], [photo('x.jpg')]);
+    expect(identical(listing.resolve(store), first), isTrue);
+  });
+
   test('resolve reflects files removed from the store', () {
     final store = FileStore();
     final listing = MediaListing()

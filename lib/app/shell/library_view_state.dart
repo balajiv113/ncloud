@@ -19,12 +19,14 @@ class LibraryViewState {
   bool showPeople = false;
   final Map<String, CloudFile> selected = {};
 
-  /// What the Timeline derived from its files, kept here so it survives
-  /// leaving the Timeline for another destination and coming back.
-  final MemoSlot timelineMemo = MemoSlot();
+  final Map<Object, MemoSlot> _timelineMemos = {};
+  final Map<Object, MemoSlot> _visibleMemos = {};
 
-  Object? _visibleKey;
-  List<CloudFile> _visibleFiles = const [];
+  /// What the Timeline derived from its files, kept here so it survives
+  /// leaving it for another destination and coming back. Each [mode], such as
+  /// a destination, has its own slot so views do not evict each other.
+  MemoSlot timelineMemo(Object mode) =>
+      _timelineMemos.putIfAbsent(mode, MemoSlot.new);
 
   bool get selecting => selected.isNotEmpty;
 
@@ -76,16 +78,17 @@ class LibraryViewState {
   }
 
   /// [items] as this view shows them. The result is reused until the items or
-  /// a setting that changes it does.
+  /// a setting that changes it does, separately for each kind of view so that
+  /// switching between them does not redo the work.
   List<CloudFile> visibleFiles(
     List<CloudFile> items, {
     required bool drive,
     required bool collection,
   }) {
-    final key = (items, query, subfolder, filter, sort, drive, collection);
-    if (key == _visibleKey) return _visibleFiles;
-    _visibleKey = key;
-    return _visibleFiles = filterAndSortFiles(
+    final slot = _visibleMemos.putIfAbsent((drive, collection), MemoSlot.new);
+    final key = (items, query, subfolder, filter, sort);
+    if (slot.key == key) return slot.value! as List<CloudFile>;
+    final files = filterAndSortFiles(
       items,
       query: query,
       subfolder: subfolder,
@@ -94,6 +97,10 @@ class LibraryViewState {
       drive: drive,
       collection: collection,
     );
+    slot
+      ..key = key
+      ..value = files;
+    return files;
   }
 }
 
