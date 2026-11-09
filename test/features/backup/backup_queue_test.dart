@@ -174,7 +174,7 @@ void main() {
       await sync.runAll();
       await batch;
       expect(attempts, 2);
-      expect(sync.results[first.id]!['status'], 'error');
+      expect(sync.results[first.id]!['status'], 'partial');
       expect(sync.results[second.id]!['status'], 'success');
       expect(cloud.files.keys, ['Backup/Second/photo.jpg']);
       expect(sync.busy, isFalse);

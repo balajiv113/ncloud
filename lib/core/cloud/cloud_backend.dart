@@ -20,6 +20,32 @@ abstract interface class LoginFlow {
 
 typedef PlaybackSource = ({Uri uri, Map<String, String> headers});
 
+/// What the server reports after storing an upload.
+class UploadResult {
+  const UploadResult({this.etag, this.fileId});
+
+  /// The new file's revision, as the server states it.
+  final String? etag;
+  final String? fileId;
+}
+
+/// One item as the server holds it.
+class RemoteStat {
+  const RemoteStat({
+    required this.isDirectory,
+    this.size = 0,
+    this.etag,
+    this.sha1,
+  });
+
+  final bool isDirectory;
+  final int size;
+  final String? etag;
+
+  /// The fingerprint stored with the file, lower case hex, when it has one.
+  final String? sha1;
+}
+
 class CloudDownload {
   const CloudDownload(this.file, this.stream);
 
@@ -205,13 +231,24 @@ abstract interface class CloudBackend {
   Future<void> createFolder(Account account, List<String> path);
   Future<void> setFavorite(Account account, CloudFile file, bool value);
 
-  /// Atomically creates a new file and fails if the destination exists.
-  Future<void> uploadNew(
+  /// Atomically creates a new file and fails with status 412 if the destination
+  /// exists. A [sha1] fingerprint lets the server verify what it received and
+  /// keep it; [modified] becomes the file's modification time.
+  Future<UploadResult> uploadNew(
     Account account,
     List<String> path,
     Stream<List<int>> bytes,
-    int size,
-  );
+    int size, {
+    String? sha1,
+    DateTime? modified,
+  });
+
+  /// Size, revision and fingerprint of one file or folder, or null if it does
+  /// not exist. One small request, whatever the size of the folder around it.
+  Future<RemoteStat?> stat(Account account, List<String> path);
+
+  /// Creates a folder unless it already exists.
+  Future<void> ensureFolder(Account account, List<String> path);
 
   /// Accepts pathless items. If [expectedRevision] is supplied, fails unless
   /// that revision is read and returns it in the downloaded file's metadata.

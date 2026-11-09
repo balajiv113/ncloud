@@ -222,7 +222,11 @@ void main() {
       await device.put('photo.HEIC', 'before');
       device.changed = true;
       await runHeadless(pair);
-      expect(last.error, contains('album changed'));
+      expect(last.progress.failed, 1);
+      expect(
+        (await journal.failures(pair.id)).single.message,
+        contains('album changed'),
+      );
       expect(cloud.uploads, 0);
       expect(await journal.receipt(pair.id, 'local', ['photo.HEIC']), isNull);
       device.changed = false;

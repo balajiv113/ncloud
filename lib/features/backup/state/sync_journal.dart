@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
 
+import '../engine/failure_policy.dart';
 import '../model/folder_pair.dart';
 
 export '../model/folder_pair.dart';
@@ -30,13 +31,14 @@ class SyncJournal {
       options: OpenDatabaseOptions(
         // Each engine must close only its own connection when a worker ends.
         singleInstance: false,
-        version: 2,
+        version: 3,
         onConfigure: (db) async {
           await db.rawQuery('PRAGMA busy_timeout=5000');
           await db.rawQuery('PRAGMA journal_mode=WAL');
         },
         onUpgrade: (db, oldVersion, _) async {
           if (oldVersion < 2) await _createScheduleTables(db);
+          if (oldVersion < 3) await _addLedger(db);
         },
         onCreate: (db, _) async {
           await db.execute(
@@ -49,8 +51,21 @@ class SyncJournal {
             'path TEXT NOT NULL, version TEXT NOT NULL, target TEXT NOT NULL, '
             'target_version TEXT NOT NULL, PRIMARY KEY(pair,side,path))',
           );
+          await _addLedger(db);
         },
       ),
+    );
+  }
+
+  /// Adds to the receipts and creates the failure list. Only ever adds: receipts
+  /// are what stops a library being uploaded twice, so they are never dropped.
+  static Future<void> _addLedger(Database db) async {
+    await db.execute('ALTER TABLE receipts ADD COLUMN fingerprint TEXT');
+    await db.execute('ALTER TABLE receipts ADD COLUMN size INTEGER');
+    await db.execute(
+      'CREATE TABLE failures (pair TEXT NOT NULL, path TEXT NOT NULL, '
+      'version TEXT NOT NULL, code TEXT, message TEXT NOT NULL, '
+      'attempts INTEGER NOT NULL, at INTEGER NOT NULL, PRIMARY KEY(pair,path))',
     );
   }
 
@@ -151,22 +166,21 @@ class SyncJournal {
     return result;
   }
 
-  Future<void> save(FolderPair pair, {FolderPair? replacing}) async =>
-      (await db).transaction((txn) async {
-        await txn.insert('pairs', {
-          'id': pair.id,
-          'account': pair.account,
-          'payload': jsonEncode(pair.toJson()),
-        }, conflictAlgorithm: ConflictAlgorithm.replace);
-        if (replacing != null && replacing.id != pair.id) {
-          await txn.delete(
-            'receipts',
-            where: 'pair=?',
-            whereArgs: [replacing.id],
-          );
-          await txn.delete('pairs', where: 'id=?', whereArgs: [replacing.id]);
-        }
-      });
+  Future<void> save(
+    FolderPair pair, {
+    FolderPair? replacing,
+  }) async => (await db).transaction((txn) async {
+    await txn.insert('pairs', {
+      'id': pair.id,
+      'account': pair.account,
+      'payload': jsonEncode(pair.toJson()),
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+    if (replacing != null && replacing.id != pair.id) {
+      await txn.delete('receipts', where: 'pair=?', whereArgs: [replacing.id]);
+      await txn.delete('failures', where: 'pair=?', whereArgs: [replacing.id]);
+      await txn.delete('pairs', where: 'id=?', whereArgs: [replacing.id]);
+    }
+  });
 
   Future<Map<String, Object?>?> receipt(
     String pair,
@@ -189,19 +203,187 @@ class SyncJournal {
     List<String> local,
     String localVersion,
     List<String> remote,
+    String remoteVersion, {
+    String? fingerprint,
+    int? size,
+  }) async => (await db).insert(
+    'receipts',
+    _receiptRow(
+      pair,
+      local,
+      localVersion,
+      remote,
+      remoteVersion,
+      fingerprint,
+      size,
+    ),
+    conflictAlgorithm: ConflictAlgorithm.replace,
+  );
+
+  static Map<String, Object?> _receiptRow(
+    String pair,
+    List<String> local,
+    String localVersion,
+    List<String> remote,
     String remoteVersion,
-  ) async => (await db).insert('receipts', {
+    String? fingerprint,
+    int? size,
+  ) => {
     'pair': pair,
     'side': 'local',
     'path': jsonEncode(local),
     'version': localVersion,
     'target': jsonEncode(remote),
     'target_version': remoteVersion,
-  }, conflictAlgorithm: ConflictAlgorithm.replace);
+    'fingerprint': fingerprint,
+    'size': size,
+  };
+
+  /// Records many confirmed uploads in one transaction. A crash between uploads
+  /// and this call loses at most the batch, and the next run recognises those
+  /// files on the server instead of uploading them again.
+  Future<void> confirmAll(String pair, List<Receipt> receipts) async {
+    if (receipts.isEmpty) return;
+    await (await db).transaction((txn) async {
+      final batch = txn.batch();
+      for (final r in receipts) {
+        batch.insert(
+          'receipts',
+          _receiptRow(
+            pair,
+            r.path,
+            r.version,
+            r.target,
+            r.targetVersion,
+            r.fingerprint,
+            r.size,
+          ),
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      }
+      await batch.commit(noResult: true);
+    });
+  }
+
+  /// The receipts for [paths], looked up in groups so a library of a hundred
+  /// thousand files costs a few hundred queries, not a hundred thousand. The
+  /// result is keyed by the path as JSON.
+  Future<Map<String, Receipt>> receiptsFor(
+    String pair,
+    Iterable<List<String>> paths,
+  ) async {
+    final database = await db;
+    final wanted = [for (final path in paths) jsonEncode(path)];
+    final found = <String, Receipt>{};
+    const group = 400;
+    for (var start = 0; start < wanted.length; start += group) {
+      final keys = wanted.skip(start).take(group).toList();
+      final rows = await database.query(
+        'receipts',
+        where:
+            "pair=? AND side='local' AND path IN (${List.filled(keys.length, '?').join(',')})",
+        whereArgs: [pair, ...keys],
+      );
+      for (final row in rows) {
+        found[row['path'] as String] = Receipt.fromRow(row);
+      }
+    }
+    return found;
+  }
+
+  /// Notes that [failure] stopped a file from being backed up. [version] is the
+  /// file's version then, so a changed file gets a fresh start.
+  Future<void> recordFailure(
+    String pair,
+    FileFailure failure,
+    String version,
+  ) async {
+    final database = await db;
+    final key = jsonEncode(failure.path);
+    final before = await database.query(
+      'failures',
+      columns: ['attempts', 'version'],
+      where: 'pair=? AND path=?',
+      whereArgs: [pair, key],
+    );
+    final attempts = before.isNotEmpty && before.single['version'] == version
+        ? (before.single['attempts'] as int) + 1
+        : 1;
+    await database.insert('failures', {
+      'pair': pair,
+      'path': key,
+      'version': version,
+      'code': failure.code,
+      'message': failure.message,
+      'attempts': attempts,
+      'at': DateTime.now().millisecondsSinceEpoch,
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<void> clearFailure(String pair, List<String> path) async =>
+      (await db).delete(
+        'failures',
+        where: 'pair=? AND path=?',
+        whereArgs: [pair, jsonEncode(path)],
+      );
+
+  /// Files that failed and were not tried again since, newest first.
+  Future<List<StoredFailure>> failures(String pair, {int limit = 200}) async =>
+      [
+        for (final row in await (await db).query(
+          'failures',
+          where: 'pair=?',
+          whereArgs: [pair],
+          orderBy: 'at DESC',
+          limit: limit,
+        ))
+          StoredFailure.fromRow(row),
+      ];
+
+  Future<int> failureCount(String pair) async =>
+      Sqflite.firstIntValue(
+        await (await db).rawQuery(
+          'SELECT COUNT(*) FROM failures WHERE pair=?',
+          [pair],
+        ),
+      ) ??
+      0;
+
+  /// The recorded failures, keyed by path as JSON, for the files in [paths].
+  Future<Map<String, StoredFailure>> failuresFor(
+    String pair,
+    Iterable<List<String>> paths,
+  ) async {
+    final database = await db;
+    final wanted = [for (final path in paths) jsonEncode(path)];
+    final found = <String, StoredFailure>{};
+    const group = 400;
+    for (var start = 0; start < wanted.length; start += group) {
+      final keys = wanted.skip(start).take(group).toList();
+      for (final row in await database.query(
+        'failures',
+        where:
+            'pair=? AND path IN (${List.filled(keys.length, '?').join(',')})',
+        whereArgs: [pair, ...keys],
+      )) {
+        found[row['path'] as String] = StoredFailure.fromRow(row);
+      }
+    }
+    return found;
+  }
+
+  /// Gives every failed file a fresh start, such as when the user taps Retry.
+  Future<void> resetFailures(String pair) async => (await db).update(
+    'failures',
+    {'attempts': 0},
+    where: 'pair=?',
+    whereArgs: [pair],
+  );
 
   Future<void> forget(String id) async => (await db).transaction((txn) async {
     await txn.delete('run_state', where: 'pair=?', whereArgs: [id]);
     await txn.delete('receipts', where: 'pair=?', whereArgs: [id]);
+    await txn.delete('failures', where: 'pair=?', whereArgs: [id]);
     await txn.delete('pairs', where: 'id=?', whereArgs: [id]);
   });
 
@@ -219,6 +401,7 @@ class SyncJournal {
       final id = row['id'] as String;
       await txn.delete('run_state', where: 'pair=?', whereArgs: [id]);
       await txn.delete('receipts', where: 'pair=?', whereArgs: [id]);
+      await txn.delete('failures', where: 'pair=?', whereArgs: [id]);
       await txn.delete('pairs', where: 'id=?', whereArgs: [id]);
     }
     await txn.delete('sync_sessions', where: 'account=?', whereArgs: [account]);
@@ -229,4 +412,61 @@ class SyncJournal {
     await _database?.close();
     _database = null;
   }
+}
+
+/// One confirmed upload: where the file was on the device, where it is on the
+/// server, and the fingerprint that identifies its content.
+class Receipt {
+  const Receipt({
+    required this.path,
+    required this.version,
+    required this.target,
+    required this.targetVersion,
+    this.fingerprint,
+    this.size,
+  });
+
+  final List<String> path;
+  final String version;
+  final List<String> target;
+  final String targetVersion;
+  final String? fingerprint;
+  final int? size;
+
+  factory Receipt.fromRow(Map<String, Object?> row) => Receipt(
+    path: (jsonDecode(row['path'] as String) as List).cast<String>(),
+    version: row['version'] as String,
+    target: (jsonDecode(row['target'] as String) as List).cast<String>(),
+    targetVersion: row['target_version'] as String,
+    fingerprint: row['fingerprint'] as String?,
+    size: row['size'] as int?,
+  );
+}
+
+/// A failure saved for a file, with how many runs it has now failed in.
+class StoredFailure {
+  const StoredFailure({
+    required this.path,
+    required this.version,
+    required this.message,
+    required this.attempts,
+    required this.at,
+    this.code,
+  });
+
+  final List<String> path;
+  final String version;
+  final String message;
+  final String? code;
+  final int attempts;
+  final DateTime at;
+
+  factory StoredFailure.fromRow(Map<String, Object?> row) => StoredFailure(
+    path: (jsonDecode(row['path'] as String) as List).cast<String>(),
+    version: row['version'] as String,
+    message: row['message'] as String,
+    code: row['code'] as String?,
+    attempts: row['attempts'] as int,
+    at: DateTime.fromMillisecondsSinceEpoch(row['at'] as int),
+  );
 }

@@ -95,9 +95,7 @@ class SyncRunner {
   }
 
   Future<SyncRunResult> run(Account session, FolderPair pair) async {
-    progress
-      ..transferred = 0
-      ..conflicts = 0;
+    progress.reset();
     String? backgroundReason;
     var locked = false;
     Map<String, dynamic>? state;
@@ -137,7 +135,11 @@ class SyncRunner {
         ).run(session, pair);
         pair.lastRun = DateTime.now();
         await journal.completed(pair.id, pair.lastRun!);
-        progress.phase = 'Up to date · no files deleted';
+        progress.phase = progress.problems == 0
+            ? 'Up to date · no files deleted'
+            : 'Done · ${progress.problems} '
+                  '${progress.problems == 1 ? 'file' : 'files'} could not be '
+                  'backed up';
       } on SyncStopped {
         progress.phase = 'Paused · completed transfers are saved';
         error = backgroundReason;
@@ -175,16 +177,23 @@ class SyncRunner {
 
   /// Records how the run ended and reads the state back.
   Future<Map<String, dynamic>> _settle(FolderPair pair) async {
+    // The reason a file could not be backed up, for the first line on screen.
+    final firstFailure = progress.problems == 0
+        ? null
+        : (await journal.failures(pair.id, limit: 1)).firstOrNull?.message;
     await journal.writeState(pair.id, {
       'status': error != null
           ? 'error'
           : _stop
           ? 'paused'
+          : progress.problems > 0
+          ? 'partial'
           : 'success',
       'phase': progress.phase,
       'error': error,
       'errorCode': errorCode,
-      'transferred': progress.transferred,
+      'firstFailure': firstFailure,
+      ...progress.toJson(),
       'finished': DateTime.now().toUtc().toIso8601String(),
     });
     return journal.state(pair.id);

@@ -157,9 +157,15 @@ class ScheduledBackupRunner implements HeadlessBackupRunner {
           'finished': clock().toUtc().toIso8601String(),
         });
       }
+      // A run that finished with a few files it could not back up still used
+      // today's occurrence; those files are tried again at the next one, and
+      // retrying all day would only drain the battery.
       if (!_stopped &&
           runner.error == null &&
-          (await journal.state(pairId))['status'] == 'success') {
+          const {
+            'success',
+            'partial',
+          }.contains((await journal.state(pairId))['status'])) {
         await journal.writeState(pairId, {
           'revision': revision,
           'slot': slot,
