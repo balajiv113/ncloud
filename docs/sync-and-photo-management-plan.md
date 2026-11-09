@@ -6,7 +6,7 @@ Status: step 1 is built for device-folder backups. The rest is still a plan.
 | --- | --- |
 | Fingerprints sent with every upload; the server verifies and stores them | Moves for backups made before fingerprints (needs the one-time preview) |
 | A file already on the server is recognised, never uploaded twice | Counting "removed from your server" (needs a server scan) |
-| Moves and copies on the device are followed on the server | Free up space (decided for the next release) |
+| Moves and copies on the device are followed on the server | Remove from this phone, by album or folder (decided for the next release) |
 | Back up again (card menu) | iPhone Photos library source and Files folders |
 | No per-file server listing; receipts read in groups; newest first | Duplicate review, Reorganise, Needs attention list |
 | One bad file no longer ends a run; retries, circuit breaker, Try again | |
@@ -146,15 +146,30 @@ it back loses nothing.
 
 This is the only thing that ever deletes on the phone, and it is always your tap.
 
-* **Where:** a *Remove from this phone* button on a photo, on a selection, and a
-  bulk **Free up space** on the link's card.
-* **Only verified items are offered.** The server copy exists, is unchanged, and its
-  fingerprint matches the phone's. Nothing is removed on trust.
-* **You choose how much to keep**, for example "keep the last 30 days" or "keep
-  favourites", and you see the count and the space it frees before anything happens.
-* **The phone asks once.** Android 11 and later shows its own dialog for the whole
-  batch; iPhone shows its confirmation and moves photos to Recently Deleted for 30
-  days. The app cannot delete behind your back.
+* **Where:** a *Remove from this phone* button on a photo and on a selection, and
+  **Remove from this phone…** in a backup card's menu, which works one album or
+  folder at a time.
+* **One album or folder at a time.** You pick `Screenshots` or `Trips`, and the list
+  shows each one's photo count and size. It is a unit you already understand, small
+  enough to check, and a very large library is never deleted in one go. There is no
+  "delete everything" button.
+* **Only verified items are offered.** Just before deleting, every item in the album
+  is checked against the server by size and fingerprint, not from memory. What
+  cannot be proven (not backed up yet, changed since, removed from the server) stays,
+  and is listed.
+* **You see the result first:** "412 photos, 3.1 GB, are safely on your server; 6
+  are not, so they stay." Optional keeps: "keep the last 30 days" and "keep
+  favourites".
+* **Batches, with the phone asking each time.** A big album is done in batches of a
+  few hundred, each with the phone's own confirmation and a progress count. You can
+  stop between batches, and what is done is done. Each batch is verified again.
+* **Trash, not permanent.** Android 11 and later moves them to its trash; iPhone
+  moves them to Recently Deleted. Both keep them for 30 days, so a mistake can be
+  undone on the phone. The app cannot delete behind your back.
+* **iPhone albums are not folders.** Deleting a photo removes it from the whole
+  library, so a photo in two albums leaves both. The summary says how many photos
+  are also in other albums. The album itself stays, empty.
+* **The server is never touched,** and the backup never undoes a removal.
 * **Photos, videos and folder files** all work the same. For a folder link the app
   deletes the verified local files in the folder you granted.
 * Removed items stay **browsable in the app**, because the Timeline comes from the
@@ -335,7 +350,8 @@ device are their first check, so each is kept small and lands on its own.
    the server in the meantime, both are kept. (Settled.)
 2. **Removed from the server, still on the phone.** Treated as removed on purpose
    and not uploaded again, with **Back up again** on the card. (Settled.)
-3. **Free up space** is in the next release, not the first one. (Settled.)
+3. **Free up space** is in the next release, not the first one, and works by album
+   or folder as described above. (Settled.)
 4. Existing folder backups follow moves too, since today a moved file is uploaded
    again and leaves a duplicate. The first run shows the one-time "move them to
    match?" preview and waits for your tap. (Settled.)
