@@ -5,6 +5,7 @@ import '../../../core/cloud/cloud_backend.dart';
 import '../../../models.dart';
 import '../platform/folder_access.dart';
 import '../state/sync_journal.dart';
+import 'backup_preview.dart';
 import 'conflict_name.dart';
 import 'failure_policy.dart';
 import 'fingerprint.dart';
@@ -56,6 +57,15 @@ class _Item {
 }
 
 /// The key the journal stores a path under.
+/// What a run has to do: the files to upload, and how many needed nothing.
+class _Plan {
+  _Plan(this.todo, this.alreadyBackedUp, this.blocked);
+
+  final List<_Item> todo;
+  final int alreadyBackedUp;
+  final int blocked;
+}
+
 String _pathKey(List<String> path) => jsonEncode(path);
 
 /// Uploads the files of one device folder that the server does not have yet.
@@ -129,7 +139,13 @@ class SyncEngine {
     progress.found = local.length;
     _present = {for (final item in local) item.key};
     _status('Checking what is already backed up');
-    final todo = await _classify(pair, local);
+    final plan = await _classify(pair, local);
+    final todo = plan.todo;
+    progress
+      ..alreadyBackedUp = plan.alreadyBackedUp
+      ..blocked = plan.blocked
+      ..toUpload = todo.length
+      ..bytesTotal = _bytes(todo);
     _status('Preparing the destination');
     await _ensureCloudRoot(session, pair);
     if (todo.isNotEmpty) {
@@ -200,8 +216,10 @@ class SyncEngine {
   /// current version, newest first so recent photos arrive soonest. Receipts
   /// are read in groups, so the cost grows with the library, not with the
   /// library times the number of queries.
-  Future<List<_Item>> _classify(FolderPair pair, List<_Item> local) async {
+  Future<_Plan> _classify(FolderPair pair, List<_Item> local) async {
     final todo = <_Item>[];
+    var alreadyBackedUp = 0;
+    var blocked = 0;
     final anyFailures = await journal.failureCount(pair.id) > 0;
     const group = 400;
     for (var start = 0; start < local.length; start += group) {
@@ -221,14 +239,14 @@ class SyncEngine {
       for (final item in chunk) {
         final version = item.entry.version;
         if (receipts[item.key]?.version == version) {
-          progress.alreadyBackedUp++;
+          alreadyBackedUp++;
           continue;
         }
         final failure = failures[item.key];
         if (failure != null) {
           item.hadFailure = true;
           if (failure.version == version && failure.attempts >= _maxAttempts) {
-            progress.blocked++;
+            blocked++;
             continue;
           }
         }
@@ -236,13 +254,62 @@ class SyncEngine {
       }
     }
     todo.sort((a, b) => b.entry.modified.compareTo(a.entry.modified));
-    progress
-      ..toUpload = todo.length
-      ..bytesTotal = todo.fold(
-        0,
-        (sum, i) => sum + (i.entry.size > 0 ? i.entry.size : 0),
+    return _Plan(todo, alreadyBackedUp, blocked);
+  }
+
+  static int _bytes(List<_Item> items) =>
+      items.fold(0, (sum, i) => sum + (i.entry.size > 0 ? i.entry.size : 0));
+
+  /// Works out what a run would do, without doing any of it. It reads the
+  /// device and the saved records and asks the server one question, whether
+  /// the destination exists; it uploads nothing, creates nothing and records
+  /// nothing.
+  Future<BackupPreview> preview(Account session, FolderPair pair) async {
+    check(pair);
+    checkSyncPath(pair.cloudRoot);
+    validateConcurrency(pair.uploadConcurrency);
+    final local = await _scanDevice(pair);
+    final plan = await _classify(pair, local);
+    final shares = <String, (int, int)>{};
+    DateTime? oldest;
+    DateTime? newest;
+    for (final item in plan.todo) {
+      final folder = item.path.length > 1 ? item.path.first : pair.folder.name;
+      final share = shares[folder] ?? (0, 0);
+      shares[folder] = (
+        share.$1 + 1,
+        share.$2 + (item.entry.size > 0 ? item.entry.size : 0),
       );
-    return todo;
+      final when = DateTime.fromMillisecondsSinceEpoch(item.entry.modified);
+      if (oldest == null || when.isBefore(oldest)) oldest = when;
+      if (newest == null || when.isAfter(newest)) newest = when;
+    }
+    bool? exists;
+    try {
+      exists = (await client.stat(session, pair.cloudRoot)) != null;
+    } on Object {
+      // The preview is still useful without the server.
+    }
+    final folders =
+        [
+          for (final MapEntry(key: name, value: share) in shares.entries)
+            FolderShare(name, share.$1, share.$2),
+        ]..sort(
+          (a, b) => b.bytes != a.bytes
+              ? b.bytes.compareTo(a.bytes)
+              : b.files.compareTo(a.files),
+        );
+    return BackupPreview(
+      found: local.length,
+      alreadyBackedUp: plan.alreadyBackedUp,
+      toUpload: plan.todo.length,
+      bytes: _bytes(plan.todo),
+      blocked: plan.blocked,
+      folders: folders,
+      oldest: oldest,
+      newest: newest,
+      destinationExists: exists,
+    );
   }
 
   /// Makes sure the pair's cloud folder exists, creating it when it does not.

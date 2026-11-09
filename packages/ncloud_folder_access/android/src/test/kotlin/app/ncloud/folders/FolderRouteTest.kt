@@ -16,6 +16,16 @@ class FolderRouteTest {
         for (method in listOf("acquire", "release")) {
             assertEquals("lock", folderRoute(method, false))
         }
+        assertEquals("mediaAccess", folderRoute("mediaAccess", false))
+        for (method in listOf("mediaList", "mediaExport")) {
+            assertEquals("mediaTransfer", folderRoute(method, false))
+        }
         assertEquals("unsupported", folderRoute("unknown", false))
+    }
+
+    @Test
+    fun workersNeverAskForPhotoPermission() {
+        assertEquals("mediaRequest", folderRoute("mediaRequest", true))
+        assertEquals("headless_picker", folderRoute("mediaRequest", false))
     }
 }

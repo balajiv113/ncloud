@@ -2,8 +2,10 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ncloud/core/cloud/cloud_backend.dart';
+import 'package:ncloud/features/backup/engine/backup_preview.dart';
 import 'package:ncloud/features/backup/engine/sync_engine.dart';
 import 'package:ncloud/features/backup/platform/folder_access.dart';
+import 'package:ncloud/models.dart';
 import 'package:ncloud/features/backup/state/sync_journal.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
@@ -549,6 +551,126 @@ void main() {
     );
   });
 
+  group('a dry run', () {
+    Future<BackupPreview> preview() => engine().preview(account, pair());
+
+    test('says what a run would do and changes nothing', () async {
+      device.add('Rome/a.jpg', bytes(1), modified: 1000000000000);
+      device.add('Rome/b.jpg', bytes(2), modified: 1200000000000);
+      device.add('Paris/c.jpg', bytes(3), modified: 1400000000000);
+      device.add('top.jpg', bytes(4), modified: 1500000000000);
+      final result = await preview();
+      expect(result.found, 4);
+      expect(result.toUpload, 4);
+      expect(result.bytes, 128);
+      expect(result.alreadyBackedUp, 0);
+      expect(result.isEmpty, isFalse);
+      // Nothing was done: no upload, no folder, no record, no copy of a file.
+      expect(server.uploads, 0);
+      expect(server.moves, 0);
+      expect(server.folders, {'', 'Backup'});
+      expect(server.folderRequests, 0);
+      expect(device.exports, 0);
+      expect(
+        await journal.receiptsFor('p', [
+          ['top.jpg'],
+          ['Rome', 'a.jpg'],
+        ]),
+        isEmpty,
+      );
+      expect(device.staging.listSync(), isEmpty);
+    });
+
+    test(
+      'breaks the work down by folder, biggest first, with the date range',
+      () async {
+        device.add('Rome/a.jpg', bytes(1), modified: 1000000000000);
+        device.add('Rome/b.jpg', bytes(2), modified: 1200000000000);
+        device.add('Paris/c.jpg', bytes(3), modified: 1400000000000);
+        device.add('top.jpg', bytes(4), modified: 1500000000000);
+        final result = await preview();
+        expect(
+          [for (final f in result.folders) (f.name, f.files)],
+          [('Rome', 2), ('Camera', 1), ('Paris', 1)],
+        );
+        expect(
+          result.oldest,
+          DateTime.fromMillisecondsSinceEpoch(1000000000000),
+        );
+        expect(
+          result.newest,
+          DateTime.fromMillisecondsSinceEpoch(1500000000000),
+        );
+      },
+    );
+
+    test('counts what is already backed up and what keeps failing', () async {
+      for (var i = 0; i < 5; i++) {
+        device.add('old$i.jpg', bytes(i));
+      }
+      await run();
+      device.add('bad.jpg', bytes(101));
+      device.beforeExport = (name) {
+        if (name == 'bad.jpg') {
+          throw const FormatException('Cannot read this file.');
+        }
+      };
+      for (var i = 0; i < 5; i++) {
+        await run();
+      }
+      device.add('new.jpg', bytes(100));
+      final result = await preview();
+      expect(result.found, 7);
+      expect(result.alreadyBackedUp, 5);
+      expect(result.blocked, 1);
+      expect(result.toUpload, 1);
+    });
+
+    test('knows whether the destination already exists', () async {
+      device.add('a.jpg', bytes(1));
+      expect((await preview()).destinationExists, isFalse);
+      server.folders.add('Backup/Camera');
+      expect((await preview()).destinationExists, isTrue);
+    });
+
+    test('still works when the server cannot be reached', () async {
+      device.add('a.jpg', bytes(1));
+      final offline = SyncEngine(
+        client: _Offline(server),
+        access: device,
+        journal: journal,
+        progress: SyncProgress(),
+        check: (_) {},
+        onChanged: () {},
+      );
+      final result = await offline.preview(account, pair());
+      expect(result.toUpload, 1);
+      expect(result.destinationExists, isNull);
+    });
+
+    test('is exactly what the real run then does', () async {
+      for (var i = 0; i < 30; i++) {
+        device.add('f$i.jpg', bytes(i));
+      }
+      final before = await preview();
+      await run();
+      expect(progress.toUpload, before.toUpload);
+      expect(progress.bytesTotal, before.bytes);
+      expect(server.uploads, before.toUpload);
+      final after = await preview();
+      expect(after.isEmpty, isTrue);
+      expect(after.alreadyBackedUp, 30);
+    });
+
+    test(
+      'says there is nothing to do for an empty or finished folder',
+      () async {
+        expect((await preview()).isEmpty, isTrue);
+        expect((await preview()).found, 0);
+      },
+    );
+  });
+
   group('progress', () {
     test('counts what is there, what is done, and what is left', () async {
       for (var i = 0; i < 10; i++) {
@@ -567,4 +689,17 @@ void main() {
       expect(progress.toUpload, 1);
     });
   });
+}
+
+/// A server that cannot be reached.
+class _Offline extends FakeServer {
+  _Offline(FakeServer other) {
+    folders
+      ..clear()
+      ..addAll(other.folders);
+  }
+
+  @override
+  Future<RemoteStat?> stat(Account account, List<String> path) async =>
+      throw const SocketException('unreachable');
 }

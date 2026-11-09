@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ncloud/app/app_controller.dart';
+import 'package:ncloud/features/backup/engine/backup_preview.dart';
 import 'package:ncloud/features/backup/state/backup_controller.dart';
 import 'package:ncloud/features/backup/ui/backup_status.dart';
 import 'package:ncloud/features/backup/ui/folder_backup_screen.dart';
@@ -30,6 +31,8 @@ class _Backup extends BackupController {
   List<StoredFailure> stored = [];
   int retries = 0;
   int again = 0;
+  int runs = 0;
+  Future<BackupPreview> Function()? onPreview;
 
   @override
   Future<void> load() async {}
@@ -41,6 +44,10 @@ class _Backup extends BackupController {
   Future<void> retryFailed(FolderPair pair) async => retries++;
   @override
   Future<void> backUpAgain(FolderPair pair) async => again++;
+  @override
+  Future<void> run(FolderPair pair) async => runs++;
+  @override
+  Future<BackupPreview> preview(FolderPair pair) => onPreview!();
 }
 
 FolderPair pair() => FolderPair(
@@ -265,6 +272,136 @@ void main() {
         findsOneWidget,
       );
     });
+
+    BackupPreview sample({
+      int toUpload = 12431,
+      int found = 12460,
+      int alreadyBackedUp = 29,
+      bool? exists = false,
+    }) => BackupPreview(
+      found: found,
+      alreadyBackedUp: alreadyBackedUp,
+      toUpload: toUpload,
+      bytes: 48 * 1024 * 1024 * 1024,
+      blocked: 0,
+      folders: const [
+        FolderShare('Camera', 8210, 31 * 1024 * 1024 * 1024),
+        FolderShare('WhatsApp Images', 4000, 15 * 1024 * 1024 * 1024),
+        FolderShare('Screenshots', 221, 2 * 1024 * 1024 * 1024),
+      ],
+      oldest: DateTime(2014, 3, 5),
+      newest: DateTime(2025, 11, 9),
+      destinationExists: exists,
+    );
+
+    testWidgets('the first backup shows what it will do and waits for a yes', (
+      tester,
+    ) async {
+      sync.onPreview = () async => sample();
+      await show(tester);
+      await tester.tap(find.text('Back up'));
+      await tester.pumpAndSettle();
+      expect(sync.runs, 0, reason: 'nothing starts until asked');
+      expect(find.text('Back up Camera'), findsOneWidget);
+      expect(find.text('12,431 files · 48 GB'), findsOneWidget);
+      expect(find.textContaining('about'), findsWidgets);
+      expect(find.text('29 already backed up'), findsOneWidget);
+      expect(
+        find.textContaining('will be created on your server'),
+        findsOneWidget,
+      );
+      expect(find.text('Biggest folders'), findsOneWidget);
+      expect(find.text('WhatsApp Images'), findsOneWidget);
+      expect(find.textContaining('Nothing is deleted'), findsOneWidget);
+      await tester.tap(find.text('Start backup'));
+      await tester.pumpAndSettle();
+      expect(sync.runs, 1);
+    });
+
+    testWidgets('saying not now starts nothing', (tester) async {
+      sync.onPreview = () async => sample();
+      await show(tester);
+      await tester.tap(find.text('Back up'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Not now'));
+      await tester.pumpAndSettle();
+      expect(sync.runs, 0);
+    });
+
+    testWidgets('a backup that has run before just runs', (tester) async {
+      sync.pairs = [pair()..lastRun = DateTime(2025)];
+      sync.results['p'] = {'status': 'success', 'found': 10};
+      sync.onPreview = () async => throw StateError('should not be asked');
+      await show(tester);
+      await tester.tap(find.text('Back up'));
+      await tester.pumpAndSettle();
+      expect(sync.runs, 1);
+      expect(find.text('Back up Camera'), findsNothing);
+    });
+
+    testWidgets('the menu previews at any time, for looking only', (
+      tester,
+    ) async {
+      sync.pairs = [pair()..lastRun = DateTime(2025)];
+      sync.results['p'] = {'status': 'success', 'found': 10};
+      sync.onPreview = () async => sample(exists: true);
+      await show(tester);
+      await tester.tap(find.byTooltip('More for Camera'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Preview what will be backed up'));
+      await tester.pumpAndSettle();
+      expect(find.text('Close'), findsOneWidget);
+      expect(find.text('Start backup'), findsNothing);
+      expect(find.textContaining('Goes to /Backup/Camera'), findsOneWidget);
+      await tester.tap(find.text('Close'));
+      await tester.pumpAndSettle();
+      expect(sync.runs, 0);
+    });
+
+    testWidgets('an up-to-date folder says so and offers nothing to start', (
+      tester,
+    ) async {
+      sync.onPreview = () async =>
+          sample(toUpload: 0, found: 500, alreadyBackedUp: 500);
+      await show(tester);
+      await tester.tap(find.text('Back up'));
+      await tester.pumpAndSettle();
+      expect(find.text('Everything is already backed up.'), findsOneWidget);
+      final start = tester.widget<FilledButton>(
+        find.widgetWithText(FilledButton, 'Nothing to back up'),
+      );
+      expect(start.onPressed, isNull);
+    });
+
+    testWidgets('an empty folder says there is nothing yet', (tester) async {
+      sync.onPreview = () async =>
+          sample(toUpload: 0, found: 0, alreadyBackedUp: 0);
+      await show(tester);
+      await tester.tap(find.text('Back up'));
+      await tester.pumpAndSettle();
+      expect(find.text('There is nothing to back up yet.'), findsOneWidget);
+    });
+
+    testWidgets(
+      'a folder that cannot be read shows why, and cannot be started',
+      (tester) async {
+        sync.onPreview = () async => throw const FormatException(
+          'The folder provider supplies no file size.',
+        );
+        await show(tester);
+        await tester.tap(find.text('Back up'));
+        await tester.pumpAndSettle();
+        expect(
+          find.text('The folder provider supplies no file size.'),
+          findsOneWidget,
+        );
+        expect(find.text('Start backup'), findsOneWidget);
+        final start = tester.widget<FilledButton>(
+          find.widgetWithText(FilledButton, 'Start backup'),
+        );
+        expect(start.onPressed, isNull);
+      },
+    );
 
     testWidgets('a failed run shows its reason and offers Retry', (
       tester,

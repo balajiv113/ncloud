@@ -37,6 +37,9 @@ import '../../../core/cloud/cloud_backend.dart';
 );
 
 String _platform(PlatformException error) => switch (error.code) {
+  'media_permission' =>
+    'Access to your photos and videos was removed. Allow it in your phone\'s '
+        'settings, then back up again.',
   'photos_permission' ||
   'photos_changed' ||
   'photos_album' ||
@@ -75,6 +78,7 @@ bool sourceNeedsReselect(String? code) => const {
   'folder_permission',
   'photos_permission',
   'photos_album',
+  'media_permission',
 }.contains(code);
 
 /// Why saved backup settings could not be read, as a sentence for the screen.

@@ -158,20 +158,40 @@ class FakeDevice implements FolderAccess {
   /// Runs before each export; throw to make the provider fail that file.
   FutureOr<void> Function(String name)? beforeExport;
 
-  void add(String name, List<int> bytes, {int modified = 1700000000000}) {
-    entries[name] = DeviceEntry(
+  void add(String path, List<int> bytes, {int modified = 1700000000000}) {
+    final name = path.split('/').last;
+    entries[path] = DeviceEntry(
       name,
       false,
       bytes.length,
       modified,
       contentType: 'image/jpeg',
     );
-    contents[name] = bytes;
+    contents[path] = bytes;
   }
 
+  /// What is directly in [path]: the files there and the folders below it.
+  /// Files are added with their whole path, such as `Trips/Rome/a.jpg`.
   @override
-  Future<List<DeviceEntry>> list(String token, List<String> path) async =>
-      path.isEmpty ? entries.values.toList() : [];
+  Future<List<DeviceEntry>> list(String token, List<String> path) async {
+    final prefix = path.isEmpty ? '' : '${path.join('/')}/';
+    final result = <DeviceEntry>[];
+    final folders = <String>{};
+    for (final MapEntry(key: name, value: entry) in entries.entries) {
+      if (!name.startsWith(prefix)) continue;
+      final rest = name.substring(prefix.length);
+      final slash = rest.indexOf('/');
+      if (slash < 0) {
+        result.add(entry);
+      } else {
+        folders.add(rest.substring(0, slash));
+      }
+    }
+    return [
+      for (final folder in folders) DeviceEntry(folder, true, 0, 0),
+      ...result,
+    ];
+  }
 
   @override
   Future<File> export(
@@ -182,7 +202,7 @@ class FakeDevice implements FolderAccess {
     exports++;
     await beforeExport?.call(path.last);
     final file = File('${staging.path}/${exports}_${path.last}.part');
-    await file.writeAsBytes(contents[path.last]!);
+    await file.writeAsBytes(contents[path.join('/')]!);
     return file;
   }
 

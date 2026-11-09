@@ -138,7 +138,12 @@ void main() {
     tester,
   ) async {
     setup();
-    sync.pairs = [savedPair('Camera'), savedPair('Travel')];
+    // Backups that have run before start straight away; the first one shows a
+    // preview first.
+    sync.pairs = [
+      savedPair('Camera')..lastRun = DateTime(2025),
+      savedPair('Travel')..lastRun = DateTime(2025),
+    ];
     await tester.pumpWidget(
       MaterialApp(home: FolderBackupScreen(controller: app)),
     );
@@ -169,7 +174,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('Edit Documents'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Device folder'));
+    await tester.tap(find.text('What to back up'));
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField).at(0), '*.jpg, *.mp4');
     await tester.enterText(find.byType(TextField).at(1), '*.tmp');
@@ -201,7 +206,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.text('Device folder'), findsNothing);
+    expect(find.text('What to back up'), findsNothing);
     await tester.tap(find.text('Photos album'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Travel'));
@@ -223,7 +228,7 @@ void main() {
         MaterialApp(home: BackupSetupScreen(controller: app)),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Device folder'));
+      await tester.tap(find.text('What to back up'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Cloud destination'));
       await tester.pumpAndSettle();
