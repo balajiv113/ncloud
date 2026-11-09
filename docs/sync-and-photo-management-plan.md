@@ -17,7 +17,7 @@ both platforms. Only a thin layer underneath differs.
 2. The server stays tidy: no duplicates, sensible folders, nothing in two places.
 3. When I tidy up on the phone (move a photo to an album), the server follows.
 4. I can empty the phone once photos are safe, and keep them on the server.
-5. If I do want deletions to follow, that is my choice, and it is recoverable.
+5. Cleaning up the server is easy, visible and recoverable, and never happens by surprise.
 6. Folders such as Documents can stay the same on both sides.
 7. I can see what is happening, and nothing disappears behind my back.
 8. A new phone or a reinstall does not mean starting over.
@@ -33,17 +33,19 @@ the same few settings, each a plain question with plain answers:
 | --- | --- | --- |
 | **New photos on my phone** | Always uploaded | (fixed) |
 | **When I move a photo on my phone** | Move it on the server too / Leave the server alone | Move it |
-| **When I delete a photo on my phone** | **Keep it on the server** / **Ask me first** / **Remove it from the server** (to trash) | Keep it |
 | **Bring server changes to this phone** (folders only) | Off / On | Off |
 | When it runs | Wi-Fi only, charging only, daily time | Wi-Fi only |
 
-That is all. There is no "mode" to understand. Someone who only wants a backup
-changes nothing. Someone who tidies on the phone gets their moves. Someone who
-wants deletions to follow picks one answer.
+Deleting on the phone is deliberately **not** a setting. A photo deleted on the
+phone stays on the server, always. Removing things from the server is a separate,
+visible step you take in the app (see "Cleaning up the server").
+
+There is no "mode" to understand. Someone who only wants a backup changes nothing.
+Someone who tidies albums on the phone gets their moves.
 
 Moving is safe to follow by default: a move loses nothing, because the file is the
-same file in a new folder. Deleting is the only risky one, so its default is the
-safe answer and the others are explicit.
+same file in a new folder. Nothing on the server is ever deleted because of
+something done on the phone.
 
 Sources a link can use:
 
@@ -84,36 +86,52 @@ side, so the app knows what happened instead of guessing:
 
 This is the same engine for photos and folders, which is why they feel alike.
 
-## Deleting, with no timers
+## Cleaning up the server
 
-When a photo is deleted on the phone, the setting decides:
+The phone only ever **adds** to the server (and moves what it has already added).
+Nothing is deleted from the server because of something done on the phone. That
+removes the one risk a bug could never undo.
 
-* **Keep it on the server.** Nothing happens. Ever.
-* **Ask me first.** The photo appears in a list, "Deleted on your phone: 14
-  photos, 52 MB", with **Remove from server** and **Keep**. You decide in one tap,
-  in a batch. Nothing waits on a clock.
-* **Remove it from the server.** The photo goes to the server's **trash**, so it
-  can be restored from there.
+You still need to get rid of things, so the app makes it easy where you can see it:
 
-The server's trash is the undo. It is why no waiting period is needed.
+* **Not on your phone any more.** The app knows which backed-up photos are no
+  longer on the phone (the ledger remembers). It shows them as one view, under the
+  link's card and in Smart albums: "412 photos, 3.1 GB". Select some or all and
+  choose **Delete from server** (they go to the server's **trash**) or **Keep**
+  (they stop being listed).
+* **Drive and the Timeline** already let you select and delete. Deleted items go
+  to the server's trash and can be restored from **Trash**.
+* **Whole folders** (for example an album you no longer want) are deleted in Drive
+  like any folder.
 
-Behind the scenes, so that a faulty scan is never mistaken for a deletion, a
-removal only goes ahead when all of these hold:
+One thing the app cannot know: deleting in the Gallery **to free space** and
+deleting because you **want it gone** look identical. So this list is built to be
+safe to ignore:
 
-1. The scan of the phone was complete and had **full access** (not Android's
-   "selected photos only", not iPhone's "limited").
-2. **Two scans in a row** agree the photo is gone. This is invisible and takes a
-   run or two, not days.
-3. The count has not suddenly collapsed (more than 10%, minimum 50). If it has,
-   the app switches to asking, whatever the setting.
-4. This phone put it there (the ledger says so) and it is inside the link's folder.
-5. The server copy is unchanged since it was uploaded.
-6. The server has a **trash**. If not, "Remove it from the server" is refused.
-7. At most 200 removals per run. More are asked about.
-8. The first removals after choosing the setting ask first.
+* Nothing is ever pre-selected, and the default action is **Keep**.
+* It says plainly what the photos are: "These are on your server and no longer on
+  your phone. Deleting them from the server removes your only copy, apart from
+  the server's trash."
+* Photos freed with **Free up space** never appear here, because the app did that
+  on purpose and marked them "on server only".
+* For emptying the phone, Free up space is the recommended route, so the list
+  stays short and meaningful.
 
-Everything removed is listed under **Recently removed from your server** with a
-Restore button.
+Why this is enough: you decide what goes, with the photos in front of you, in one
+batch. A scan that comes back short, an album that was hidden instead of deleted,
+or a permission that changed can never cost you a photo, because no scan can
+delete anything.
+
+Automatic removal ("when I delete on the phone, remove it from the server") is
+**left out of the first version on purpose**. It can be added later as a third
+answer, with the safeguards below, if it turns out you want it:
+
+1. full access to the phone's photos (not "selected photos only" or "limited"),
+2. two scans in a row agree,
+3. a sudden drop (more than 10%, minimum 50) makes it ask instead,
+4. only files this phone uploaded, unchanged on the server,
+5. the server has a trash,
+6. at most 200 per run, and the first batch always asks.
 
 The phone is never changed by the app, with two exceptions you ask for: *Free up
 space*, and folders bringing server changes down.
@@ -121,25 +139,11 @@ space*, and folders bringing server changes down.
 ## Switching settings
 
 Settings can be changed at any time, in any direction. They share one ledger, so
-changing them never re-uploads anything and never forgets what was synced. The
-suggested route for a new library: leave the defaults, let the first big upload
-finish, change what you want later.
-
-Choosing **Ask me first** or **Remove it from the server** never acts at once. The
-app first shows a preview:
-
-* *Deleted on the phone earlier, still on the server* (for example, years of
-  deletions made while only backing up). These are **not** queued for removal.
-  They are listed ("412 files, 3.1 GB") with *Keep them* as the default and
-  *Remove from server* as the other choice.
-* After that, only deletions from now on are followed.
+changing them never re-uploads anything and never forgets what was synced.
 
 Choosing **Move it** shows the photos that sit in a different folder than on the
 phone and offers to move them, with the exact list. Nothing moves until you
-confirm.
-
-Going back to **Keep it on the server** is always safe: it simply stops following
-deletions. Anything already removed stays in the trash and in Recently removed.
+confirm. Choosing **Leave the server alone** simply stops following moves.
 
 A change made while a run is going takes effect when that run finishes.
 
@@ -148,34 +152,22 @@ A change made while a run is going takes effect when that run finishes.
 On Android an album is a real folder, so deleting it deletes the photos inside it
 (or sends them to the phone's trash).
 
-| "When I delete a photo" is | On the server |
-| --- | --- |
-| **Keep it** | Nothing. Every photo stays. |
-| **Ask me first** | They appear in the "Deleted on your phone" list for you to approve. |
-| **Remove it** | After two scans agree and the checks pass, they go to the trash. A large album trips the "sudden drop" check, so the app **asks** first. |
-| **Free up space** (an action in the app) | Nothing. The app deleted them on purpose. |
-
-* The server **folder** is never removed, only the files in it.
-* Some apps "hide" an album instead of deleting it (for example with a `.nomedia`
-  file). To the app, hidden photos look deleted. The asking, the trash and the
-  sudden-drop check exist partly for this.
+* **Server:** nothing. Every photo stays, and the folder stays.
+* The photos appear in **Not on your phone any more**, so you can remove them from
+  the server when you are ready, or keep them.
+* If you restore the album on the phone, they simply drop off that list.
+* Some apps "hide" an album instead of deleting it. That looks like a deletion to
+  the app, and it is harmless here, since nothing is removed.
 * On iPhone, deleting an **album** does not delete its photos. With album folders
-  on, they are *moved* on the server to the next album in your order or to
+  on, they are *moved* on the server to the next album in your order, or to
   `Camera Roll`.
 
 ## Emptying the phone once photos are safe (Free up space)
 
-This is a different goal from removing deletions from the server:
-
-| Goal | Phone | Server |
-| --- | --- | --- |
-| **Free up space** | Photos are deleted from the phone | Photos stay |
-| **Remove it from the server** | You delete on the phone | The server follows |
-
-If a plain delete in the Gallery meant "free up space" while *Remove it from the
-server* was on, the server would delete the photo too. So the app never guesses.
-Free up space is an **explicit action in the app**, which means the app knows it
-did it.
+Because deleting on the phone never deletes on the server, emptying the phone is
+safe by design: delete in the Gallery, or use **Free up space** in the app, and
+the server keeps everything. Free up space is the careful way to do it: it deletes
+only photos it has **verified** on the server, and it shows you what it will do.
 
 1. The app picks photos that are **verified** as safe: the server copy exists, is
    unchanged, and its fingerprint matches the phone's.
@@ -184,18 +176,52 @@ did it.
    happens.
 3. The phone's own system dialog asks once for the whole batch (Android 11 and
    later), so the app cannot delete photos behind your back.
-4. Each freed photo is marked **on server only**. It is never read as a deletion,
-   never queued for removal, and never uploaded again.
+4. Each freed photo is marked **on server only**. It never appears in "Not on
+   your phone any more", and it is never uploaded again.
 5. Freed photos stay browsable in the app, because the Timeline comes from the
    server. Opening one streams it.
 
-To empty the phone and keep everything on the server, leave *When I delete* on
-**Keep it** and use Free up space. If you set it to *Remove it*, the app says so
-on the setting: "Deleting a photo on this phone will also remove it from your
-server."
-
 iPhone is the same idea with PhotoKit: freed photos go to Recently Deleted for 30
 days, behind the system confirmation.
+
+## Worked cases
+
+**1. Photos and an album, backed up.** On Android, `Camera/` and `Trips/` are
+folders. One photo-and-videos link backs up both as `Camera/` and `Trips/` on the
+server. Later you move a photo from `Camera` to `Trips`. Next run it is recognised
+(same photo, new folder) and **moved** on the server. Nothing is uploaded twice.
+If you chose "Leave the server alone", it stays in `Camera/` and you can move it
+in Drive.
+
+**2. Albums I want gone.** Delete the album on the phone: the server keeps
+everything. When you want the server cleaned too, open **Not on your phone any
+more**, select the photos, **Delete from server** (to trash). Or delete the folder
+in Drive.
+
+**3. A folder link and a photo link cover the same photos.** Say a folder link
+backs up `WhatsApp Images`, and the photo link also sees them.
+* The setup screen says so: "WhatsApp Images is already backed up by another
+  link and is skipped here."
+* Even if both see a file, it is uploaded **once**: the fingerprint is already on
+  the server, so the second link records it as backed up and moves on.
+* If you later stop one link, the photos stay on the server and the other link
+  keeps tracking them.
+
+**4. The same on iPhone.**
+* *Back up:* one Photos link puts everything in `Camera Roll/`, plus a folder for
+  each album you chose. A photo in several albums is stored once, under the first
+  album in your order. Live Photos keep their video with them.
+* *Moves:* with album folders on, moving a photo between albums moves it on the
+  server too. Without them, there is nothing to move.
+* *Deleting on the phone:* it stays on the server and shows in **Not on your phone
+  any more**, just like Android. Deleting an album does not delete photos.
+* *Folders:* a Files-app folder (iCloud Drive, On My iPhone, others) is a folder
+  link exactly like on Android.
+* *Free up space:* uses the same verification and the iPhone's confirmation. Photos
+  go to Recently Deleted for 30 days.
+* *Differences you will see:* iPhone shows "waiting for iOS" while the system
+  decides when background work runs, and "limited access" instead of Android's
+  "selected photos only".
 
 ## Keeping photos tidy
 
@@ -235,7 +261,7 @@ Other things that keep the library clean:
 * **Duplicate review** finds duplicates already on the server by fingerprint and
   lets you keep one and trash the rest.
 * **Needs attention** is one list for everything that wants a decision:
-  conflicts, deletions waiting for you, items that could not be read, duplicates.
+  conflicts, photos no longer on your phone, items that could not be read, duplicates.
 
 ## One screen, one vocabulary
 
@@ -293,7 +319,7 @@ it depends on is proven.
 1. **Foundations (Dart, fully testable here):** ledger, three-way planner, safety
    policy, executor, fingerprints and checksummed uploads. Move today's Android
    folder backups onto it, which already gives the move and delete settings for
-   folders, with preview and Needs attention. Also make big folders cheap: read
+   folders, with preview, Needs attention and the "Not on your phone any more" view. Also make big folders cheap: read
    folder listings off the screen thread and show them as they arrive.
 2. **Android photos:** media library source, phone-folder layout, duplicate checks,
    Free up space, the media-change trigger.
@@ -316,10 +342,10 @@ device are their first check, so each is kept small and lands on its own.
 
 ## Questions to settle before step 1
 
-1. Are plain settings (no named modes) right, with **Move it** on and **Keep it on
-   the server** as the delete default?
-2. Should the **first removals always ask**, even if you chose "Remove it"?
-3. **Free up space** is in the first Android release, since it is what lets you
+1. Is **add-only plus moves** right for the first version, with removal handled in
+   the app through **Not on your phone any more**, and automatic removal left for
+   later?
+2. **Free up space** is in the first Android release, since it is what lets you
    empty the phone after backing up. (Proposed: yes.)
-4. Existing folder backups keep running exactly as they are until you opt in.
+3. Existing folder backups keep running exactly as they are until you opt in.
    (Proposed: yes; their move setting starts as "Leave the server alone".)
