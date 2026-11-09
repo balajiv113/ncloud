@@ -220,6 +220,9 @@ abstract interface class CloudBackend {
     CloudFile file, {
     String? expectedRevision,
   });
+
+  /// The short video of a Live Photo ([CloudFile.isLive]) as MP4 or MOV bytes.
+  Future<Uint8List> livePhotoVideo(Account account, CloudFile file);
   Future<List<TrashEntry>> trash(Account account);
   Future<void> restore(Account account, TrashEntry entry);
 

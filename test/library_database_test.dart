@@ -220,6 +220,33 @@ void main() {
     },
   );
 
+  test('clearing the cache also removes saved Live Photo clips', () async {
+    final folder = await cache.folder('live-photos');
+    final clip = File('${folder.path}/1-e.mov')..writeAsBytesSync([1, 2, 3]);
+    expect(clip.existsSync(), isTrue);
+    expect(await cache.size(), greaterThanOrEqualTo(3));
+    await cache.clear();
+    expect(clip.existsSync(), isFalse);
+  });
+
+  test('Live Photo and sharing marks are saved with the file', () async {
+    const live = CloudFile(
+      path: ['Photos', 'live.heic'],
+      name: 'live.heic',
+      isDirectory: false,
+      contentType: 'image/heic',
+      id: '9',
+      liveId: 'apple-id',
+      sharing: Sharing.byMe,
+    );
+    final store = FileStore()..putAll([live]);
+    await cache.writeLibrary(library, store);
+    await cache.writeListing(listing, [live]);
+    final restored = (await cache.readListing(listing))!.single;
+    expect(restored.liveId, 'apple-id');
+    expect(restored.sharing, Sharing.byMe);
+  });
+
   test(
     'path fallback upgrades to stable identity and moves keep one record',
     () async {

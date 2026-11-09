@@ -227,6 +227,10 @@ class LocalCache {
     if (used + incoming > budget) await _trim();
   }
 
+  /// A folder inside the cache, created when asked for. Clearing the cache
+  /// removes it with everything else.
+  Future<Directory> folder(String name) => _folder(name);
+
   Future<Directory> _folder(String name) async {
     final dir = Directory('${(await _root).path}/$name');
     await dir.create(recursive: true);
@@ -507,7 +511,7 @@ class LocalCache {
     try {
       final root = await _root;
       if (!await root.exists()) return 0;
-      for (final name in ['thumbs']) {
+      for (final name in ['thumbs', 'live-photos']) {
         final folder = Directory('${root.path}/$name');
         if (!await folder.exists()) continue;
         await for (final entity in folder.list()) {

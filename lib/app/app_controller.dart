@@ -21,6 +21,7 @@ import '../features/files/file_resolver.dart';
 import '../features/files/original_transfers.dart';
 import '../features/files/share_session.dart';
 import '../features/map/photo_map_session.dart';
+import '../features/viewer/live_photo_clips.dart';
 import 'browse_target.dart';
 import 'library_browser.dart';
 import '../core/cached_resource.dart';
@@ -263,6 +264,12 @@ class AppController extends ChangeNotifier implements StatusSink {
     account: () => account,
     active: () => !_disposed,
     apply: _browser.reconcile,
+  );
+  late final LivePhotoClips _liveClips = LivePhotoClips(
+    client: client,
+    directory: () async =>
+        await cache?.folder('live-photos') ??
+        Directory('${Directory.systemTemp.path}/ncloud-live'),
   );
   late final OriginalTransfers _originalTransfers = OriginalTransfers(
     client: client,
@@ -741,6 +748,19 @@ class AppController extends ChangeNotifier implements StatusSink {
       throw const CloudException('The account changed. Open this video again.');
     }
     return (offline: copy, source: source);
+  }
+
+  /// The short video of a Live Photo, as a local file ready to play.
+  Future<File> livePhotoClip(CloudFile file) async {
+    final session = account;
+    if (session == null) {
+      throw const CloudException('Reconnect to play this Live Photo.');
+    }
+    final clip = await _liveClips.clip(session, file);
+    if (_disposed || !identical(account, session)) {
+      throw const CloudException('The account changed. Open this photo again.');
+    }
+    return clip;
   }
 
   /// Explicitly saved original, outside the bounded browsing cache.
