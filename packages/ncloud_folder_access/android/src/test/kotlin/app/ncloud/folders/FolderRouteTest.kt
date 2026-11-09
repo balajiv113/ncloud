@@ -24,6 +24,12 @@ class FolderRouteTest {
     }
 
     @Test
+    fun workersNeverAskToRemovePhotos() {
+        assertEquals("mediaTrash", folderRoute("mediaTrash", true))
+        assertEquals("headless_picker", folderRoute("mediaTrash", false))
+    }
+
+    @Test
     fun workersNeverAskForPhotoPermission() {
         assertEquals("mediaRequest", folderRoute("mediaRequest", true))
         assertEquals("headless_picker", folderRoute("mediaRequest", false))

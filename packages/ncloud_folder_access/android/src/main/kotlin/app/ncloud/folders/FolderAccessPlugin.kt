@@ -47,6 +47,8 @@ class FolderAccessPlugin : FlutterPlugin, ActivityAware, PluginRegistry.Activity
     private var binding: ActivityPluginBinding? = null
     private var picker: MethodChannel.Result? = null
     private var mediaRequest: MethodChannel.Result? = null
+    private var trashRequest: MethodChannel.Result? = null
+    private var trashIds: List<String> = emptyList()
     private val locks = mutableMapOf<String, Pair<RandomAccessFile, FileLock>>()
     private val stageRoot get() = File(context.cacheDir, "ncloud-sync-staging").apply { mkdirs() }
 
@@ -86,6 +88,28 @@ class FolderAccessPlugin : FlutterPlugin, ActivityAware, PluginRegistry.Activity
                     } else {
                         mediaRequest = result
                         activity!!.requestPermissions(mediaPermissions(), 9143)
+                    }
+                }
+                "mediaTrash" -> {
+                    val ids = call.argument<List<String>>("ids")
+                    if (Build.VERSION.SDK_INT < 30) {
+                        result.error("unsupported", "Removing photos needs Android 11 or later.", null)
+                    } else if (ids.isNullOrEmpty()) {
+                        result.success(emptyList<String>())
+                    } else if (trashRequest != null) {
+                        result.error("busy", "A removal request is already open.", null)
+                    } else {
+                        try {
+                            val pending = MediaStore.createTrashRequest(
+                                context.contentResolver, ids.map { mediaUri(it) }, true)
+                            trashRequest = result
+                            trashIds = ids
+                            activity!!.startIntentSenderForResult(pending.intentSender, 9144, null, 0, 0, 0)
+                        } catch (error: Exception) {
+                            trashRequest = null
+                            trashIds = emptyList()
+                            result.error("media_trash", "Could not ask to remove the photos.", null)
+                        }
                     }
                 }
                 "mediaTransfer" -> worker.execute {
@@ -372,6 +396,39 @@ class FolderAccessPlugin : FlutterPlugin, ActivityAware, PluginRegistry.Activity
         }
     }
 
+    private fun mediaUri(id: String): Uri {
+        val parts = id.split(":")
+        check(parts.size == 2) { "Unsupported photo id." }
+        val base = if (parts[0] == "video") MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+            else MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+        return ContentUris.withAppendedId(base, parts[1].toLong())
+    }
+
+    /** Whether the photo is still in the library. A trashed one is not listed. */
+    private fun mediaExists(id: String): Boolean = try {
+        context.contentResolver.query(mediaUri(id), arrayOf(MediaStore.MediaColumns._ID), null, null, null)
+            .use { it != null && it.moveToFirst() }
+    } catch (_: Exception) {
+        false
+    }
+
+    /** The answer to the system's removal prompt: the ids that are gone, or none if the user declined. */
+    private fun onTrashResult(resultCode: Int): Boolean {
+        val pending = trashRequest ?: return false
+        val ids = trashIds
+        trashRequest = null
+        trashIds = emptyList()
+        if (resultCode != Activity.RESULT_OK) {
+            pending.success(emptyList<String>())
+            return true
+        }
+        worker.execute {
+            val removed = ids.filter { !mediaExists(it) }
+            main.post { pending.success(removed) }
+        }
+        return true
+    }
+
     /** Opens the original, with its location, when Android allows it; otherwise the file as Android gives it. */
     private fun openMedia(uri: Uri): java.io.InputStream {
         if (Build.VERSION.SDK_INT >= 29 && has(Manifest.permission.ACCESS_MEDIA_LOCATION)) {
@@ -450,6 +507,7 @@ class FolderAccessPlugin : FlutterPlugin, ActivityAware, PluginRegistry.Activity
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?): Boolean {
+        if (requestCode == 9144) return onTrashResult(resultCode)
         if (requestCode != 9142) return false
         val pending = picker ?: return false
         picker = null
@@ -481,6 +539,9 @@ class FolderAccessPlugin : FlutterPlugin, ActivityAware, PluginRegistry.Activity
         picker = null
         mediaRequest?.error("foreground_required", "The permission request closed with the activity.", null)
         mediaRequest = null
+        trashRequest?.error("foreground_required", "The removal request closed with the activity.", null)
+        trashRequest = null
+        trashIds = emptyList()
     }
     override fun onDetachedFromActivityForConfigChanges() = onDetachedFromActivity()
     override fun onReattachedToActivityForConfigChanges(binding: ActivityPluginBinding) = onAttachedToActivity(binding)

@@ -15,6 +15,7 @@ import '../../../core/cloud/cloud_backend.dart';
 import '../model/backup_id.dart';
 import '../engine/pair_policy.dart';
 import '../engine/backup_preview.dart';
+import '../engine/phone_removal.dart';
 import '../engine/sync_engine.dart';
 import '../engine/sync_errors.dart';
 import '../engine/sync_runner.dart';
@@ -550,6 +551,65 @@ class BackupController extends ChangeNotifier {
       accountKey: () => _accountKey,
       onChanged: () {},
     ).preview(session, pair);
+  }
+
+  /// Whether [pair]'s files can be removed from the phone from here: photos
+  /// and videos, not arbitrary folders.
+  bool canRemoveFromPhone(FolderPair pair) =>
+      pair.folder.kind != DeviceSourceKind.folder && access is RemovableAccess;
+
+  Account _sessionFor(FolderPair pair) {
+    final session = account();
+    if (session == null || syncAccount(session) != pair.account) {
+      throw StateError('Sign in to this account to change its backup.');
+    }
+    return session;
+  }
+
+  /// The albums or folders of [pair] that can be cleared.
+  Future<List<RemovalTarget>> removalTargetsOf(FolderPair pair) {
+    _sessionFor(pair);
+    return removalTargets(access, pair);
+  }
+
+  /// Checks [target] against the server and says what may be removed. Changes
+  /// nothing.
+  Future<RemovalPlan> planRemovalOf(FolderPair pair, RemovalTarget target) =>
+      planRemoval(
+        client: client,
+        access: access,
+        journal: journal,
+        session: _sessionFor(pair),
+        pair: pair,
+        target: target,
+      );
+
+  /// Moves what [plan] allows to the phone's trash, a batch at a time, with the
+  /// phone asking the user each time. The server is never touched.
+  Future<RemovalResult> removeFromPhoneWith(
+    FolderPair pair,
+    RemovalPlan plan, {
+    void Function(int removed, int total)? onProgress,
+    bool Function()? shouldStop,
+  }) {
+    if (busy) {
+      throw StateError('Wait for the backup to finish before removing files.');
+    }
+    final remover = access;
+    if (remover is! RemovableAccess) {
+      throw UnsupportedError('Removing files is not available here.');
+    }
+    return removeFromPhone(
+      client: client,
+      access: access,
+      remover: remover as RemovableAccess,
+      journal: journal,
+      session: _sessionFor(pair),
+      pair: pair,
+      plan: plan,
+      onProgress: onProgress,
+      shouldStop: shouldStop,
+    );
   }
 
   /// The files of [pair] that could not be backed up, with the reasons.

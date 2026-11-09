@@ -249,6 +249,47 @@ final class AlbumBackupService {
     }
   }
 
+  /// Moves the photos behind these listed files to Recently Deleted, after the
+  /// system has asked the user, and returns the names that were removed. The
+  /// answer is empty when the user declines. Every part of a photo is named by
+  /// the caller, so a photo is never removed with a part left unverified.
+  func deleteListed(token: String, names: [String]) throws -> [String] {
+    try requireAuthorization()
+    snapshotLock.lock()
+    let lookup = listedResources[token] ?? [:]
+    snapshotLock.unlock()
+    var assetIDs = Set<String>()
+    for name in names {
+      guard let listed = lookup[name] else {
+        throw AlbumBackupError(code: "photos_changed",
+          message: "The Photos library changed. Check again.")
+      }
+      assetIDs.insert(listed.assetID)
+    }
+    let assets = PHAsset.fetchAssets(withLocalIdentifiers: Array(assetIDs), options: nil)
+    guard assets.count == assetIDs.count else {
+      throw AlbumBackupError(code: "photos_changed",
+        message: "The Photos library changed. Check again.")
+    }
+    let outcome = DeleteOutcome()
+    let done = DispatchSemaphore(value: 0)
+    PHPhotoLibrary.shared().performChanges({
+      PHAssetChangeRequest.deleteAssets(assets)
+    }, completionHandler: { success, error in
+      outcome.success = success
+      outcome.error = error
+      done.signal()
+    })
+    done.wait()
+    if outcome.success { return names }
+    if let error = outcome.error as NSError?, error.domain == PHPhotosErrorDomain,
+       error.code == PHPhotosError.userCancelled.rawValue {
+      return []
+    }
+    throw AlbumBackupError(code: "photos_delete",
+      message: "Photos could not remove them: \(outcome.error?.localizedDescription ?? "unknown error")")
+  }
+
   func cancelExports() {
     exportLock.lock()
     stopped = true
@@ -273,7 +314,8 @@ final class AlbumBackupService {
     listedResources[token] = lookup
     snapshotLock.unlock()
     return pairs.map { asset, resource in
-      ["name": Self.filename(asset, resource), "directory": false, "size": Int64(-1),
+      ["name": Self.filename(asset, resource), "id": asset.identifier,
+       "directory": false, "size": Int64(-1),
        "modified": max(Int64(1), Int64(asset.modified.timeIntervalSince1970 * 1000)),
        "contentType": UTType(resource.uti)?.preferredMIMEType ?? "application/octet-stream",
        "revision": Self.revision(asset, resource)]
@@ -331,6 +373,11 @@ final class AlbumBackupService {
       throw error
     }
   }
+}
+
+private final class DeleteOutcome {
+  var success = false
+  var error: Error?
 }
 
 // writeData has no cancellation handle. A timed-out operation is abandoned and
