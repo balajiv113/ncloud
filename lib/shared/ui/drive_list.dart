@@ -5,6 +5,25 @@ import '../../models.dart';
 import '../../features/files/file_actions.dart';
 import 'media_tile.dart';
 
+/// The line under a file's name: its kind or size, and who it is shared with.
+String driveSubtitle(CloudFile file) {
+  final kind = file.isDirectory ? 'Folder' : formatBytes(file.size);
+  return switch (file.sharing) {
+    Sharing.none => kind,
+    Sharing.byMe => '$kind · Shared by you',
+    Sharing.withMe => '$kind · Shared with you',
+  };
+}
+
+IconData _icon(CloudFile file) {
+  if (!file.isDirectory) return Icons.description_outlined;
+  return switch (file.sharing) {
+    Sharing.none => Icons.folder_outlined,
+    Sharing.byMe => Icons.folder_shared_outlined,
+    Sharing.withMe => Icons.folder_shared,
+  };
+}
+
 /// Files and folders as a list, with selection marks and a per-file menu.
 class DriveList extends StatelessWidget {
   const DriveList({
@@ -55,10 +74,10 @@ class DriveList extends StatelessWidget {
                         : ColoredBox(
                             color: colors.surfaceContainerHigh,
                             child: Icon(
-                              file.isDirectory
-                                  ? Icons.folder_outlined
-                                  : Icons.description_outlined,
-                              color: colors.primary,
+                              _icon(file),
+                              color: file.sharing == Sharing.withMe
+                                  ? colors.tertiary
+                                  : colors.primary,
                               size: 22,
                             ),
                           ),
@@ -71,7 +90,7 @@ class DriveList extends StatelessWidget {
             style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
           ),
           subtitle: Text(
-            file.isDirectory ? 'Folder' : formatBytes(file.size),
+            driveSubtitle(file),
             style: const TextStyle(fontSize: 11, height: 1.4),
           ),
           trailing: selecting

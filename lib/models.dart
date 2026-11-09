@@ -39,6 +39,17 @@ abstract class Account {
   bool sameOwner(Account other) => storageKey == other.storageKey;
 }
 
+/// Whether a file or folder is shared, and in which direction.
+enum Sharing {
+  none,
+
+  /// This account shares it with others.
+  byMe,
+
+  /// Someone else shares it with this account.
+  withMe,
+}
+
 class CloudFile {
   const CloudFile({
     required this.path,
@@ -53,6 +64,7 @@ class CloudFile {
     this.taken,
     this.captureDay,
     this.etag,
+    this.sharing = Sharing.none,
   });
 
   final List<String> path;
@@ -69,6 +81,7 @@ class CloudFile {
   final DateTime? taken;
   final int? captureDay;
   final String? etag;
+  final Sharing sharing;
   DateTime? get timelineDate {
     if (captureDay case final day?) {
       final date = DateTime.fromMillisecondsSinceEpoch(
@@ -95,6 +108,7 @@ class CloudFile {
     'taken': taken?.toIso8601String(),
     'captureDay': captureDay,
     'etag': etag,
+    'sharing': sharing.name,
   };
 
   factory CloudFile.fromJson(Map<String, dynamic> json) => CloudFile(
@@ -114,6 +128,7 @@ class CloudFile {
         : DateTime.parse(json['taken'] as String),
     captureDay: json['captureDay'] as int?,
     etag: json['etag'] as String?,
+    sharing: Sharing.values.byName(json['sharing'] as String? ?? 'none'),
   );
 
   /// Root of placeholder paths for timeline items whose real file path is
@@ -138,6 +153,7 @@ class CloudFile {
     albumReference: albumReference,
     taken: taken,
     captureDay: captureDay,
+    sharing: sharing,
     etag: etag,
   );
 
@@ -153,6 +169,7 @@ class CloudFile {
     albumReference: albumReference,
     taken: taken,
     captureDay: captureDay,
+    sharing: sharing,
     etag: etag,
   );
 
@@ -168,6 +185,7 @@ class CloudFile {
     albumReference: albumReference,
     taken: taken,
     captureDay: captureDay,
+    sharing: sharing,
     etag: revision,
   );
 
@@ -187,6 +205,7 @@ class CloudFile {
     albumReference: albumReference,
     taken: date,
     captureDay: day,
+    sharing: sharing,
     etag: revision,
   );
 }
@@ -290,17 +309,60 @@ class TrashEntry {
   final DateTime? deleted;
 }
 
-class PublicShare {
-  const PublicShare({
+/// Who a share is for.
+enum ShareKind { link, user, group }
+
+/// One way a file or folder is shared by this account: a public link, or
+/// access given to a person or a group.
+class FileShare {
+  const FileShare({
     required this.id,
-    required this.url,
+    required this.kind,
+    this.isFolder = false,
+    this.url,
+    this.recipient,
+    this.recipientName,
+    this.canEdit = false,
     this.passwordProtected = false,
     this.expiration,
   });
+
   final String id;
-  final Uri url;
+  final ShareKind kind;
+  final bool isFolder;
+
+  /// The public address; set only for a link.
+  final Uri? url;
+
+  /// The account or group id the share is for; unset for a link.
+  final String? recipient;
+  final String? recipientName;
+
+  /// Whether the recipient can change the content, not only view it.
+  final bool canEdit;
   final bool passwordProtected;
   final String? expiration;
+
+  FileShare withEdit(bool value) => FileShare(
+    id: id,
+    kind: kind,
+    isFolder: isFolder,
+    url: url,
+    recipient: recipient,
+    recipientName: recipientName,
+    canEdit: value,
+    passwordProtected: passwordProtected,
+    expiration: expiration,
+  );
+}
+
+/// A person or group the server offers to share with.
+class Sharee {
+  const Sharee({required this.kind, required this.id, required this.name});
+
+  final ShareKind kind;
+  final String id;
+  final String name;
 }
 
 bool pathStartsWith(List<String> path, List<String> prefix) =>

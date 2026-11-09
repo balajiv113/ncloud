@@ -382,6 +382,7 @@ void main() {
                 'meta': {'status': 'ok'},
                 'data': {
                   'id': 42,
+                  'share_type': 3,
                   'url': 'https://cloud.example/s/abc',
                   'password': 'hash',
                   'expiration': '2027-01-02',
@@ -393,7 +394,7 @@ void main() {
         }),
       );
       addTearDown(client.close);
-      final result = await client.createShare(
+      final result = await client.createLink(
         account,
         const CloudFile(
           path: ['Photos', 'a & b.jpg'],

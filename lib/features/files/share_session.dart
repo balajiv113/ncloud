@@ -36,24 +36,41 @@ class ShareSession {
     return result;
   }
 
-  Future<List<PublicShare>> list() => _run(() async {
-    final file = await _resolve(_file);
-    _checkCurrent();
-    return _client.shares(_account, file);
-  });
+  Future<List<FileShare>> list() =>
+      _withFile((file) => _client.shares(_account, file));
 
-  Future<PublicShare> create({String? password, DateTime? expires}) =>
-      _run(() async {
-        final file = await _resolve(_file);
-        _checkCurrent();
-        return _client.createShare(
+  Future<FileShare> createLink({String? password, DateTime? expires}) =>
+      _withFile(
+        (file) => _client.createLink(
           _account,
           file,
           password: password,
           expires: expires,
-        );
-      });
+        ),
+      );
 
-  Future<void> revoke(PublicShare share) =>
+  /// Whether the file is a folder, which decides what "edit" allows.
+  bool get isFolder => _file.isDirectory;
+
+  Future<List<Sharee>> findPeople(String query) => _run(
+    () => _client.findSharees(_account, query, folder: _file.isDirectory),
+  );
+
+  Future<FileShare> addPerson(Sharee sharee, {bool canEdit = false}) =>
+      _withFile(
+        (file) => _client.shareWith(_account, file, sharee, canEdit: canEdit),
+      );
+
+  Future<FileShare> setEditable(FileShare share, bool canEdit) =>
+      _run(() => _client.setShareEditable(_account, share, canEdit));
+
+  Future<void> revoke(FileShare share) =>
       _run(() => _client.revokeShare(_account, share));
+
+  Future<T> _withFile<T>(Future<T> Function(CloudFile file) action) =>
+      _run(() async {
+        final file = await _resolve(_file);
+        _checkCurrent();
+        return action(file);
+      });
 }

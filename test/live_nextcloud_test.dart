@@ -353,13 +353,13 @@ void main() {
       await client.copy(account, renamed, [...album, renamed.name]);
       final copied = (await client.listFolder(account, album)).children.single;
       expect(copied.name, renamed.name);
-      final share = await client.createShare(
+      final share = await client.createLink(
         account,
         copied,
         password: 'disposable-fixture-link',
         expires: DateTime.now().add(const Duration(days: 7)),
       );
-      expect(share.url.path, contains('/s/'));
+      expect(share.url!.path, contains('/s/'));
       expect(
         (await client.shares(account, copied)).any((s) => s.id == share.id),
         isTrue,
