@@ -52,6 +52,10 @@ class _Item {
   /// The path as one string, to look the file up by.
   late final String key = _pathKey(path);
 
+  /// What an earlier run recorded for this path when its version has since
+  /// changed: the same file touched or edited, not a new one.
+  Receipt? previous;
+
   /// Whether an earlier run recorded a failure for it, to be cleared on success.
   bool hadFailure = false;
 }
@@ -250,6 +254,7 @@ class SyncEngine {
             continue;
           }
         }
+        item.previous = receipts[item.key];
         todo.add(item);
       }
     }
@@ -440,6 +445,7 @@ class _Uploader {
       }
       final fingerprint = await fingerprintOf(staged);
       engine.check(pair);
+      if (await _sameFile(item, fingerprint, size, staged)) return;
       // The same content may already be on the server under another path: a
       // photo that moved on the device, or a copy of one. Recognise it.
       if (await _reuseKnown(item, fingerprint, size)) return;
@@ -501,6 +507,72 @@ class _Uploader {
       }
     } finally {
       if (staged != null) await _access.discard(staged);
+    }
+  }
+
+  /// Handles a file this backup stored before and whose version has changed.
+  ///
+  /// If the content is the same, only the device's bookkeeping changed (a
+  /// photo that was touched): the receipt is renewed and nothing is uploaded.
+  /// If the content changed, it is an edit: when the server still holds what
+  /// was uploaded, the new content becomes a new version of that same file.
+  /// When the server copy is gone or changed this returns false, and the file
+  /// is uploaded as new, keeping both.
+  Future<bool> _sameFile(
+    _Item item,
+    String fingerprint,
+    int size,
+    File staged,
+  ) async {
+    final before = item.previous;
+    if (before == null) return false;
+    if (before.fingerprint == fingerprint) {
+      await _record(
+        item,
+        before.target,
+        before.targetVersion,
+        fingerprint,
+        size,
+      );
+      _progress.wasOnServer(size);
+      engine._tick();
+      return true;
+    }
+    final at = [...pair.cloudRoot, ...before.target];
+    final here = await _client.stat(session, at);
+    final etag = here?.etag;
+    if (here == null ||
+        here.isDirectory ||
+        etag == null ||
+        etag.isEmpty ||
+        !before.targetVersion.startsWith('$etag|')) {
+      return false;
+    }
+    engine.check(pair);
+    await engine._requireNetwork(pair);
+    try {
+      final result = await _client.uploadNew(
+        session,
+        at,
+        staged.openRead(),
+        size,
+        sha1: fingerprint,
+        modified: DateTime.fromMillisecondsSinceEpoch(item.entry.modified),
+        replacing: etag,
+      );
+      final next = result.etag;
+      if (next == null || next.isEmpty) {
+        throw const FormatException(
+          'The server did not supply a file revision. Sync stopped safely.',
+        );
+      }
+      await _record(item, before.target, '$next|$size', fingerprint, size);
+      _progress.uploaded(size, engine._clock());
+      engine._tick();
+      return true;
+    } on CloudException catch (error) {
+      if (error.statusCode == 412) return false;
+      rethrow;
     }
   }
 

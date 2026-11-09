@@ -1882,6 +1882,7 @@ class NextcloudClient implements CloudBackend {
     int size, {
     String? sha1,
     DateTime? modified,
+    String? replacing,
   }) async {
     validateName(path.last);
     final request = _UploadRequest(davUri(account, path), bytes)
@@ -1890,7 +1891,10 @@ class NextcloudClient implements CloudBackend {
       ..headers.addAll({
         'Authorization': account.authorization,
         'Content-Type': 'application/octet-stream',
-        'If-None-Match': '*',
+        if (replacing == null)
+          'If-None-Match': '*'
+        else
+          'If-Match': replacing.startsWith('"') ? replacing : '"$replacing"',
         'User-Agent': 'ncloud/0.5.5',
         // The server checks the content against this and keeps it.
         'OC-Checksum': ?sha1 == null ? null : 'SHA1:$sha1',

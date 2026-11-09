@@ -216,7 +216,7 @@ void main() {
   );
 
   test(
-    'source changes fail visibly without receipt and edited originals keep both versions',
+    'source changes fail visibly without receipt and an edit becomes a new version of the same file',
     () async {
       final pair = await add();
       await device.put('photo.HEIC', 'before');
@@ -235,7 +235,11 @@ void main() {
       await device.put('photo.HEIC', 'after-edit');
       await runHeadless(pair);
       expect(cloud.uploads, 2);
-      expect(cloud.files['Backup/Trips/photo.HEIC']!.$1, 'before'.codeUnits);
+      expect(cloud.files.length, 1);
+      expect(
+        cloud.files['Backup/Trips/photo.HEIC']!.$1,
+        'after-edit'.codeUnits,
+      );
     },
   );
 
