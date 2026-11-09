@@ -207,8 +207,15 @@ Future<RemovalPlan> verify({
     final size = receipt.size ?? int.tryParse(parts.last);
     if (onServer == null ||
         onServer.isDirectory ||
-        _bare(onServer.etag) != _bare(parts.first) ||
         (size != null && onServer.size != size)) {
+      reasons[key] = KeepReason.notOnServer;
+      continue;
+    }
+    // The revision is the quick proof. A file that was moved, or touched by
+    // the server, has a new one, so its checksum is compared instead: the same
+    // checksum is the same file.
+    if (_bare(onServer.etag) != _bare(parts.first) &&
+        !await _sameChecksum(client, session, pair, receipt)) {
       reasons[key] = KeepReason.notOnServer;
       continue;
     }
@@ -235,6 +242,22 @@ Future<RemovalPlan> verify({
     }
   }
   return RemovalPlan(target: target, removable: removable, kept: kept);
+}
+
+/// Whether the server's copy has the checksum recorded when it was uploaded.
+Future<bool> _sameChecksum(
+  CloudBackend client,
+  Account session,
+  FolderPair pair,
+  Receipt receipt,
+) async {
+  final recorded = receipt.fingerprint;
+  if (recorded == null) return false;
+  final stat = await client.stat(session, [
+    ...pair.cloudRoot,
+    ...receipt.target,
+  ]);
+  return stat != null && !stat.isDirectory && stat.sha1 == recorded;
 }
 
 /// Files per system confirmation. Small enough to read about, large enough

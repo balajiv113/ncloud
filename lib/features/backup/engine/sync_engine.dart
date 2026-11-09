@@ -639,6 +639,12 @@ class _Uploader {
       if (error.statusCode == 412) return false;
       rethrow;
     }
+    // The server gives a moved file a new revision, so record the real one.
+    final landed = await _client.stat(session, [
+      ...pair.cloudRoot,
+      ...destination,
+    ]);
+    final revision = landed?.etag;
     await _journal.moveReceipt(
       pair.id,
       earlier.path,
@@ -646,7 +652,9 @@ class _Uploader {
         path: item.path,
         version: item.entry.version,
         target: destination,
-        targetVersion: earlier.targetVersion,
+        targetVersion: revision == null || revision.isEmpty
+            ? earlier.targetVersion
+            : '$revision|${landed!.size}',
         fingerprint: fingerprint,
         size: size,
       ),
