@@ -81,6 +81,7 @@ class NextcloudClient implements CloudBackend {
   static const _properties = '''
     <d:displayname/><d:resourcetype/><d:getcontenttype/>
     <d:getcontentlength/><d:getlastmodified/><d:getetag/><oc:fileid/><oc:favorite/>
+    <oc:permissions/><oc:share-types/><nc:is-mount-root/>
   ''';
 
   @override
@@ -588,7 +589,8 @@ class NextcloudClient implements CloudBackend {
       headers: {'Depth': '1', 'Content-Type': 'application/xml; charset=utf-8'},
       body:
           '''
-        <d:propfind xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns">
+        <d:propfind xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns"
+          xmlns:nc="http://nextcloud.org/ns">
           <d:prop>$_properties</d:prop>
         </d:propfind>
       ''',
@@ -675,7 +677,7 @@ class NextcloudClient implements CloudBackend {
       headers: {'Content-Type': 'application/xml; charset=utf-8'},
       body:
           '''
-        <d:searchrequest xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns" xmlns:sd="https://github.com/icewind1991/SearchDAV/ns">
+        <d:searchrequest xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns" xmlns:nc="http://nextcloud.org/ns" xmlns:sd="https://github.com/icewind1991/SearchDAV/ns">
           <d:basicsearch>
             <d:select><d:prop>$_properties</d:prop></d:select>
             <d:from><d:scope><d:href>$scope</d:href><d:depth>${recursive ? 'infinity' : '1'}</d:depth></d:scope></d:from>
@@ -1366,27 +1368,30 @@ class NextcloudClient implements CloudBackend {
     _expect(response, {201, 204});
   }
 
-  Future<dynamic> _sharesRequest(
+  /// Calls an OCS sharing endpoint and returns its `data`. Parameters go in
+  /// the query for GET and in a form body for POST and PUT.
+  Future<dynamic> _ocsSharing(
     Account account,
-    String method, {
+    String method,
+    String endpoint, {
     String? id,
     Map<String, String> parameters = const {},
   }) async {
+    final hasBody = method == 'POST' || method == 'PUT';
     final response = await _request(
       method,
       serverEndpoint(
         account.server,
-        ['ocs', 'v2.php', 'apps', 'files_sharing', 'api', 'v1', 'shares', ?id],
-        {'format': 'json', if (method == 'GET') ...parameters},
+        ['ocs', 'v2.php', 'apps', 'files_sharing', 'api', 'v1', endpoint, ?id],
+        {'format': 'json', if (!hasBody) ...parameters},
       ),
       account: account,
       headers: {
         'OCS-APIRequest': 'true',
         'Accept': 'application/json',
-        if (method == 'POST')
-          'Content-Type': 'application/x-www-form-urlencoded',
+        if (hasBody) 'Content-Type': 'application/x-www-form-urlencoded',
       },
-      body: method == 'POST' ? Uri(queryParameters: parameters).query : null,
+      body: hasBody ? Uri(queryParameters: parameters).query : null,
     );
     _expect(response, {200});
     final ocs =
@@ -1400,21 +1405,61 @@ class NextcloudClient implements CloudBackend {
     return ocs['data'];
   }
 
-  PublicShare _share(Map<String, dynamic> data) {
-    final url = Uri.parse(data['url'] as String);
-    if (!url.hasAuthority || !['https', 'http'].contains(url.scheme)) {
-      throw const CloudException('The server returned an invalid share URL.');
+  Future<dynamic> _sharesRequest(
+    Account account,
+    String method, {
+    String? id,
+    Map<String, String> parameters = const {},
+  }) => _ocsSharing(account, method, 'shares', id: id, parameters: parameters);
+
+  static const _read = 1;
+  static const _update = 2;
+  static const _create = 4;
+  static const _delete = 8;
+
+  /// What a recipient may do: view, or also change a file or add, change and
+  /// delete inside a folder.
+  static int _permissions({required bool folder, required bool canEdit}) =>
+      !canEdit
+      ? _read
+      : folder
+      ? _read | _update | _create | _delete
+      : _read | _update;
+
+  FileShare _share(Map<String, dynamic> data) {
+    final type = data['share_type'].toString();
+    final kind = switch (type) {
+      '3' => ShareKind.link,
+      '0' => ShareKind.user,
+      '1' => ShareKind.group,
+      _ => throw const CloudException('The server returned an unknown share.'),
+    };
+    Uri? url;
+    if (kind == ShareKind.link) {
+      url = Uri.parse(data['url'] as String);
+      if (!url.hasAuthority || !['https', 'http'].contains(url.scheme)) {
+        throw const CloudException('The server returned an invalid share URL.');
+      }
     }
-    return PublicShare(
+    final permissions = int.tryParse('${data['permissions']}') ?? _read;
+    return FileShare(
       id: data['id'].toString(),
+      kind: kind,
+      isFolder: data['item_type'] == 'folder',
       url: url,
+      recipient: kind == ShareKind.link ? null : data['share_with'] as String?,
+      recipientName: kind == ShareKind.link
+          ? null
+          : (data['share_with_displayname'] as String?) ??
+                data['share_with'] as String?,
+      canEdit: permissions & _update != 0,
       passwordProtected: data['password'] != null && data['password'] != '',
       expiration: data['expiration'] as String?,
     );
   }
 
   @override
-  Future<List<PublicShare>> shares(Account account, CloudFile file) async {
+  Future<List<FileShare>> shares(Account account, CloudFile file) async {
     final data =
         await _sharesRequest(
               account,
@@ -1422,11 +1467,100 @@ class NextcloudClient implements CloudBackend {
               parameters: {'path': '/${file.path.join('/')}'},
             )
             as List<dynamic>;
-    return data
-        .cast<Map<String, dynamic>>()
-        .where((s) => s['share_type'].toString() == '3')
-        .map(_share)
-        .toList();
+    return [
+      for (final item in data.cast<Map<String, dynamic>>())
+        if (const {'0', '1', '3'}.contains(item['share_type'].toString()))
+          _share(item),
+    ];
+  }
+
+  @override
+  Future<List<Sharee>> findSharees(
+    Account account,
+    String query, {
+    required bool folder,
+  }) async {
+    final data =
+        await _ocsSharing(
+              account,
+              'GET',
+              'sharees',
+              parameters: {
+                'search': query,
+                'itemType': folder ? 'folder' : 'file',
+                'perPage': '15',
+                'lookup': 'false',
+              },
+            )
+            as Map<String, dynamic>;
+    final found = <String, Sharee>{};
+    void collect(Object? section, ShareKind kind) {
+      for (final item in (section as List<dynamic>? ?? const [])) {
+        final entry = item as Map<String, dynamic>;
+        final value = entry['value'] as Map<String, dynamic>;
+        final id = value['shareWith'] as String?;
+        if (id == null || id == account.userId && kind == ShareKind.user) {
+          continue;
+        }
+        found.putIfAbsent(
+          '${kind.name}|$id',
+          () => Sharee(
+            kind: kind,
+            id: id,
+            name: (entry['label'] as String?) ?? id,
+          ),
+        );
+      }
+    }
+
+    final exact = data['exact'] as Map<String, dynamic>? ?? const {};
+    collect(exact['users'], ShareKind.user);
+    collect(data['users'], ShareKind.user);
+    collect(exact['groups'], ShareKind.group);
+    collect(data['groups'], ShareKind.group);
+    return found.values.toList();
+  }
+
+  @override
+  Future<FileShare> shareWith(
+    Account account,
+    CloudFile file,
+    Sharee sharee, {
+    bool canEdit = false,
+  }) async {
+    if (sharee.kind == ShareKind.link) {
+      throw ArgumentError('Use createLink for a public link.');
+    }
+    final data = await _sharesRequest(
+      account,
+      'POST',
+      parameters: {
+        'path': '/${file.path.join('/')}',
+        'shareType': sharee.kind == ShareKind.group ? '1' : '0',
+        'shareWith': sharee.id,
+        'permissions':
+            '${_permissions(folder: file.isDirectory, canEdit: canEdit)}',
+      },
+    );
+    return _share(data as Map<String, dynamic>);
+  }
+
+  @override
+  Future<FileShare> setShareEditable(
+    Account account,
+    FileShare share,
+    bool canEdit,
+  ) async {
+    final data = await _sharesRequest(
+      account,
+      'PUT',
+      id: share.id,
+      parameters: {
+        'permissions':
+            '${_permissions(folder: share.isFolder, canEdit: canEdit)}',
+      },
+    );
+    return _share(data as Map<String, dynamic>);
   }
 
   @override
@@ -1470,7 +1604,7 @@ class NextcloudClient implements CloudBackend {
   }
 
   @override
-  Future<PublicShare> createShare(
+  Future<FileShare> createLink(
     Account account,
     CloudFile file, {
     String? password,
@@ -1482,7 +1616,7 @@ class NextcloudClient implements CloudBackend {
       parameters: {
         'path': '/${file.path.join('/')}',
         'shareType': '3',
-        'permissions': '1',
+        'permissions': '$_read',
         if (password != null && password.isNotEmpty) 'password': password,
         if (expires != null)
           'expireDate': expires.toIso8601String().split('T').first,
@@ -1492,7 +1626,7 @@ class NextcloudClient implements CloudBackend {
   }
 
   @override
-  Future<void> revokeShare(Account account, PublicShare share) async {
+  Future<void> revokeShare(Account account, FileShare share) async {
     await _sharesRequest(account, 'DELETE', id: share.id);
   }
 
@@ -1545,6 +1679,24 @@ class NextcloudClient implements CloudBackend {
       }
 
       if (props.isEmpty) continue;
+      final sharing = _parseSharing(
+        permissions: value('permissions', 'http://owncloud.org/ns'),
+        mountRoot: value('is-mount-root', 'http://nextcloud.org/ns'),
+        shared: props.any(
+          (p) =>
+              p
+                  .getElement(
+                    'share-types',
+                    namespace: 'http://owncloud.org/ns',
+                  )
+                  ?.findElements(
+                    'share-type',
+                    namespace: 'http://owncloud.org/ns',
+                  )
+                  .isNotEmpty ??
+              false,
+        ),
+      );
       files.add(
         CloudFile(
           path: path,
@@ -1561,10 +1713,25 @@ class NextcloudClient implements CloudBackend {
               : value('fileid', 'http://owncloud.org/ns'),
           favorite: value('favorite', 'http://owncloud.org/ns') == '1',
           etag: value('getetag').isEmpty ? null : value('getetag'),
+          sharing: sharing,
         ),
       );
     }
     return files;
+  }
+
+  /// A share the server made for this account shows an `S` in the permission
+  /// string on everything inside it, so only the folder it was mounted at
+  /// counts; a server that does not say which is the mount root is trusted.
+  static Sharing _parseSharing({
+    required String permissions,
+    required String mountRoot,
+    required bool shared,
+  }) {
+    if (permissions.contains('S') && mountRoot != 'false') {
+      return Sharing.withMe;
+    }
+    return shared ? Sharing.byMe : Sharing.none;
   }
 
   static DateTime? _parseModified(String modified) {

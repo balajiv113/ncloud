@@ -222,14 +222,41 @@ abstract interface class CloudBackend {
   });
   Future<List<TrashEntry>> trash(Account account);
   Future<void> restore(Account account, TrashEntry entry);
-  Future<List<PublicShare>> shares(Account account, CloudFile file);
-  Future<PublicShare> createShare(
+
+  /// Every way [file] is shared by this account: links, people and groups.
+  Future<List<FileShare>> shares(Account account, CloudFile file);
+
+  /// Creates a read-only public link.
+  Future<FileShare> createLink(
     Account account,
     CloudFile file, {
     String? password,
     DateTime? expires,
   });
-  Future<void> revokeShare(Account account, PublicShare share);
+
+  /// People and groups matching [query] that [file] can be shared with.
+  Future<List<Sharee>> findSharees(
+    Account account,
+    String query, {
+    required bool folder,
+  });
+
+  /// Gives [sharee] access to [file], read-only unless [canEdit].
+  Future<FileShare> shareWith(
+    Account account,
+    CloudFile file,
+    Sharee sharee, {
+    bool canEdit = false,
+  });
+
+  /// Changes what a person or group share allows.
+  Future<FileShare> setShareEditable(
+    Account account,
+    FileShare share,
+    bool canEdit,
+  );
+
+  Future<void> revokeShare(Account account, FileShare share);
 
   /// Optional server hints. Polling remains active when the stream is empty.
   /// A null event invalidates the scope; a set identifies changed file IDs.

@@ -253,7 +253,7 @@ class _AssetViewerState extends State<AssetViewer> with WidgetsBindingObserver {
                                 ),
                               ),
                               IconButton(
-                                tooltip: 'Share link',
+                                tooltip: 'Share',
                                 onPressed: _file.readOnly
                                     ? null
                                     : () => showModalBottomSheet<void>(

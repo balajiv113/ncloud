@@ -179,21 +179,21 @@ class _QueuedResolutionBackend extends _PortableBackend {
 }
 
 class _ShareBackend extends _PortableBackend {
-  final pendingShares = Completer<List<PublicShare>>();
+  final pendingShares = Completer<List<FileShare>>();
   int listCalls = 0;
   int createCalls = 0;
   int revokeCalls = 0;
   Account? requestedAccount;
 
   @override
-  Future<List<PublicShare>> shares(Account account, CloudFile file) {
+  Future<List<FileShare>> shares(Account account, CloudFile file) {
     requestedAccount = account;
     listCalls++;
     return pendingShares.future;
   }
 
   @override
-  Future<PublicShare> createShare(
+  Future<FileShare> createLink(
     Account account,
     CloudFile file, {
     String? password,
@@ -201,11 +201,15 @@ class _ShareBackend extends _PortableBackend {
   }) async {
     requestedAccount = account;
     createCalls++;
-    return PublicShare(id: '1', url: Uri.parse('https://example.test/share'));
+    return FileShare(
+      id: '1',
+      kind: ShareKind.link,
+      url: Uri.parse('https://example.test/share'),
+    );
   }
 
   @override
-  Future<void> revokeShare(Account account, PublicShare share) async {
+  Future<void> revokeShare(Account account, FileShare share) async {
     requestedAccount = account;
     revokeCalls++;
   }
@@ -464,7 +468,7 @@ void main() {
       id: 'opaque:1',
     );
     final session = controller.shareSession(file);
-    final pending = session.create();
+    final pending = session.createLink();
     final failure = expectLater(pending, throwsA(isA<CloudException>()));
     expect(backend.resolutionCalls, 1);
     expect(backend.createCalls, 0);
@@ -536,7 +540,7 @@ void main() {
         isDirectory: false,
       );
       final session = controller.shareSession(file);
-      final created = await session.create(password: 'password');
+      final created = await session.createLink(password: 'password');
       expect(backend.requestedAccount, same(account));
       await session.revoke(created);
       final pending = session.list();
@@ -546,7 +550,7 @@ void main() {
       controller.account = const _PortableAccount('portable|other');
       backend.pendingShares.complete([created]);
       await failed;
-      await expectLater(session.create(), throwsA(isA<CloudException>()));
+      await expectLater(session.createLink(), throwsA(isA<CloudException>()));
       await expectLater(
         session.revoke(created),
         throwsA(isA<CloudException>()),

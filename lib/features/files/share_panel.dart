@@ -6,6 +6,7 @@ import '../../core/cloud/cloud_backend.dart';
 import '../../diagnostics.dart';
 import '../../models.dart';
 import '../../core/ui/messages.dart';
+import 'people_shares.dart';
 import 'share_session.dart';
 
 class SharePanel extends StatefulWidget {
@@ -19,7 +20,7 @@ class SharePanel extends StatefulWidget {
 class _SharePanelState extends State<SharePanel> {
   final _password = TextEditingController();
   DateTime? _expires;
-  List<PublicShare> _links = [];
+  final List<FileShare> _shares = [];
   bool _busy = false;
   String? _error;
   ShareSession? _session;
@@ -57,8 +58,14 @@ class _SharePanelState extends State<SharePanel> {
   }
 
   Future<void> _load() => _run(() async {
-    final links = await _shareSession.list();
-    if (mounted) setState(() => _links = links);
+    final shares = await _shareSession.list();
+    if (mounted) {
+      setState(
+        () => _shares
+          ..clear()
+          ..addAll(shares),
+      );
+    }
   });
 
   ShareSession get _shareSession =>
@@ -78,13 +85,24 @@ class _SharePanelState extends State<SharePanel> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(
-            'Share a little of your world',
-            style: Theme.of(context).textTheme.headlineSmall,
-          ),
+          Text('Share', style: Theme.of(context).textTheme.headlineSmall),
           const SizedBox(height: 8),
           Text(widget.file.name, maxLines: 2),
           const SizedBox(height: 16),
+          if (_session case final session?) ...[
+            PeopleShares(
+              session: session,
+              shares: _shares,
+              busy: _busy,
+              run: _run,
+              update: (change) {
+                if (mounted) setState(change);
+              },
+            ),
+            const SizedBox(height: 24),
+          ],
+          Text('Public link', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 4),
           const Text(
             'Anyone with a public link can view and download. Links are read-only; server policies may require a password or expiry.',
           ),
@@ -95,7 +113,7 @@ class _SharePanelState extends State<SharePanel> {
               isError: true,
               onRetry: _busy ? null : _load,
             ),
-          for (final link in _links)
+          for (final link in _shares.where((s) => s.kind == ShareKind.link))
             Card(
               child: Padding(
                 padding: const EdgeInsets.all(12),
@@ -103,7 +121,7 @@ class _SharePanelState extends State<SharePanel> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     Text(
-                      link.url.toString(),
+                      link.url!.toString(),
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -118,7 +136,7 @@ class _SharePanelState extends State<SharePanel> {
                           label: const Text('Copy'),
                           onPressed: () async {
                             await Clipboard.setData(
-                              ClipboardData(text: link.url.toString()),
+                              ClipboardData(text: link.url!.toString()),
                             );
                             if (context.mounted) {
                               ScaffoldMessenger.of(context).showSnackBar(
@@ -136,7 +154,7 @@ class _SharePanelState extends State<SharePanel> {
                                   context.findRenderObject() as RenderBox?;
                               await SharePlus.instance.share(
                                 ShareParams(
-                                  uri: link.url,
+                                  uri: link.url!,
                                   sharePositionOrigin: box == null
                                       ? null
                                       : box.localToGlobal(Offset.zero) &
@@ -155,7 +173,7 @@ class _SharePanelState extends State<SharePanel> {
                                   await _shareSession.revoke(link);
                                   if (mounted) {
                                     setState(
-                                      () => _links.removeWhere(
+                                      () => _shares.removeWhere(
                                         (s) => s.id == link.id,
                                       ),
                                     );
@@ -210,13 +228,13 @@ class _SharePanelState extends State<SharePanel> {
             onPressed: _busy
                 ? null
                 : () => _run(() async {
-                    final result = await _shareSession.create(
+                    final result = await _shareSession.createLink(
                       password: _password.text,
                       expires: _expires,
                     );
                     if (mounted) {
                       setState(() {
-                        _links.add(result);
+                        _shares.add(result);
                         _password.clear();
                       });
                     }

@@ -18,7 +18,7 @@ class LibraryDatabase {
   }) : path = File(path).absolute.path,
        _factory = factory ?? databaseFactory;
 
-  static const schemaVersion = 6;
+  static const schemaVersion = 7;
   final String path;
   final DatabaseFactory _factory;
   final void Function(String) onError;
@@ -78,6 +78,7 @@ class LibraryDatabase {
         content_type TEXT NOT NULL, size INTEGER NOT NULL, modified TEXT,
         file_id TEXT, favorite INTEGER NOT NULL, album_path TEXT,
         taken TEXT, capture_day INTEGER, etag TEXT,
+        sharing TEXT NOT NULL DEFAULT 'none',
         observed_at INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY (account, file_key)
       ) WITHOUT ROWID
@@ -186,6 +187,7 @@ class LibraryDatabase {
       'taken': value['taken'],
       'capture_day': file.captureDay,
       'etag': file.etag,
+      'sharing': file.sharing.name,
     };
   }
 
@@ -204,6 +206,7 @@ class LibraryDatabase {
     'taken': row['taken'],
     'captureDay': row['capture_day'],
     'etag': row['etag'],
+    'sharing': row['sharing'],
   });
 
   Future<({Map<String, String> keys, Set<String> upgrades})> _identities(
