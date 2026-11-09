@@ -1,16 +1,14 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:video_player/video_player.dart';
 
 import '../../app/app_controller.dart';
 import '../files/file_actions.dart';
 import '../files/share_panel.dart';
-import '../../shared/ui/media_tile.dart';
 import '../../models.dart';
-import '../../core/cloud/cloud_backend.dart';
-import '../../core/ui/messages.dart';
 import '../files/library_dialogs.dart';
+import 'video_asset.dart';
+import 'zoom_asset.dart';
 
 class AssetViewer extends StatefulWidget {
   const AssetViewer({
@@ -31,6 +29,7 @@ class _AssetViewerState extends State<AssetViewer> with WidgetsBindingObserver {
   late final _files = [...widget.files];
   late int _index = widget.initialIndex;
   bool _chrome = true;
+  bool _zoomed = false;
   Timer? _slideshow;
   CloudFile get _file => _files[_index];
 
@@ -89,18 +88,29 @@ class _AssetViewerState extends State<AssetViewer> with WidgetsBindingObserver {
               child: PageView.builder(
                 controller: _pages,
                 itemCount: _files.length,
-                onPageChanged: (value) => setState(() => _index = value),
+                physics: _zoomed ? const NeverScrollableScrollPhysics() : null,
+                onPageChanged: (value) => setState(() {
+                  _index = value;
+                  _zoomed = false;
+                }),
                 itemBuilder: (_, index) => _files[index].isVideo
                     ? VideoAsset(
                         key: ValueKey(_files[index].key),
                         file: _files[index],
                         controller: widget.controller,
                         active: index == _index && _slideshow == null,
+                        controlsVisible: _chrome,
+                        onTap: () => setState(() => _chrome = !_chrome),
                       )
                     : ZoomAsset(
                         file: _files[index],
                         controller: widget.controller,
                         onTap: () => setState(() => _chrome = !_chrome),
+                        onZoomChanged: (zoomed) {
+                          if (mounted && index == _index) {
+                            setState(() => _zoomed = zoomed);
+                          }
+                        },
                       ),
               ),
             ),
@@ -333,375 +343,4 @@ class _AssetViewerState extends State<AssetViewer> with WidgetsBindingObserver {
       ),
     ),
   );
-}
-
-class ZoomAsset extends StatefulWidget {
-  const ZoomAsset({
-    super.key,
-    required this.file,
-    required this.controller,
-    required this.onTap,
-  });
-  final CloudFile file;
-  final AppController controller;
-  final VoidCallback onTap;
-  @override
-  State<ZoomAsset> createState() => _ZoomAssetState();
-}
-
-class _ZoomAssetState extends State<ZoomAsset> {
-  final _transform = TransformationController();
-  bool _zoomed = false;
-  Offset _doubleTapPosition = Offset.zero;
-  @override
-  void dispose() {
-    _transform.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) => GestureDetector(
-    onTap: widget.onTap,
-    onDoubleTapDown: (details) => _doubleTapPosition = details.localPosition,
-    onDoubleTap: () => setState(() {
-      _zoomed = !_zoomed;
-      _transform.value = _zoomed
-          ? (Matrix4.translationValues(
-              -_doubleTapPosition.dx,
-              -_doubleTapPosition.dy,
-              0,
-            )..multiply(Matrix4.diagonal3Values(2, 2, 1)))
-          : Matrix4.identity();
-    }),
-    child: InteractiveViewer(
-      transformationController: _transform,
-      minScale: 1,
-      maxScale: 5,
-      child: Center(
-        child: AspectRatio(
-          aspectRatio: 1,
-          child: MediaTile(
-            file: widget.file,
-            controller: widget.controller,
-            fit: BoxFit.contain,
-            previewSize: 1280,
-          ),
-        ),
-      ),
-    ),
-  );
-}
-
-class VideoAsset extends StatefulWidget {
-  const VideoAsset({
-    super.key,
-    required this.file,
-    required this.controller,
-    required this.active,
-  });
-  final CloudFile file;
-  final AppController controller;
-  final bool active;
-  @override
-  State<VideoAsset> createState() => _VideoAssetState();
-}
-
-class _VideoAssetState extends State<VideoAsset> with WidgetsBindingObserver {
-  VideoPlayerController? _player;
-  bool _loading = false;
-  bool _offline = false;
-  bool _saving = false;
-  String? _error;
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addObserver(this);
-    _autoplay();
-  }
-
-  void _autoplay() => WidgetsBinding.instance.addPostFrameCallback((_) {
-    if (mounted && widget.active && _player == null && !_loading) _play();
-  });
-
-  @override
-  void didUpdateWidget(VideoAsset oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (!widget.active) {
-      _player?.pause();
-    } else if (!oldWidget.active) {
-      _autoplay();
-    }
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state != AppLifecycleState.resumed) _player?.pause();
-  }
-
-  @override
-  void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    _player?.dispose();
-    super.dispose();
-  }
-
-  Future<void> _play({bool preferStream = false}) async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
-    VideoPlayerController? player;
-    try {
-      final playback = await widget.controller.preparePlayback(
-        widget.file,
-        preferStream: preferStream,
-      );
-      final copy = playback.offline;
-      final source = playback.source;
-      if (!mounted) return;
-      if (copy != null) {
-        player = VideoPlayerController.file(copy);
-      } else if (source != null) {
-        player = VideoPlayerController.networkUrl(
-          source.uri,
-          httpHeaders: source.headers,
-        );
-      } else {
-        throw const CloudException('Reconnect to stream this video.');
-      }
-      await player.initialize().timeout(const Duration(seconds: 45));
-      if (!mounted) {
-        await player.dispose();
-        return;
-      }
-      await _player?.dispose();
-      _player = player;
-      _offline = copy != null;
-      await player.setLooping(false);
-      if (widget.active) await player.play();
-    } catch (e) {
-      await player?.dispose();
-      if (identical(_player, player)) _player = null;
-      if (mounted) {
-        _error = e is CloudException
-            ? e.message
-            : 'This video could not be streamed. The format may be unsupported '
-                  'on this device — save it offline or open it in another app.';
-      }
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
-  }
-
-  Future<void> _saveOffline() async {
-    setState(() => _saving = true);
-    try {
-      await widget.controller.saveOffline(widget.file);
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Saved for offline replay')));
-      final resume = _player?.value.position;
-      await _play();
-      if (resume != null) await _player?.seekTo(resume);
-    } catch (e) {
-      if (mounted) showError(context, e);
-    } finally {
-      if (mounted) setState(() => _saving = false);
-    }
-  }
-
-  String _time(Duration value) {
-    final h = value.inHours;
-    final m = value.inMinutes.remainder(60).toString().padLeft(2, '0');
-    final s = value.inSeconds.remainder(60).toString().padLeft(2, '0');
-    return h > 0 ? '$h:$m:$s' : '$m:$s';
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final player = _player;
-    if (player != null && player.value.isInitialized) {
-      return ValueListenableBuilder<VideoPlayerValue>(
-        valueListenable: player,
-        builder: (context, value, _) => Stack(
-          alignment: Alignment.center,
-          children: [
-            GestureDetector(
-              onTap: !widget.active
-                  ? null
-                  : () => value.isPlaying ? player.pause() : player.play(),
-              child: Center(
-                child: AspectRatio(
-                  aspectRatio: value.aspectRatio,
-                  child: VideoPlayer(player),
-                ),
-              ),
-            ),
-            if (value.isBuffering)
-              const CircularProgressIndicator(color: Colors.white),
-            if (!value.isPlaying && !value.isBuffering)
-              IgnorePointer(
-                child: Container(
-                  padding: const EdgeInsets.all(14),
-                  decoration: const BoxDecoration(
-                    color: Colors.black45,
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(
-                    Icons.play_arrow_rounded,
-                    color: Colors.white,
-                    size: 48,
-                  ),
-                ),
-              ),
-            Positioned(
-              left: 8,
-              right: 8,
-              bottom: 96 + MediaQuery.paddingOf(context).bottom,
-              child: Material(
-                color: Colors.black54,
-                borderRadius: BorderRadius.circular(20),
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(4, 0, 12, 0),
-                  child: Row(
-                    children: [
-                      IconButton(
-                        tooltip: value.isPlaying ? 'Pause video' : 'Play video',
-                        color: Colors.white,
-                        onPressed: !widget.active
-                            ? null
-                            : () => value.isPlaying
-                                  ? player.pause()
-                                  : player.play(),
-                        icon: Icon(
-                          value.isPlaying
-                              ? Icons.pause_rounded
-                              : Icons.play_arrow_rounded,
-                        ),
-                      ),
-                      Text(
-                        _time(value.position),
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 12,
-                        ),
-                      ),
-                      Expanded(
-                        child: VideoProgressIndicator(
-                          player,
-                          allowScrubbing: true,
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 18,
-                          ),
-                          colors: const VideoProgressColors(
-                            playedColor: Colors.white,
-                            bufferedColor: Colors.white38,
-                            backgroundColor: Colors.white12,
-                          ),
-                        ),
-                      ),
-                      Text(
-                        _time(value.duration),
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 12,
-                        ),
-                      ),
-                      IconButton(
-                        tooltip: value.volume == 0 ? 'Unmute' : 'Mute',
-                        color: Colors.white,
-                        onPressed: () =>
-                            player.setVolume(value.volume == 0 ? 1 : 0),
-                        icon: Icon(
-                          value.volume == 0
-                              ? Icons.volume_off_rounded
-                              : Icons.volume_up_rounded,
-                        ),
-                      ),
-                      if (_offline)
-                        const Tooltip(
-                          message: 'Playing offline copy',
-                          child: Icon(
-                            Icons.offline_pin_rounded,
-                            color: Colors.white,
-                            size: 20,
-                          ),
-                        )
-                      else if (_saving)
-                        const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white,
-                          ),
-                        )
-                      else
-                        IconButton(
-                          tooltip: 'Save offline',
-                          color: Colors.white,
-                          onPressed: widget.controller.busy
-                              ? null
-                              : _saveOffline,
-                          icon: const Icon(Icons.download_for_offline_outlined),
-                        ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-    return Stack(
-      alignment: Alignment.center,
-      children: [
-        Positioned.fill(
-          child: MediaTile(
-            file: widget.file,
-            controller: widget.controller,
-            previewSize: 1280,
-          ),
-        ),
-        Positioned.fill(child: Container(color: Colors.black38)),
-        Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (_loading)
-                const CircularProgressIndicator(color: Colors.white)
-              else
-                IconButton.filled(
-                  iconSize: 48,
-                  tooltip: 'Play video',
-                  onPressed: widget.active ? _play : null,
-                  icon: const Icon(Icons.play_arrow_rounded),
-                ),
-              if (_error case final error?) ...[
-                const SizedBox(height: 16),
-                Text(
-                  error,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(color: Colors.white),
-                ),
-                const SizedBox(height: 12),
-                FilledButton.tonalIcon(
-                  onPressed: _saving || widget.controller.busy
-                      ? null
-                      : _saveOffline,
-                  icon: const Icon(Icons.download_for_offline_outlined),
-                  label: Text(_saving ? 'Saving…' : 'Save offline & play'),
-                ),
-              ],
-            ],
-          ),
-        ),
-      ],
-    );
-  }
 }
