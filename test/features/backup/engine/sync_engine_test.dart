@@ -551,6 +551,57 @@ void main() {
     );
   });
 
+  group('a file that changes on the device', () {
+    test(
+      'touched but unchanged is not uploaded again, even without a stored checksum',
+      () async {
+        server.dropFingerprints = true;
+        device.add('a.jpg', bytes(1), modified: 1000);
+        await run();
+        for (var i = 1; i <= 4; i++) {
+          device.add('a.jpg', bytes(1), modified: 1000 + i);
+          await run();
+        }
+        expect(server.files.keys, ['Backup/Camera/a.jpg']);
+        expect(server.uploads, 1);
+        expect(progress.conflicts, 0);
+      },
+    );
+
+    test('an edit becomes a new version of the same server file', () async {
+      server.dropFingerprints = true;
+      device.add('a.jpg', bytes(1), modified: 1000);
+      await run();
+      device.add('a.jpg', bytes(2), modified: 2000);
+      await run();
+      device.add('a.jpg', bytes(3), modified: 3000);
+      await run();
+      expect(server.files.keys, ['Backup/Camera/a.jpg']);
+      expect(server.files['Backup/Camera/a.jpg']!.bytes, bytes(3));
+      expect(server.uploads, 3);
+      expect(progress.conflicts, 0);
+    });
+
+    test('an edit keeps both when the server copy changed meanwhile', () async {
+      device.add('a.jpg', bytes(1), modified: 1000);
+      await run();
+      server.put('Backup/Camera/a.jpg', bytes(9));
+      device.add('a.jpg', bytes(2), modified: 2000);
+      await run();
+      expect(server.files.length, 2);
+      expect(server.files['Backup/Camera/a.jpg']!.bytes, bytes(9));
+    });
+
+    test('an edit keeps working when the server copy was removed', () async {
+      device.add('a.jpg', bytes(1), modified: 1000);
+      await run();
+      server.files.remove('Backup/Camera/a.jpg');
+      device.add('a.jpg', bytes(2), modified: 2000);
+      await run();
+      expect(server.files['Backup/Camera/a.jpg']!.bytes, bytes(2));
+    });
+  });
+
   group('a dry run', () {
     Future<BackupPreview> preview() => engine().preview(account, pair());
 

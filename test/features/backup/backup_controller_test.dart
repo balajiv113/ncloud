@@ -227,11 +227,15 @@ class CloudFolders implements CloudBackend {
     int size, {
     String? sha1,
     DateTime? modified,
+    String? replacing,
   }) async {
     await holdUpload?.call();
     beforeUpload?.call();
     final name = path.join('/');
-    if (files.containsKey(name)) {
+    final current = files[name];
+    if (replacing == null
+        ? current != null
+        : current == null || '"${current.$2}"' != replacing) {
       throw const CloudException('Already exists', statusCode: 412);
     }
     final content = await bytes.expand((chunk) => chunk).toList();

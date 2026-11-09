@@ -233,7 +233,9 @@ abstract interface class CloudBackend {
 
   /// Atomically creates a new file and fails with status 412 if the destination
   /// exists. A [sha1] fingerprint lets the server verify what it received and
-  /// keep it; [modified] becomes the file's modification time.
+  /// keep it; [modified] becomes the file's modification time. With
+  /// [replacing], the file must already exist with that revision and is
+  /// replaced by a new version of it; a different revision fails with 412.
   Future<UploadResult> uploadNew(
     Account account,
     List<String> path,
@@ -241,6 +243,7 @@ abstract interface class CloudBackend {
     int size, {
     String? sha1,
     DateTime? modified,
+    String? replacing,
   });
 
   /// Size, revision and fingerprint of one file or folder, or null if it does

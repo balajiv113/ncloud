@@ -17,6 +17,9 @@ class FakeServer implements CloudBackend {
   final files =
       <String, ({List<int> bytes, int size, String etag, String? sha1})>{};
 
+  /// Behave like a server that does not keep a checksum with the file.
+  bool dropFingerprints = false;
+
   int listings = 0;
   int entriesListed = 0;
   int stats = 0;
@@ -50,18 +53,21 @@ class FakeServer implements CloudBackend {
     int size, {
     String? sha1,
     DateTime? modified,
+    String? replacing,
   }) async {
     final name = path.join('/');
     final attempt = _attempts[name] = (_attempts[name] ?? 0) + 1;
     await beforeUpload?.call(path, attempt);
-    if (files.containsKey(name)) {
+    if (replacing == null
+        ? files.containsKey(name)
+        : files[name]?.etag != replacing) {
       throw const CloudException('exists', statusCode: 412);
     }
     final data = await bytes.expand((chunk) => chunk).toList();
     if (sha1 != null && sha1 != sha1Of(data)) {
       throw const CloudException('checksum mismatch', statusCode: 400);
     }
-    put(name, data, sha1: sha1);
+    put(name, data, sha1: dropFingerprints ? null : sha1);
     uploads++;
     uploadLog.add((path: path, sha1: sha1, modified: modified));
     return UploadResult(etag: files[name]!.etag);
