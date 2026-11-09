@@ -36,6 +36,27 @@ class MediaListing {
     }
   }
 
+  List<CloudFile>? _resolved;
+  Object? _resolvedKeys;
+  int _resolvedLength = -1;
+  int _resolvedRevision = -1;
+
+  /// The listing's files. The same list is returned while the membership and
+  /// the store are unchanged, so views that remember work done on it, such as
+  /// sorting and grouping, can reuse it when the listing is shown again.
+  List<CloudFile> resolve(FileStore store) {
+    if (_resolved == null ||
+        !identical(_resolvedKeys, keys) ||
+        _resolvedLength != keys.length ||
+        _resolvedRevision != store.revision) {
+      _resolved = store.resolve(keys);
+      _resolvedKeys = keys;
+      _resolvedLength = keys.length;
+      _resolvedRevision = store.revision;
+    }
+    return _resolved!;
+  }
+
   /// Adds a fetched batch. Days it covers are replaced wholesale, so photos
   /// the server no longer has leave the listing; those are returned.
   Set<String> merge(FileStore store, FetchedPage page) {

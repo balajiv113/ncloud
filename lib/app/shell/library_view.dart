@@ -16,9 +16,9 @@ List<CloudFile> filterAndSortFiles(
   required bool drive,
   required bool collection,
 }) {
+  final needle = query.toLowerCase();
   final visible = files.where((f) {
-    if (query.isNotEmpty &&
-        !f.name.toLowerCase().contains(query.toLowerCase())) {
+    if (needle.isNotEmpty && !f.name.toLowerCase().contains(needle)) {
       return false;
     }
     if (subfolder != null && !pathStartsWith(f.path, subfolder)) return false;
@@ -30,22 +30,34 @@ List<CloudFile> filterAndSortFiles(
       MediaFilter.videos => f.isVideo,
       MediaFilter.favorites => f.favorite,
     };
-  }).toList();
-  visible.sort((a, b) {
-    if (a.isDirectory != b.isDirectory) return a.isDirectory ? -1 : 1;
-    var newest = (b.timelineDate ?? DateTime(1970)).compareTo(
-      a.timelineDate ?? DateTime(1970),
-    );
-    if (newest == 0) {
-      newest = (b.taken ?? DateTime(1970)).compareTo(a.taken ?? DateTime(1970));
+  });
+  // Sorting compares each file many times, so what it compares is worked out
+  // once per file: building a key or a date inside the comparator costs far
+  // more than the sort itself on a large library.
+  final unknown = DateTime(1970).microsecondsSinceEpoch;
+  final entries = [
+    for (final f in visible)
+      (
+        file: f,
+        key: f.key,
+        date: f.timelineDate?.microsecondsSinceEpoch ?? unknown,
+        taken: f.taken?.microsecondsSinceEpoch ?? unknown,
+        name: sort == LibrarySort.name ? f.name.toLowerCase() : '',
+      ),
+  ];
+  entries.sort((a, b) {
+    if (a.file.isDirectory != b.file.isDirectory) {
+      return a.file.isDirectory ? -1 : 1;
     }
+    var newest = b.date.compareTo(a.date);
+    if (newest == 0) newest = b.taken.compareTo(a.taken);
     final order = switch (sort) {
       LibrarySort.newest => newest,
       LibrarySort.oldest => -newest,
-      LibrarySort.name => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
-      LibrarySort.size => b.size.compareTo(a.size),
+      LibrarySort.name => a.name.compareTo(b.name),
+      LibrarySort.size => b.file.size.compareTo(a.file.size),
     };
     return order == 0 ? a.key.compareTo(b.key) : order;
   });
-  return visible;
+  return [for (final entry in entries) entry.file];
 }
