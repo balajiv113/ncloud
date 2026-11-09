@@ -109,6 +109,30 @@ changes to the phone. Files already brought down stay on the phone.
 
 A switch made while a run is going takes effect when that run finishes.
 
+## What happens when I delete an album or folder on the phone?
+
+On Android an album is a real folder, so deleting it deletes the photos inside it
+(or sends them to the phone's trash).
+
+| Link behaviour | On the server |
+| --- | --- |
+| **Back up** | Nothing. Every photo stays. |
+| **Keep in step** | Nothing at first. Each photo is marked as gone. After the 7-day wait, and only if the safeguards hold, it is moved to the server's **trash**. A large album trips the "sudden drop" check (more than 10%, minimum 50), so the app **asks before removing anything**. |
+| **Free up space** (an action in the app) | Nothing. The app deleted them on purpose and marked them "on server only". |
+
+Things worth knowing:
+
+* The server **folder** is never removed, only the files in it. An empty folder
+  may be left behind.
+* If the album comes back within the wait, for example restored from the phone's
+  trash, the mark is cleared and nothing happens.
+* Some apps "hide" an album instead of deleting it (for example by adding a
+  `.nomedia` file). To the app, hidden photos look deleted. The wait, the preview,
+  the trash and the sudden-drop check exist partly for this case.
+* On iPhone, deleting an **album** does not delete its photos, which stay in the
+  library. With album folders turned on, those photos would be *moved* on the
+  server to the next album in your order or to `Camera Roll`, not deleted.
+
 ## Emptying the phone once photos are safe (Free up space)
 
 This is a different goal from Keep in step, and the two must not be confused:
