@@ -47,8 +47,9 @@ People, face-cover and map-cluster identities are opaque strings in the shared m
 ## Code layout
 
 ```
-app/              composition root: AppController (state and load flow), BrowseTarget (what is shown),
-                  provider_factory, StatusSink
+app/              composition root: AppController (wiring, session, the ChangeNotifier the UI listens to),
+                  LibraryBrowser (what is on screen: target, listings, paging, day requests, change checks),
+                  BrowseTarget (what is shown), provider_factory, StatusSink
 app/shell/        the app shell (AppShell): app bar, bottom dock, destination transitions and swipes, selection,
                   search, view options, banners; LibraryScope hands destination views what they need
 core/             cloud/ (backend contract), storage/ (SQLite, file cache, listing membership),
@@ -257,7 +258,7 @@ Android USB testing: enable Developer options → USB debugging and accept your 
 
 ## Architecture and APIs
 
-`lib/models.dart` contains typed account/file/share/trash models and URL validation. `lib/providers/nextcloud/` handles Login Flow v2, OCS user lookup (DAV user ID may differ from login email), WebDAV listing/search/transfers/organization, sharing links, trash restore and authenticated previews. `app/app_controller.dart` coordinates session storage, race-safe paged loading, and foreground transfers. `app/shell/app_shell.dart` implements the shell; `asset_viewer.dart` handles viewing/video/slideshows; `library_actions.dart` contains shared actions and destination/share/trash/account surfaces. `screens.dart` contains sign-in and shared forms.
+`lib/models.dart` contains typed account/file/share/trash models and URL validation. `lib/providers/nextcloud/` handles Login Flow v2, OCS user lookup (DAV user ID may differ from login email), WebDAV listing/search/transfers/organization, sharing links, trash restore and authenticated previews. `app/app_controller.dart` wires the session, transfers and the UI notifier, and `app/library_browser.dart` owns race-safe paged loading. `app/shell/app_shell.dart` implements the shell; `asset_viewer.dart` handles viewing/video/slideshows; `library_actions.dart` contains shared actions and destination/share/trash/account surfaces. `screens.dart` contains sign-in and shared forms.
 
 Credentials use iOS Keychain / Android encrypted storage. HTTPS is required, authenticated redirects are not followed, and login endpoints must remain on the configured origin. No certificate bypass, main-password persistence, analytics, or third-party image service is used. Explicit offline originals stay in app-support storage until disconnect or uninstall; share/save transfers use temporary storage. Thumbnails are held in bounded memory and disk caches.
 
