@@ -71,6 +71,17 @@ class MediaGridTile extends StatelessWidget {
                   right: 6,
                   child: Icon(Icons.favorite, color: Colors.white, size: 14),
                 ),
+              if (file.isLive && !file.isVideo)
+                const Positioned(
+                  bottom: 5,
+                  left: 5,
+                  child: Icon(
+                    Icons.motion_photos_on_outlined,
+                    color: Colors.white,
+                    size: 17,
+                    semanticLabel: 'Live Photo',
+                  ),
+                ),
               if (file.isVideo)
                 const Positioned(
                   bottom: 5,

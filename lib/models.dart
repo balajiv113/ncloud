@@ -65,6 +65,7 @@ class CloudFile {
     this.captureDay,
     this.etag,
     this.sharing = Sharing.none,
+    this.liveId,
   });
 
   final List<String> path;
@@ -82,6 +83,11 @@ class CloudFile {
   final int? captureDay;
   final String? etag;
   final Sharing sharing;
+
+  /// Identifies the short video that goes with this photo, when it is a Live
+  /// Photo (an iPhone Live Photo or an Android motion photo).
+  final String? liveId;
+  bool get isLive => liveId != null;
   DateTime? get timelineDate {
     if (captureDay case final day?) {
       final date = DateTime.fromMillisecondsSinceEpoch(
@@ -109,6 +115,7 @@ class CloudFile {
     'captureDay': captureDay,
     'etag': etag,
     'sharing': sharing.name,
+    'liveId': liveId,
   };
 
   factory CloudFile.fromJson(Map<String, dynamic> json) => CloudFile(
@@ -129,6 +136,7 @@ class CloudFile {
     captureDay: json['captureDay'] as int?,
     etag: json['etag'] as String?,
     sharing: Sharing.values.byName(json['sharing'] as String? ?? 'none'),
+    liveId: json['liveId'] as String?,
   );
 
   /// Root of placeholder paths for timeline items whose real file path is
@@ -154,6 +162,7 @@ class CloudFile {
     taken: taken,
     captureDay: captureDay,
     sharing: sharing,
+    liveId: liveId,
     etag: etag,
   );
 
@@ -170,6 +179,7 @@ class CloudFile {
     taken: taken,
     captureDay: captureDay,
     sharing: sharing,
+    liveId: liveId,
     etag: etag,
   );
 
@@ -186,6 +196,7 @@ class CloudFile {
     taken: taken,
     captureDay: captureDay,
     sharing: sharing,
+    liveId: liveId,
     etag: revision,
   );
 
@@ -193,6 +204,7 @@ class CloudFile {
     DateTime date,
     String? revision, {
     required int day,
+    String? liveId,
   }) => CloudFile(
     path: path,
     name: name,
@@ -206,6 +218,7 @@ class CloudFile {
     taken: date,
     captureDay: day,
     sharing: sharing,
+    liveId: liveId ?? this.liveId,
     etag: revision,
   );
 }

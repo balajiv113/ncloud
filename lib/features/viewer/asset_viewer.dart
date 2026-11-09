@@ -7,6 +7,7 @@ import '../files/file_actions.dart';
 import '../files/share_panel.dart';
 import '../../models.dart';
 import '../files/library_dialogs.dart';
+import 'live_photo_overlay.dart';
 import 'video_asset.dart';
 import 'zoom_asset.dart';
 
@@ -75,6 +76,27 @@ class _AssetViewerState extends State<AssetViewer> with WidgetsBindingObserver {
     });
   }
 
+  Widget _photo(int index) {
+    final file = _files[index];
+    final photo = ZoomAsset(
+      file: file,
+      controller: widget.controller,
+      onTap: () => setState(() => _chrome = !_chrome),
+      onZoomChanged: (zoomed) {
+        if (mounted && index == _index) setState(() => _zoomed = zoomed);
+      },
+    );
+    return file.isLive
+        ? LivePhotoOverlay(
+            key: ValueKey('live:${file.key}'),
+            file: file,
+            controller: widget.controller,
+            active: index == _index && _slideshow == null,
+            child: photo,
+          )
+        : photo;
+  }
+
   @override
   Widget build(BuildContext context) => Theme(
     data: ThemeData.dark(useMaterial3: true),
@@ -102,16 +124,7 @@ class _AssetViewerState extends State<AssetViewer> with WidgetsBindingObserver {
                         controlsVisible: _chrome,
                         onTap: () => setState(() => _chrome = !_chrome),
                       )
-                    : ZoomAsset(
-                        file: _files[index],
-                        controller: widget.controller,
-                        onTap: () => setState(() => _chrome = !_chrome),
-                        onZoomChanged: (zoomed) {
-                          if (mounted && index == _index) {
-                            setState(() => _zoomed = zoomed);
-                          }
-                        },
-                      ),
+                    : _photo(index),
               ),
             ),
             if (_chrome)

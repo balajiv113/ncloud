@@ -219,7 +219,7 @@ Selection operations run sequentially and report how many completed if a later i
 
 Videos **stream immediately** from WebDAV through the native player (ExoPlayer/AVPlayer) with the Authorization header kept in request headers, never in the URL. The viewer shows buffering, elapsed/total time, scrubbing and mute. **Save offline** keeps a full copy in separate persistent app storage so later replays work without network; offline copies are used automatically. Codec support follows the device; if streaming fails, save offline or export the original. Slideshows operate on the loaded viewer collection and pause when the app backgrounds.
 
-**Still not full non-AI Immich parity:** automatic camera backup/background queues, two-way folder sync, maps, editing, Live Photos, archive/locked folders, partner libraries, shared-album collaboration/comments, and account switching remain future work. Memories supplies capture-date indexing; ncloud does not run its own indexer. There are no fake controls for missing capabilities. AI/face/semantic features are excluded from this milestone.
+**Still not full non-AI Immich parity:** automatic camera backup/background queues, two-way folder sync, editing, archive/locked folders, partner libraries, shared-album collaboration/comments, and account switching remain future work. Memories supplies capture-date indexing; ncloud does not run its own indexer. There are no fake controls for missing capabilities. AI/face/semantic features are excluded from this milestone.
 
 ## Foundation capabilities
 
@@ -258,7 +258,7 @@ Android USB testing: enable Developer options → USB debugging and accept your 
 
 ## Architecture and APIs
 
-`lib/models.dart` contains typed account/file/share/trash models and URL validation. `lib/providers/nextcloud/` handles Login Flow v2, OCS user lookup (DAV user ID may differ from login email), WebDAV listing/search/transfers/organization, sharing links, trash restore and authenticated previews. `app/app_controller.dart` wires the session, transfers and the UI notifier, and `app/library_browser.dart` owns race-safe paged loading. `app/shell/app_shell.dart` implements the shell; `asset_viewer.dart` handles viewing/video/slideshows; `library_actions.dart` contains shared actions and destination/share/trash/account surfaces. `screens.dart` contains sign-in and shared forms.
+`lib/models.dart` contains typed account/file/share/trash models and URL validation. `lib/providers/nextcloud/` handles Login Flow v2, OCS user lookup (DAV user ID may differ from login email), WebDAV listing/search/transfers/organization, sharing links, trash restore and authenticated previews. `app/app_controller.dart` wires the session, transfers and the UI notifier, and `app/library_browser.dart` owns race-safe paged loading. `app/shell/app_shell.dart` implements the shell; `asset_viewer.dart` handles viewing/video/slideshows, and Live Photos (iPhone and Android motion photos) play from the Memories `livephoto` endpoint when you tap LIVE or press and hold; `library_actions.dart` contains shared actions and destination/share/trash/account surfaces. `screens.dart` contains sign-in and shared forms.
 
 Credentials use iOS Keychain / Android encrypted storage. HTTPS is required, authenticated redirects are not followed, and login endpoints must remain on the configured origin. No certificate bypass, main-password persistence, analytics, or third-party image service is used. Explicit offline originals stay in app-support storage until disconnect or uninstall; share/save transfers use temporary storage. Thumbnails are held in bounded memory and disk caches.
 
@@ -268,7 +268,7 @@ This is the foundation, not a claim that core Nextcloud supplies all Immich and 
 
 1. Backup hardening: stronger content deduplication, resumable/chunked uploads, OS background queues and recovery reporting beyond the current foreground, create-only backup.
 2. Further Drive essentials: richer sharing permissions, offline files, server search, file previews/editing and multiple accounts.
-3. Further photo library: Live Photos/RAW/HEIC handling, maps, collaborative libraries and duplicate management.
+3. Further photo library: RAW/HEIC handling, collaborative libraries and duplicate management.
 4. Intelligence: evaluate Nextcloud Photos/Memories/Recognize/Face Recognition APIs and compatibility. Face grouping, semantic search, memories and transcoding require suitable server apps or a separately designed indexing service; they cannot be promised from core WebDAV alone.
 4. Distribution: production signing, TestFlight, app-store privacy disclosures, accessibility/device testing, and release hardening.
 

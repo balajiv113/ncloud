@@ -314,6 +314,72 @@ class NextcloudClient implements CloudBackend {
     );
   }
 
+  static const _maxLiveVideoBytes = 64 * 1024 * 1024;
+  static const _maxRedirects = 3;
+
+  @override
+  Future<Uint8List> livePhotoVideo(Account account, CloudFile file) async {
+    final id = file.id;
+    final liveId = file.liveId;
+    if (id == null || liveId == null) {
+      throw const CloudException('This photo has no live video.');
+    }
+    var uri = serverEndpoint(
+      account.server,
+      ['index.php', 'apps', 'memories', 'api', 'video', 'livephoto', id],
+      {'liveid': liveId},
+    );
+    // An iPhone's separate video file is reached through a redirect; the
+    // credentials never leave the account's own server.
+    for (var hop = 0; hop <= _maxRedirects; hop++) {
+      final request = http.Request('GET', uri)
+        ..followRedirects = false
+        ..headers.addAll({
+          'User-Agent': 'ncloud/0.5.5',
+          'Authorization': account.authorization,
+        });
+      final response = await _transport.send(request).timeout(_timeout);
+      final status = response.statusCode;
+      if (const {301, 302, 303, 307, 308}.contains(status)) {
+        await response.stream.drain<void>().timeout(_timeout);
+        final next = response.headers['location'];
+        if (next == null) throw statusError(status);
+        uri = uri.resolve(next);
+        if (uri.origin != account.server.origin) {
+          throw const CloudException(
+            'The server sent the live video somewhere else. Open the original instead.',
+          );
+        }
+        continue;
+      }
+      if (status != 200) {
+        await response.stream.drain<void>().timeout(_timeout);
+        throw status == 404
+            ? const CloudException(
+                'The live video is not available on the server.',
+              )
+            : statusError(status);
+      }
+      if ((response.contentLength ?? 0) > _maxLiveVideoBytes) {
+        await response.stream.drain<void>().timeout(_timeout);
+        throw const CloudException('The live video is too large to play here.');
+      }
+      final bytes = BytesBuilder(copy: false);
+      await for (final chunk in response.stream.timeout(_timeout)) {
+        bytes.add(chunk);
+        if (bytes.length > _maxLiveVideoBytes) {
+          throw const CloudException(
+            'The live video is too large to play here.',
+          );
+        }
+      }
+      return bytes.takeBytes();
+    }
+    throw const CloudException(
+      'The server redirected the live video too often.',
+    );
+  }
+
   Future<CloudFile> _fileForAction(Account account, CloudFile file) async {
     if (!file.pending) return file;
     final id = file.id;
@@ -1091,7 +1157,13 @@ class NextcloudClient implements CloudBackend {
         ),
         data['etag'] as String?,
         day: data['dayid'] as int,
+        liveId: _liveId(data['liveid']),
       );
+
+  static String? _liveId(Object? value) {
+    final text = value?.toString() ?? '';
+    return text.isEmpty ? null : text;
+  }
 
   /// A grid-ready file built purely from a Memories row; its path is a
   /// placeholder until [resolveFileIds] finds the real location.
