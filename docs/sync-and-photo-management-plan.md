@@ -281,5 +281,8 @@ device are their first check, so each is kept small and lands on its own.
 2. **Removed from the server, still on the phone.** Treated as removed on purpose
    and not uploaded again, with **Back up again** on the card. (Settled.)
 3. **Free up space** is in the next release, not the first one. (Settled.)
-4. Existing folder backups get moves too, behind the one-time "move them to match?"
-   preview. (Proposed: yes.)
+4. Existing folder backups follow moves too, since today a moved file is uploaded
+   again and leaves a duplicate. The first run shows the one-time "move them to
+   match?" preview and waits for your tap. (Settled.)
+
+All questions are settled.
