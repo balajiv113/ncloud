@@ -143,8 +143,15 @@ class FolderAccessPlugin : FlutterPlugin, ActivityAware, PluginRegistry.Activity
                                 when (call.method) {
                                     "list" -> children(resolve(root, path)).map { it.second }
                                     "export" -> {
-                                        val source = resolve(root, path)
+                                        // The listing gave every file's document id, so open it directly.
+                                        // Finding it by name would list its whole folder for every file,
+                                        // which is far too slow for a folder of thousands of photos.
+                                        val id = call.argument<String>("id")
+                                        val source = if (id != null) {
+                                            DocumentsContract.buildDocumentUriUsingTree(token, id)
+                                        } else resolve(root, path)
                                         val before = metadata(source)
+                                        check(before["name"] == path.last()) { "Source changed. Scan again." }
                                         val size = call.argument<Number>("size")!!.toLong()
                                         val modified = call.argument<Number>("modified")!!.toLong()
                                         check(before["directory"] == false && before["size"] == size && before["modified"] == modified) {
@@ -261,7 +268,8 @@ class FolderAccessPlugin : FlutterPlugin, ActivityAware, PluginRegistry.Activity
                 values.add(DocumentsContract.buildDocumentUriUsingTree(parent, cursor.getString(0)) to
                     mapOf("name" to cursor.getString(1), "directory" to
                         (cursor.getString(2) == DocumentsContract.Document.MIME_TYPE_DIR),
-                        "contentType" to cursor.getString(2), "size" to cursor.getLong(3), "modified" to cursor.getLong(4)))
+                        "contentType" to cursor.getString(2), "size" to cursor.getLong(3), "modified" to cursor.getLong(4),
+                        "id" to cursor.getString(0)))
             }
         }
         return values

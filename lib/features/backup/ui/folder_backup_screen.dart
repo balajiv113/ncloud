@@ -8,6 +8,7 @@ import '../../../core/ui/messages.dart' show showError;
 import '../engine/sync_errors.dart' show sourceNeedsReselect;
 import 'backup_setup_screen.dart';
 import 'backup_status.dart';
+import 'failures_sheet.dart';
 
 class FolderBackupScreen extends StatefulWidget {
   const FolderBackupScreen({super.key, required this.controller});
@@ -116,7 +117,12 @@ class _FolderBackupScreenState extends State<FolderBackupScreen> {
   Widget _card(FolderPair pair) {
     final state = sync.results[pair.id];
     final active = sync.activeId == pair.id || state?['status'] == 'running';
-    final failed = state?['status'] == 'error';
+    final failed = state?['status'] == 'error' || state?['status'] == 'partial';
+    // A run in this app reports live numbers; one made by the background
+    // worker is read from what it saved.
+    final numbers = sync.activeId == pair.id
+        ? BackupNumbers.fromProgress(sync.progress)
+        : BackupNumbers.fromState(state);
     final schedule = pair.schedule;
     final scheduleLabel = schedule == null
         ? 'Manual'
@@ -180,7 +186,8 @@ class _FolderBackupScreenState extends State<FolderBackupScreen> {
                 ),
               ],
             ),
-            if (active) const LinearProgressIndicator(),
+            if (active) ..._progress(numbers),
+            if (!active) ..._summary(pair, numbers),
             if (state?['error'] case final String message)
               Padding(
                 padding: const EdgeInsets.only(bottom: 6, right: 8),
@@ -202,4 +209,82 @@ class _FolderBackupScreenState extends State<FolderBackupScreen> {
       ),
     );
   }
+
+  /// The bar, the count and what is being uploaded, while a backup runs.
+  List<Widget> _progress(BackupNumbers numbers) => [
+    Padding(
+      padding: const EdgeInsets.only(right: 8, bottom: 2),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              [
+                numbers.progressLine ?? sync.phase,
+                ?numbers.percent,
+              ].join(' · '),
+              style: Theme.of(context).textTheme.labelLarge,
+            ),
+          ),
+          if (numbers.remaining case final left?)
+            Text(
+              formatRemaining(left),
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+        ],
+      ),
+    ),
+    Padding(
+      padding: const EdgeInsets.only(right: 8, bottom: 6),
+      child: LinearProgressIndicator(value: numbers.fraction),
+    ),
+    if (numbers.current case final name?)
+      Padding(
+        padding: const EdgeInsets.only(right: 8, bottom: 4),
+        child: Text(
+          'Uploading $name',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+      ),
+    if (numbers.problems > 0)
+      Padding(
+        padding: const EdgeInsets.only(right: 8, bottom: 4),
+        child: Text(
+          '${numbers.problemLine} so far',
+          style: TextStyle(
+            fontSize: 12,
+            color: Theme.of(context).colorScheme.error,
+          ),
+        ),
+      ),
+  ];
+
+  /// How the last run ended: how much is backed up, and a way to see problems.
+  List<Widget> _summary(FolderPair pair, BackupNumbers numbers) => [
+    if (numbers.summaryLine case final line?)
+      Padding(
+        padding: const EdgeInsets.only(right: 8, bottom: 2),
+        child: Text(line, style: Theme.of(context).textTheme.bodySmall),
+      ),
+    if (numbers.problemLine case final line?)
+      Align(
+        alignment: Alignment.centerLeft,
+        child: TextButton.icon(
+          style: TextButton.styleFrom(
+            foregroundColor: Theme.of(context).colorScheme.error,
+            padding: EdgeInsets.zero,
+            minimumSize: const Size(0, 32),
+          ),
+          onPressed: () => showModalBottomSheet<void>(
+            context: context,
+            showDragHandle: true,
+            isScrollControlled: true,
+            builder: (_) => FailuresSheet(sync: sync, pair: pair),
+          ),
+          icon: const Icon(Icons.error_outline, size: 16),
+          label: Text('$line · see why'),
+        ),
+      ),
+  ];
 }

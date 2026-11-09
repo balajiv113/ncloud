@@ -269,8 +269,10 @@ class AppController extends ChangeNotifier implements StatusSink {
     client: client,
     directory: () async =>
         await cache?.folder('live-photos') ??
-        Directory('${Directory.systemTemp.path}/ncloud-live'),
+        // Without a cache (tests) each controller gets a folder of its own.
+        (_scratch ??= await Directory.systemTemp.createTemp('ncloud-live')),
   );
+  Directory? _scratch;
   late final OriginalTransfers _originalTransfers = OriginalTransfers(
     client: client,
     cache: cache,
