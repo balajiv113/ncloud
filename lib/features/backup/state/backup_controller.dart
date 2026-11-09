@@ -93,6 +93,10 @@ class BackupController extends ChangeNotifier {
   Future<void>? _batch;
   bool _stopBatch = false;
   final Set<String> queuedIds = {};
+
+  /// Called after a run that uploaded or moved files, so the screens that show
+  /// the server's files can reload.
+  void Function()? onServerChanged;
   bool get busy =>
       activeId != null ||
       _batch != null ||
@@ -606,6 +610,9 @@ class BackupController extends ChangeNotifier {
       _running = null;
       finished.complete();
       _notify();
+      if (!_disposed && progress.transferred + progress.moved > 0) {
+        onServerChanged?.call();
+      }
     }
   }
 
