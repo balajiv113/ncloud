@@ -804,6 +804,50 @@ void main() {
     expect(receipt, isNotNull);
   });
 
+  test(
+    'a backup trusts its receipts, and Back up again checks everything',
+    () async {
+      await device.put('a.jpg', 'first');
+      await device.put('b.jpg', 'second');
+      final value = await pair();
+      await sync.run(value);
+      expect(cloud.uploads, 2);
+
+      // The server folder is emptied. Nothing is uploaded on its own, because
+      // the backup has a record that those files were backed up.
+      cloud.files.clear();
+      await sync.run(value);
+      expect(cloud.uploads, 2);
+
+      // Asking to back up again checks every file and uploads what is missing.
+      await sync.backUpAgain(value);
+      expect(sync.error, isNull);
+      expect(cloud.uploads, 4);
+      expect(
+        cloud.files.keys,
+        containsAll(['Backup/Selected/a.jpg', 'Backup/Selected/b.jpg']),
+      );
+    },
+  );
+
+  test(
+    'Back up again never uploads what is already on the server twice',
+    () async {
+      await device.put('a.jpg', 'first');
+      final value = await pair();
+      await sync.run(value);
+      expect(cloud.uploads, 1);
+      await sync.backUpAgain(value);
+      expect(sync.error, isNull);
+      expect(cloud.uploads, 1);
+      expect(cloud.files, hasLength(1));
+      expect(
+        await sync.journal.receipt(value.id, 'local', ['a.jpg']),
+        isNotNull,
+      );
+    },
+  );
+
   test('Wi-Fi policy blocks work without losing pending files', () async {
     await device.put('file.txt', 'source');
     final value = await pair();

@@ -62,6 +62,10 @@ class SyncJournal {
   static Future<void> _addLedger(Database db) async {
     await db.execute('ALTER TABLE receipts ADD COLUMN fingerprint TEXT');
     await db.execute('ALTER TABLE receipts ADD COLUMN size INTEGER');
+    // Finding a file by its fingerprint must stay quick for a huge library.
+    await db.execute(
+      'CREATE INDEX receipts_fingerprint ON receipts(pair, fingerprint)',
+    );
     await db.execute(
       'CREATE TABLE failures (pair TEXT NOT NULL, path TEXT NOT NULL, '
       'version TEXT NOT NULL, code TEXT, message TEXT NOT NULL, '
@@ -290,6 +294,52 @@ class SyncJournal {
     }
     return found;
   }
+
+  /// Every receipt of [pair] whose file has this [fingerprint]: the same
+  /// content wherever it was, or has since been moved to.
+  Future<List<Receipt>> receiptsWithFingerprint(
+    String pair,
+    String fingerprint,
+  ) async => [
+    for (final row in await (await db).query(
+      'receipts',
+      where: "pair=? AND side='local' AND fingerprint=?",
+      whereArgs: [pair, fingerprint],
+    ))
+      Receipt.fromRow(row),
+  ];
+
+  /// Replaces the receipt for a file that moved with one for its new place, in
+  /// one step so a crash never leaves it with neither.
+  Future<void> moveReceipt(String pair, List<String> from, Receipt to) async =>
+      (await db).transaction((txn) async {
+        await txn.delete(
+          'receipts',
+          where: "pair=? AND side='local' AND path=?",
+          whereArgs: [pair, jsonEncode(from)],
+        );
+        await txn.insert(
+          'receipts',
+          _receiptRow(
+            pair,
+            to.path,
+            to.version,
+            to.target,
+            to.targetVersion,
+            to.fingerprint,
+            to.size,
+          ),
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      });
+
+  /// Forgets what was uploaded for [pair], so the next run checks every file
+  /// again. Files already on the server are recognised by their fingerprint.
+  Future<void> resetReceipts(String pair) async =>
+      (await db).transaction((txn) async {
+        await txn.delete('receipts', where: 'pair=?', whereArgs: [pair]);
+        await txn.delete('failures', where: 'pair=?', whereArgs: [pair]);
+      });
 
   /// Notes that [failure] stopped a file from being backed up. [version] is the
   /// file's version then, so a changed file gets a fresh start.

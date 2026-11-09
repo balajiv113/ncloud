@@ -67,6 +67,25 @@ class FakeServer implements CloudBackend {
     return UploadResult(etag: files[name]!.etag);
   }
 
+  int moves = 0;
+
+  @override
+  Future<void> move(
+    Account account,
+    CloudFile file,
+    List<String> destination,
+  ) async {
+    final from = file.path.join('/');
+    final to = destination.join('/');
+    if (files.containsKey(to)) {
+      throw const CloudException('exists', statusCode: 412);
+    }
+    final value = files.remove(from);
+    if (value == null) throw const CloudException('gone', statusCode: 404);
+    files[to] = value;
+    moves++;
+  }
+
   @override
   Future<RemoteStat?> stat(Account account, List<String> path) async {
     stats++;

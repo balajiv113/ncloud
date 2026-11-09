@@ -50,7 +50,14 @@ void main() {
     await engine().run(account, pair(concurrency: concurrency));
   }
 
-  List<int> bytes(int i) => List.filled(32, i % 251);
+  /// 32 bytes that are different for every i, since identical content is
+  /// (rightly) recognised as a copy.
+  List<int> bytes(int i) => [
+    i & 255,
+    (i >> 8) & 255,
+    (i >> 16) & 255,
+    ...List.filled(29, 7),
+  ];
 
   setUp(() async {
     root = await Directory.systemTemp.createTemp('engine');
@@ -412,6 +419,132 @@ void main() {
           throwsA(isA<FormatException>()),
         );
         expect(server.uploads, 0);
+      },
+    );
+  });
+
+  group('a photo that moved or was copied on the device', () {
+    Future<void> firstBackup() async {
+      device.add('a.jpg', bytes(5));
+      await run();
+      expect(server.uploads, 1);
+    }
+
+    test('moves on the server instead of uploading again', () async {
+      await firstBackup();
+      device.entries.remove('a.jpg');
+      device.contents.remove('a.jpg');
+      device.add('b.jpg', bytes(5));
+      await run();
+      expect(server.uploads, 1, reason: 'no second upload');
+      expect(server.moves, 1);
+      expect(server.files.keys.where((n) => n.startsWith('Backup/Camera/')), [
+        'Backup/Camera/b.jpg',
+      ]);
+      expect(progress.moved, 1);
+      // The receipt followed the file, and the old one is gone.
+      final receipts = await journal.receiptsFor('p', [
+        ['a.jpg'],
+        ['b.jpg'],
+      ]);
+      expect(receipts.keys, ['["b.jpg"]']);
+      expect(receipts.values.single.target, ['b.jpg']);
+      // And nothing more happens next time.
+      await run();
+      expect(server.moves, 1);
+      expect(progress.alreadyBackedUp, 1);
+    });
+
+    test('a copy is recorded against the same server file', () async {
+      await firstBackup();
+      device.add('copy.jpg', bytes(5));
+      await run();
+      expect(server.uploads, 1);
+      expect(server.moves, 0);
+      expect(progress.recognised, 1);
+      final copy = (await journal.receiptsFor('p', [
+        ['copy.jpg'],
+      ])).values.single;
+      expect(copy.target, ['a.jpg']);
+      expect(server.files.keys, contains('Backup/Camera/a.jpg'));
+    });
+
+    test('identical new files in one run are uploaded once', () async {
+      device.add('one.jpg', bytes(9), modified: 2000);
+      device.add('two.jpg', bytes(9), modified: 1000);
+      await run();
+      expect(server.uploads, 1);
+      expect(progress.recognised, 1);
+      expect(
+        (await journal.receiptsFor('p', [
+          ['one.jpg'],
+          ['two.jpg'],
+        ])).length,
+        2,
+      );
+    });
+
+    test(
+      'a server copy that changed is left alone and the file uploaded',
+      () async {
+        await firstBackup();
+        server.put('Backup/Camera/a.jpg', bytes(77), sha1: sha1Of(bytes(77)));
+        device.entries.remove('a.jpg');
+        device.contents.remove('a.jpg');
+        device.add('b.jpg', bytes(5));
+        await run();
+        expect(server.moves, 0);
+        expect(server.uploads, 2);
+        expect(server.files['Backup/Camera/a.jpg']!.bytes, bytes(77));
+        expect(server.files['Backup/Camera/b.jpg']!.bytes, bytes(5));
+      },
+    );
+
+    test('an occupied destination is never overwritten', () async {
+      await firstBackup();
+      server.put('Backup/Camera/b.jpg', bytes(88), sha1: sha1Of(bytes(88)));
+      device.entries.remove('a.jpg');
+      device.contents.remove('a.jpg');
+      device.add('b.jpg', bytes(5));
+      await run();
+      expect(server.moves, 0);
+      expect(server.files['Backup/Camera/b.jpg']!.bytes, bytes(88));
+      expect(
+        server.files.keys.where((n) => n.contains('ncloud device')),
+        hasLength(1),
+      );
+      expect(server.files['Backup/Camera/a.jpg']!.bytes, bytes(5));
+    });
+
+    test(
+      'a file removed from the server is uploaded again at its new place',
+      () async {
+        await firstBackup();
+        server.files.remove('Backup/Camera/a.jpg');
+        device.entries.remove('a.jpg');
+        device.contents.remove('a.jpg');
+        device.add('b.jpg', bytes(5));
+        await run();
+        expect(server.moves, 0);
+        expect(server.files.keys, contains('Backup/Camera/b.jpg'));
+      },
+    );
+
+    test(
+      'a backup made before fingerprints existed cannot tell a move',
+      () async {
+        await journal.confirm(
+          'p',
+          ['a.jpg'],
+          '32|1700000000000',
+          ['a.jpg'],
+          '"1"|32',
+        );
+        server.put('Backup/Camera/a.jpg', bytes(5));
+        device.add('b.jpg', bytes(5));
+        await run();
+        expect(server.moves, 0);
+        expect(server.uploads, 1);
       },
     );
   });

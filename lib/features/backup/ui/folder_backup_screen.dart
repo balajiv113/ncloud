@@ -50,6 +50,31 @@ class _FolderBackupScreenState extends State<FolderBackupScreen> {
     ),
   );
 
+  Future<void> _backUpAgain(FolderPair pair) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Back up again?'),
+        content: const Text(
+          'Every file in this folder is checked again. Files already on your '
+          'server are recognised and not uploaded twice; files missing from it '
+          'are uploaded. Use this if the server folder was emptied or restored.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Back up again'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) await _perform(() => sync.backUpAgain(pair));
+  }
+
   Future<void> _perform(Future<void> Function() operation) async {
     try {
       await operation();
@@ -148,6 +173,14 @@ class _FolderBackupScreenState extends State<FolderBackupScreen> {
                   tooltip: 'Edit ${pair.name}',
                   onPressed: sync.busy || active ? null : () => _edit(pair),
                   icon: const Icon(Icons.edit_outlined, size: 18),
+                ),
+                PopupMenuButton<String>(
+                  tooltip: 'More for ${pair.name}',
+                  enabled: !sync.busy && !active,
+                  onSelected: (_) => _backUpAgain(pair),
+                  itemBuilder: (_) => const [
+                    PopupMenuItem(value: 'again', child: Text('Back up again')),
+                  ],
                 ),
               ],
             ),

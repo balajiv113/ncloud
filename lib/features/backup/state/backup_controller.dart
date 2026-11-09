@@ -501,6 +501,15 @@ class BackupController extends ChangeNotifier {
   Future<List<StoredFailure>> failures(FolderPair pair) =>
       journal.failures(pair.id);
 
+  /// Forgets what was uploaded for [pair] and checks every file again. Files
+  /// already on the server are recognised by their fingerprint and not uploaded
+  /// twice; files missing from it are uploaded. For when the server folder was
+  /// emptied or restored, since a backup trusts what it has recorded.
+  Future<void> backUpAgain(FolderPair pair) async {
+    await journal.resetReceipts(pair.id);
+    await run(pair);
+  }
+
   /// Gives every failed file of [pair] a fresh start and runs it again.
   Future<void> retryFailed(FolderPair pair) async {
     await journal.resetFailures(pair.id);

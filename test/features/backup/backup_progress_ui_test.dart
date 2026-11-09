@@ -29,6 +29,7 @@ class _Backup extends BackupController {
 
   List<StoredFailure> stored = [];
   int retries = 0;
+  int again = 0;
 
   @override
   Future<void> load() async {}
@@ -38,6 +39,8 @@ class _Backup extends BackupController {
   Future<List<StoredFailure>> failures(FolderPair pair) async => stored;
   @override
   Future<void> retryFailed(FolderPair pair) async => retries++;
+  @override
+  Future<void> backUpAgain(FolderPair pair) async => again++;
 }
 
 FolderPair pair() => FolderPair(
@@ -227,6 +230,40 @@ void main() {
       await tester.tap(find.text('Try again'));
       await tester.pumpAndSettle();
       expect(sync.retries, 1);
+    });
+
+    testWidgets('Back up again asks first, then checks everything', (
+      tester,
+    ) async {
+      sync.results['p'] = {'status': 'success', 'found': 10};
+      await show(tester);
+      await tester.tap(find.byTooltip('More for Camera'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Back up again'));
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining('recognised and not uploaded twice'),
+        findsOneWidget,
+      );
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      expect(sync.again, 0);
+      await tester.tap(find.byTooltip('More for Camera'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Back up again'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Back up again'));
+      await tester.pumpAndSettle();
+      expect(sync.again, 1);
+    });
+
+    testWidgets('files moved on the server are mentioned', (tester) async {
+      sync.results['p'] = {'status': 'success', 'found': 100, 'moved': 12};
+      await show(tester);
+      expect(
+        find.text('100 backed up · 12 moved on your server'),
+        findsOneWidget,
+      );
     });
 
     testWidgets('a failed run shows its reason and offers Retry', (
