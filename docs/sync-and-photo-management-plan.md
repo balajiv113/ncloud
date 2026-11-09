@@ -109,6 +109,46 @@ changes to the phone. Files already brought down stay on the phone.
 
 A switch made while a run is going takes effect when that run finishes.
 
+## Emptying the phone once photos are safe (Free up space)
+
+This is a different goal from Keep in step, and the two must not be confused:
+
+| Goal | Phone | Server |
+| --- | --- | --- |
+| **Free up space** | Photos are deleted from the phone | Photos stay |
+| **Keep in step** | You tidy the phone | The server follows, including deletions |
+
+If a plain delete in the Gallery meant "free up space" while Keep in step was on,
+the server would delete the photo too. So the app never guesses. Free up space is
+an **explicit action in the app**, which means the app knows it did it.
+
+How it works (Android):
+
+1. The app picks photos that are **verified** as safe: the server copy exists, is
+   unchanged, and its fingerprint matches the phone's. Nothing is ever freed on
+   trust alone.
+2. You can choose how much to keep on the phone, for example "keep the last 30
+   days" and "keep favourites", and you see the count and the space it would free
+   before anything happens.
+3. The phone's own system dialog asks once for the whole batch (Android 11 and
+   later), so the app cannot delete photos behind your back.
+4. Each freed photo is marked **on server only** in the ledger. It is never read
+   as a deletion, never queued for removal, and never uploaded again.
+5. Freed photos stay browsable in the app, because the Timeline comes from the
+   server. Opening one streams it.
+
+Using both together:
+
+* Free up space is exempt from Keep in step, as above.
+* A delete made **in the Gallery** is still a delete, and Keep in step would follow
+  it (after the wait, into the trash). If your aim is only to empty the phone,
+  leave the link on **Back up** and use Free up space. That is the safe pairing.
+* The app says so on the Keep in step switch: "Deleting a photo on this phone will
+  also remove it from your server."
+
+iPhone is the same idea with PhotoKit: freed photos go to Recently Deleted for 30
+days, behind the system confirmation.
+
 ## Keeping photos tidy
 
 **Where photos go on the server.** No dates in folder names unless you ask for
@@ -259,6 +299,7 @@ real device are their first check, so each is kept small and lands on its own.
 1. Is **Back up** the default behaviour for a new link, with **Keep in step** one
    tap away behind a clear explanation, and switchable back at any time?
 2. Is the **7-day wait** right for removals, with the first batch asking you?
-3. Should **Free up space** be in the first Android release or wait?
+3. **Free up space** is in the first Android release, since it is what lets you
+   empty the phone after backing up. (Proposed: yes.)
 4. Should existing folder backups keep running as they are until you opt in to
    the new behaviours? (Proposed: yes.)
