@@ -19,6 +19,10 @@ class LibraryViewState {
   bool showPeople = false;
   final Map<String, CloudFile> selected = {};
 
+  /// What the Timeline derived from its files, kept here so it survives
+  /// leaving the Timeline for another destination and coming back.
+  final MemoSlot timelineMemo = MemoSlot();
+
   Object? _visibleKey;
   List<CloudFile> _visibleFiles = const [];
 
@@ -91,4 +95,10 @@ class LibraryViewState {
       collection: collection,
     );
   }
+}
+
+/// One remembered result and the inputs it was made from.
+class MemoSlot {
+  Object? key;
+  Object? value;
 }

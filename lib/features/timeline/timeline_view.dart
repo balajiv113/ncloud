@@ -37,9 +37,8 @@ class TimelineView extends StatefulWidget {
 /// is far costlier than laying a frame out, and the shell rebuilds on every
 /// controller notification, so this is kept until its inputs change.
 class _Derived {
-  _Derived(this.key, this.media, this.others, this.groups, this.sections);
+  _Derived(this.media, this.others, this.groups, this.sections);
 
-  final Object key;
   final List<CloudFile> media;
   final List<CloudFile> others;
   final Map<String, List<CloudFile>> groups;
@@ -47,8 +46,6 @@ class _Derived {
 }
 
 class _TimelineViewState extends State<TimelineView> {
-  _Derived? _derived;
-
   _Derived _derive(BuildContext context) {
     final scope = widget.scope;
     final c = scope.controller;
@@ -70,10 +67,10 @@ class _TimelineViewState extends State<TimelineView> {
       view.density,
       localizations,
     );
-    if (_derived case final derived? when derived.key == key) return derived;
+    final memo = view.timelineMemo;
+    if (memo.key == key) return memo.value! as _Derived;
     final media = files.where((f) => f.isMedia).toList();
-    return _derived = _Derived(
-      key,
+    final derived = _Derived(
       media,
       files.where((f) => !f.isMedia).toList(),
       showMemories ? memoryGroups(files) : const {},
@@ -92,6 +89,10 @@ class _TimelineViewState extends State<TimelineView> {
               ),
             ),
     );
+    memo
+      ..key = key
+      ..value = derived;
+    return derived;
   }
 
   @override

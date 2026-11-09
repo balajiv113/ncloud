@@ -123,10 +123,6 @@ class AppController extends ChangeNotifier implements StatusSink {
   bool fetchingDays = false;
   MediaListing? _activeListing;
   String? _visibleListingKey;
-
-  /// The remembered listing whose files [_startLoad] already put on screen,
-  /// so restoring it need not replace them with an identical list.
-  MediaListing? _seededFrom;
   bool? timelineIndexAvailable;
   bool get discoveringAlbums => _albums.discovering;
   int get discoveredFolders => _albums.discovered;
@@ -632,17 +628,15 @@ class AppController extends ChangeNotifier implements StatusSink {
     loadingMore = false;
     hasMore = false;
     error = null;
-    if (!keepItems) _activeListing = null;
+    if (!keepItems) _activeListing = _listings[run.listingKey];
     _timelineChanges = null;
     _dayRequests.clear();
-    _seededFrom = null;
     if (!keepItems) {
       final previous = _listings[run.listingKey];
-      _seededFrom = previous;
       items = run.view is AlbumHomeTarget
           ? []
           : previous != null
-          ? fileStore.resolve(previous.keys)
+          ? previous.resolve(fileStore)
           : _seed(_queryFor(run.view));
       if (run.destination == Destination.drive &&
           !FileStore.validChildren(run.path, items)) {
@@ -667,7 +661,7 @@ class AppController extends ChangeNotifier implements StatusSink {
       if (!_isCurrent(run)) return null;
       if (document != null) previous = MediaListing.fromJson(document);
     }
-    var known = previous == null ? null : fileStore.resolve(previous.keys);
+    var known = previous?.resolve(fileStore);
     if (previous?.days != null) timelineIndexAvailable ??= true;
     if (previous != null &&
         known!.length != previous.keys.length &&
@@ -676,7 +670,7 @@ class AppController extends ChangeNotifier implements StatusSink {
       if (!_isCurrent(run)) return null;
       if (persisted != null) {
         fileStore.putAll(persisted);
-        known = fileStore.resolve(previous.keys);
+        known = previous.resolve(fileStore);
       }
     }
     if (run.destination == Destination.drive &&
@@ -687,9 +681,7 @@ class AppController extends ChangeNotifier implements StatusSink {
       items = [];
     }
     if (previous != null && known!.length == previous.keys.length) {
-      if (!identical(previous, _seededFrom) || items.length != known.length) {
-        items = known;
-      }
+      items = known;
       refreshing = true;
       _hydrate(items.take(_hydrateLimit));
       notifyListeners();
@@ -1044,7 +1036,7 @@ class AppController extends ChangeNotifier implements StatusSink {
   Future<void> _publishListing(MediaListing listing, String? key) async {
     listing.pruneEvicted(fileStore);
     _activeListing = listing;
-    items = fileStore.resolve(listing.keys);
+    items = listing.resolve(fileStore);
     hasMore = listing.more;
     if (destination == Destination.timeline) _libraryFiles = items;
     if (destination == Destination.timeline) _prefetch.queue(items);
@@ -1391,7 +1383,7 @@ class AppController extends ChangeNotifier implements StatusSink {
     _fileResolver.clear();
     fileStore.markStale();
     if (_activeListing case final listing?) {
-      items = fileStore.resolve(listing.keys);
+      items = listing.resolve(fileStore);
       if (destination == Destination.timeline) _libraryFiles = items;
     }
     _albums.invalidate();
@@ -1479,7 +1471,7 @@ class AppController extends ChangeNotifier implements StatusSink {
     );
     if (!result.listingsChanged) return result.file;
     if (_activeListing case final listing?) {
-      items = fileStore.resolve(listing.keys);
+      items = listing.resolve(fileStore);
       if (destination == Destination.timeline) _libraryFiles = items;
     }
     _persistStore();

@@ -99,4 +99,34 @@ void main() {
     ];
     expect(names(view(nested, subfolder: ['Photos', 'Trip'])), ['in.jpg']);
   });
+
+  test('photos from the same moment stay in key order, newest day first', () {
+    final noon = DateTime(2024, 5, 1, 12);
+    final files = [
+      file('b.jpg', modified: noon),
+      file('a.jpg', modified: noon),
+      file('new.jpg', modified: noon.add(const Duration(days: 1))),
+      file('c.jpg', modified: noon),
+    ];
+    expect(names(view(files)), ['new.jpg', 'a.jpg', 'b.jpg', 'c.jpg']);
+    expect(names(view(files, sort: LibrarySort.oldest)), [
+      'a.jpg',
+      'b.jpg',
+      'c.jpg',
+      'new.jpg',
+    ]);
+  });
+
+  test('a large library sorts in well under a second', () {
+    final base = DateTime(2024);
+    final files = [
+      for (var i = 0; i < 30000; i++)
+        file('p$i.jpg', modified: base.subtract(Duration(days: i ~/ 25))),
+    ];
+    final watch = Stopwatch()..start();
+    final sorted = view(files);
+    expect(sorted, hasLength(30000));
+    expect(sorted.first.name, 'p0.jpg');
+    expect(watch.elapsedMilliseconds, lessThan(2000));
+  });
 }
