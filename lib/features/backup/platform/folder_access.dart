@@ -36,6 +36,7 @@ class DeviceEntry {
     this.modified, {
     this.contentType = '',
     this.revision,
+    this.id,
   });
   final String name;
   final bool directory;
@@ -43,6 +44,10 @@ class DeviceEntry {
   final int modified;
   final String contentType;
   final String? revision;
+
+  /// The provider's own id for the file, when it has one. It lets the file be
+  /// opened directly instead of being searched for by name in its folder.
+  final String? id;
   String get version => revision ?? '$size|$modified';
 }
 
@@ -129,6 +134,7 @@ class NativeFolderAccess implements FolderAccess, PhotoAlbumAccess {
     value['modified'] as int,
     contentType: value['contentType'] as String? ?? '',
     revision: value['revision'] as String?,
+    id: value['id'] as String?,
   );
 
   @override
@@ -157,6 +163,7 @@ class NativeFolderAccess implements FolderAccess, PhotoAlbumAccess {
       'size': expected.size,
       'modified': expected.modified,
       'version': expected.version,
+      if (expected.id != null) 'id': expected.id,
     });
     if (file == null) throw StateError('Could not prepare the source file.');
     return File(file);

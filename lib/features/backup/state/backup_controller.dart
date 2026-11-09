@@ -497,6 +497,16 @@ class BackupController extends ChangeNotifier {
     await access.clearStaging();
   }
 
+  /// The files of [pair] that could not be backed up, with the reasons.
+  Future<List<StoredFailure>> failures(FolderPair pair) =>
+      journal.failures(pair.id);
+
+  /// Gives every failed file of [pair] a fresh start and runs it again.
+  Future<void> retryFailed(FolderPair pair) async {
+    await journal.resetFailures(pair.id);
+    await run(pair);
+  }
+
   /// Runs one pair now, in the foreground.
   Future<void> run(FolderPair pair) async {
     if (_running != null || _disposed || !_foreground) return;
