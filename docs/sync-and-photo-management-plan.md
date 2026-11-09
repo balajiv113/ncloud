@@ -77,6 +77,38 @@ side, so the app knows what happened instead of guessing:
 
 This is the same engine for photos and folders, which is why they feel alike.
 
+## Switching behaviour, in either direction
+
+Behaviour is a setting on the link, not a decision made once. All behaviours share
+the same ledger, so switching never re-uploads anything and never forgets what
+was synced. The recommended route for a new library is: **Back up first**, let the
+first big upload finish, then turn on **Keep in step** if you want it.
+
+**Back up to Keep in step.** Turning it on never acts immediately. The app first
+compares the phone with the ledger and shows a preview:
+
+* *Deleted on the phone earlier, still on the server* (for example, years of
+  deletions made while only backing up). These are **not** queued for removal.
+  They are listed as "Already deleted on your phone: 412 files, 3.1 GB" with two
+  choices, *Keep them* (the default) or *Remove from server*.
+* *In a different folder than on the phone now* (moved before switching on). The
+  app offers to move them on the server and shows exactly which. It does nothing
+  until you confirm.
+* After that, only changes made from now on are followed, with the usual
+  safeguards (wait period, trash, caps).
+
+If you did the first upload in Back up mode and have not tidied since, the preview
+says "0 to move, 0 to remove", and switching on is one tap.
+
+**Keep in step to Back up.** Always safe. It stops following moves and deletions.
+Removals still waiting out their 7 days are cancelled, not carried out. Anything
+already removed stays in the server's trash and in "Recently removed" with Restore.
+
+**To or from Two-way** (folders only). Leaving Two-way stops bringing server
+changes to the phone. Files already brought down stay on the phone.
+
+A switch made while a run is going takes effect when that run finishes.
+
 ## Keeping photos tidy
 
 **Where photos go on the server.** No dates in folder names unless you ask for
@@ -225,7 +257,7 @@ real device are their first check, so each is kept small and lands on its own.
 ## Questions to settle before step 1
 
 1. Is **Back up** the default behaviour for a new link, with **Keep in step** one
-   tap away behind a clear explanation?
+   tap away behind a clear explanation, and switchable back at any time?
 2. Is the **7-day wait** right for removals, with the first batch asking you?
 3. Should **Free up space** be in the first Android release or wait?
 4. Should existing folder backups keep running as they are until you opt in to
