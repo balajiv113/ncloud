@@ -9,8 +9,8 @@ import '../../core/storage/media_listing.dart';
 import '../../core/thumbnails/preview_batcher.dart';
 
 /// The one-time welcome after the first sign-in: loads the Timeline index, the
-/// metadata of the recent years and the first screen of thumbnails, so the
-/// library opens already full. A returning user, or one with a stored
+/// metadata of the recent years, the albums and people, and the first screen of
+/// thumbnails, so the library opens already full. A returning user, or one with a stored
 /// timeline, skips it. Skipping only hides the screen; loading continues.
 class LibraryWarmUp {
   LibraryWarmUp({
@@ -23,6 +23,7 @@ class LibraryWarmUp {
     required this.load,
     required this.activeListing,
     required this.loadNextPage,
+    required this.loadCatalogue,
     required this.items,
     required this.preview,
     required this.storeWritten,
@@ -47,6 +48,9 @@ class LibraryWarmUp {
   final Future<void> Function() load;
   final MediaListing? Function() activeListing;
   final Future<void> Function() loadNextPage;
+
+  /// Loads the albums, shared albums and people, so the Albums tab opens full.
+  final Future<void> Function() loadCatalogue;
   final List<CloudFile> Function() items;
   final Future<void> Function(CloudFile file) preview;
 
@@ -139,6 +143,14 @@ class LibraryWarmUp {
       final listing = activeListing();
       final days = listing?.days;
       if (!current() || listing == null || status.error != null) return;
+      final catalogue = loadCatalogue().then<void>(
+        (_) {},
+        onError: (Object e) {
+          if (current()) {
+            status.notice = 'Albums could not be prepared. ${errorMessage(e)}';
+          }
+        },
+      );
       final thumbnails = Future.wait([
         for (final file in items().where((f) => f.isMedia).take(60))
           preview(file).then<void>(
@@ -196,7 +208,10 @@ class LibraryWarmUp {
       step(0.85, 2);
       final left = deadline.difference(DateTime.now());
       if (left > Duration.zero) {
-        await thumbnails.timeout(left, onTimeout: () => []);
+        await Future.wait([
+          thumbnails,
+          catalogue,
+        ]).timeout(left, onTimeout: () => []);
       }
       if (current() && done == total) {
         progress = 1;
