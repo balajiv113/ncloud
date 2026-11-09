@@ -79,22 +79,33 @@ This is the same engine for photos and folders, which is why they feel alike.
 
 ## Keeping photos tidy
 
-**Where photos go on the server** is a choice with plain names:
+**Where photos go on the server.** No dates in folder names unless you ask for
+them. The server mirrors how the phone already groups photos:
 
-| Organise by | Example | Notes |
+| | Android | iPhone |
 | --- | --- | --- |
-| **Phone folders, then year** | `Camera/2024/IMG_1.jpg` | Default on Android. Recognisable, and no folder grows huge. |
-| **Year** | `2024/IMG_1.jpg` | Default on iPhone, where photos are not in folders. |
-| Year and month | `2024/05/IMG_1.jpg` | For people who prefer it. |
-| Phone folders only | `Camera/IMG_1.jpg` | Simple, but big folders. |
+| Default | **Phone folders as they are**: `Camera/`, `Screenshots/`, `WhatsApp Images/` | **`Camera Roll/`** for everything, plus an optional folder for each album you choose |
+| Optional | Split big folders by year or by year and month | Same |
 
-Because identity does not depend on paths, the layout can be **changed later**:
-the app offers "Reorganise", shows exactly which files would move, and moves them
-on the server. Nothing is uploaded again.
+On Android a photo already lives in exactly one folder, so this is the layout you
+already know. On iPhone photos are not in folders and one photo can be in several
+albums. So albums are optional "album folders" with a priority order, and each
+photo is stored once, under the first album in your order that holds it. Anything
+in no chosen album goes to `Camera Roll/`.
 
-On iPhone an album is not a folder, and one photo can be in several albums. So
-albums are optional "album folders" with a priority order, and each photo is
-stored once, under the first album in your order that holds it.
+Splitting by date is never the default, and it is never forced. The app *suggests*
+it when a folder gets very large ("Camera has 18,000 files; split by year?").
+Because identity does not depend on paths, switching it on, off or changing it
+later is a **Reorganise**: the app shows exactly which files would move, then moves
+them on the server. Nothing is uploaded again.
+
+**Big folders must stay cheap**, since they are now the normal case:
+
+* Browsing photos never depends on folders. The Timeline is indexed by date.
+* A run skips parts of the server that have not changed, using folder revisions,
+  so a big folder is not re-read every time.
+* Drive reads big folders off the screen thread and fills in as it goes, so
+  opening `Camera` with 20,000 files does not freeze the app.
 
 Other things that keep the library clean:
 
@@ -151,8 +162,9 @@ Adding a link is the same four steps everywhere: **What** (library or folder),
 **preview**: how many would upload and their size, how many are already on the
 server, any duplicates, and what, if anything, would be removed.
 
-The earlier mock-ups (`docs/mockups/`) still show the right look. They need
-updating for the behaviour switch, the preview and Needs attention.
+The earlier mock-ups (`docs/mockups/`) show the right look but are out of date:
+they draw a Year/Month folder tree, which is no longer the default, and they have
+no behaviour switch, preview or Needs attention yet.
 
 ## How it runs on each phone
 
@@ -190,14 +202,15 @@ logic it depends on is proven.
 1. **Foundations (Dart, fully testable here):** ledger, three-way planner, safety
    policy, executor, fingerprints and checksummed uploads. Move today's Android
    folder backups onto it, which already gives Back up, Keep in step and Two-way
-   for folders, with preview and Needs attention.
-2. **Android photos:** media library source, organising choices, duplicate checks,
+   for folders, with preview and Needs attention. Also make big folders cheap:
+   read folder listings off the screen thread and show them as they arrive.
+2. **Android photos:** media library source, phone-folder layout, duplicate checks,
    Free up space, the media-change trigger.
-3. **iPhone photos:** Photos library source, year and album folders, background
-   upload session, change tokens, limited-access handling.
+3. **iPhone photos:** Photos library source, `Camera Roll` and album folders,
+   background upload session, change tokens, limited-access handling.
 4. **iPhone folders:** Files-app folders with saved bookmarks, Two-way.
-5. **Tidying tools:** duplicate review, Reorganise, Needs attention, the health
-   summary.
+5. **Tidying tools:** duplicate review, Reorganise (including optional splitting
+   of big folders), Needs attention, the health summary.
 
 Steps 2 to 4 need native Kotlin and Swift that cannot be built here. CI and a
 real device are their first check, so each is kept small and lands on its own.
