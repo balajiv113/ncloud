@@ -1,6 +1,16 @@
 import 'file_store.dart';
 import '../../models.dart';
 
+/// A batch fetched for a listing: the files of whole [days] when the view is
+/// indexed, or the next page and its [nextCursor] when it is not.
+class FetchedPage {
+  const FetchedPage(this.files, {this.days = const [], this.nextCursor});
+
+  final List<CloudFile> files;
+  final List<int> days;
+  final String? nextCursor;
+}
+
 /// A view's ordered references into the shared [FileStore] plus its paging
 /// state; files themselves are never duplicated per view.
 class MediaListing {
@@ -24,6 +34,62 @@ class MediaListing {
     for (final file in files) {
       if (_known.add(file.key)) keys.add(file.key);
     }
+  }
+
+  /// Adds a fetched batch. Days it covers are replaced wholesale, so photos
+  /// the server no longer has leave the listing; those are returned.
+  Set<String> merge(FileStore store, FetchedPage page) {
+    var gone = <String>{};
+    if (page.days.isNotEmpty) {
+      final replaced = page.days.toSet();
+      final previous = {
+        for (final key in keys)
+          if (replaced.contains(store[key]?.captureDay)) key,
+      };
+      final returned = page.files.map((file) => file.key).toSet();
+      gone = previous.difference(returned);
+      replace(const {}, previous);
+      staleDays.removeAll(replaced);
+    }
+    add(store, page.files);
+    if (days case final days?) {
+      loaded.addAll(page.days);
+      more = days.any((d) => !loaded.contains(d.id));
+    } else {
+      cursor = page.nextCursor;
+      more = page.nextCursor != null;
+    }
+    return gone;
+  }
+
+  /// Marks loaded days as needing a refresh: those in [only], or all of them.
+  void markStale({Set<int>? only}) =>
+      staleDays.addAll(only == null ? loaded : loaded.where(only.contains));
+
+  /// Adopts a newer day index after [changed] days differ. Days the server no
+  /// longer has are dropped; the others are marked stale. Returns the days that
+  /// were on screen and must be fetched again.
+  List<int> applyIndex(
+    FileStore store,
+    List<TimelineDay> newDays,
+    Set<int> changed,
+  ) {
+    final present = {for (final day in newDays) day.id};
+    final reload = changed.where(
+      (d) => loaded.contains(d) && present.contains(d),
+    );
+    final removed = changed.difference(present);
+    staleDays.addAll(changed);
+    loaded.removeAll(removed);
+    staleDays.removeAll(removed);
+    replace(const {}, {
+      for (final key in keys)
+        if (removed.contains(store[key]?.captureDay)) key,
+    });
+    days = newDays;
+    more = newDays.any((d) => !loaded.contains(d.id));
+    updated = DateTime.now();
+    return reload.toList();
   }
 
   /// Eviction must not leave a day marked as loaded with missing photo rows.

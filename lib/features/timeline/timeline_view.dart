@@ -13,7 +13,7 @@ import 'timeline_sections.dart';
 /// The Timeline and every view laid out like it, such as Favorites, offline
 /// photos and the photos of an album, a person or a map area: dated sections of
 /// photos, with memories above the Timeline itself.
-class TimelineView extends StatelessWidget {
+class TimelineView extends StatefulWidget {
   const TimelineView({
     super.key,
     required this.scope,
@@ -30,37 +30,56 @@ class TimelineView extends StatelessWidget {
   final TimelineTracker tracker;
 
   @override
-  Widget build(BuildContext context) {
+  State<TimelineView> createState() => _TimelineViewState();
+}
+
+/// What the view derives from its files. Grouping thousands of photos by day
+/// is far costlier than laying a frame out, and the shell rebuilds on every
+/// controller notification, so this is kept until its inputs change.
+class _Derived {
+  _Derived(this.key, this.media, this.others, this.groups, this.sections);
+
+  final Object key;
+  final List<CloudFile> media;
+  final List<CloudFile> others;
+  final Map<String, List<CloudFile>> groups;
+  final List<TimelineSection> sections;
+}
+
+class _TimelineViewState extends State<TimelineView> {
+  _Derived? _derived;
+
+  _Derived _derive(BuildContext context) {
+    final scope = widget.scope;
     final c = scope.controller;
     final view = scope.view;
-    final media = files.where((f) => f.isMedia).toList();
+    final files = widget.files;
     final indexed = scope.indexedLayout;
+    final localizations = MaterialLocalizations.of(context);
     final showMemories =
         c.destination == Destination.timeline &&
         !view.selecting &&
         view.query.isEmpty &&
         view.filter == MediaFilter.all;
-    final Map<String, List<CloudFile>> groups = showMemories
-        ? memoryGroups(files)
-        : const {};
-    final hasGrid = media.isNotEmpty || indexed;
-    if (!hasGrid) tracker.clear();
-    final localizations = MaterialLocalizations.of(context);
-    final others = files.where((f) => !f.isMedia).toList();
-    return SliverMainAxisGroup(
-      slivers: [
-        if (groups.isNotEmpty)
-          SliverToBoxAdapter(
-            child: MemoryStrip(
-              groups: groups,
-              controller: c,
-              onOpen: scope.open,
-            ),
-          ),
-        if (hasGrid)
-          TimelineSlivers(
-            controller: c,
-            sections: buildTimelineSections(
+    final key = (
+      files,
+      indexed,
+      indexed ? c.indexedDays : null,
+      c.dayLoadState,
+      showMemories,
+      view.density,
+      localizations,
+    );
+    if (_derived case final derived? when derived.key == key) return derived;
+    final media = files.where((f) => f.isMedia).toList();
+    return _derived = _Derived(
+      key,
+      media,
+      files.where((f) => !f.isMedia).toList(),
+      showMemories ? memoryGroups(files) : const {},
+      media.isEmpty && !indexed
+          ? const []
+          : buildTimelineSections(
               media: media,
               indexedDays: indexed ? c.indexedDays : null,
               dayLoaded: c.dayLoaded,
@@ -72,9 +91,36 @@ class TimelineView extends StatelessWidget {
                 formatDate: localizations.formatMediumDate,
               ),
             ),
-            media: media,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scope = widget.scope;
+    final c = scope.controller;
+    final view = scope.view;
+    final files = widget.files;
+    final derived = _derive(context);
+    final indexed = scope.indexedLayout;
+    final hasGrid = derived.media.isNotEmpty || indexed;
+    if (!hasGrid) widget.tracker.clear();
+    return SliverMainAxisGroup(
+      slivers: [
+        if (derived.groups.isNotEmpty)
+          SliverToBoxAdapter(
+            child: MemoryStrip(
+              groups: derived.groups,
+              controller: c,
+              onOpen: scope.open,
+            ),
+          ),
+        if (hasGrid)
+          TimelineSlivers(
+            controller: c,
+            sections: derived.sections,
+            media: derived.media,
             density: view.density,
-            tracker: tracker,
+            tracker: widget.tracker,
             selected: view.selected.keys.toSet(),
             selecting: view.selecting,
             onOpen: scope.open,
@@ -82,9 +128,9 @@ class TimelineView extends StatelessWidget {
             onToggleSection: scope.toggleSection,
             wantDays: scope.wantDays,
           ),
-        if (c.destination.isCollection && others.isNotEmpty)
+        if (c.destination.isCollection && derived.others.isNotEmpty)
           DriveList(
-            files: others,
+            files: derived.others,
             controller: c,
             selected: view.selected.keys.toSet(),
             selecting: view.selecting,

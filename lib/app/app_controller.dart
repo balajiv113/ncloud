@@ -1,7 +1,6 @@
 import '../features/backup/background/backup_scheduler.dart';
 import 'dart:async';
 import 'dart:io';
-import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
@@ -9,7 +8,11 @@ import 'package:path_provider/path_provider.dart';
 import '../features/account/account_session.dart';
 import '../features/albums/album_catalogue.dart';
 import '../features/albums/album_members.dart';
+import '../features/timeline/change_detection.dart';
 import '../features/timeline/change_monitor.dart';
+import '../features/timeline/day_batches.dart';
+import '../features/timeline/timeline_fetcher.dart';
+import '../features/timeline/view_query.dart';
 import '../diagnostics.dart';
 import 'status_sink.dart';
 import '../discovery_models.dart';
@@ -36,7 +39,6 @@ export '../features/account/session_store.dart';
 export '../core/thumbnails/preview_batcher.dart' show PreviewCancelled;
 
 /// A fetched index batch or page with its opaque continuation.
-typedef _Page = ({List<CloudFile> files, List<int> days, String? nextCursor});
 
 class AppController extends ChangeNotifier implements StatusSink {
   AppController({
@@ -110,13 +112,21 @@ class AppController extends ChangeNotifier implements StatusSink {
   String? _storeOwner;
   Future<void>? _storeWrite;
   bool _storeDirty = false;
-  final Set<int> _pendingDays = {};
-  bool _fetchingDays = false;
+  final DayRequestQueue _dayRequests = DayRequestQueue();
+  late final TimelineFetcher _fetcher = TimelineFetcher(
+    client: client,
+    cache: cache,
+    staleBefore: () => fileStore.staleBefore,
+  );
 
   /// True while days requested by the scrolling timeline are downloading.
   bool fetchingDays = false;
   MediaListing? _activeListing;
   String? _visibleListingKey;
+
+  /// The remembered listing whose files [_startLoad] already put on screen,
+  /// so restoring it need not replace them with an identical list.
+  MediaListing? _seededFrom;
   bool? timelineIndexAvailable;
   bool get discoveringAlbums => _albums.discovering;
   int get discoveredFolders => _albums.discovered;
@@ -297,7 +307,7 @@ class AppController extends ChangeNotifier implements StatusSink {
       _thumbnails.pause();
     } else {
       _prefetch.schedule();
-      if (!_fetchingDays && _pendingDays.isNotEmpty && error == null) {
+      if (!fetchingDays && _dayRequests.isNotEmpty && error == null) {
         unawaited(_drainDays());
       }
     }
@@ -410,6 +420,8 @@ class AppController extends ChangeNotifier implements StatusSink {
     load: () => load(refresh: false),
     activeListing: () => _activeListing,
     loadNextPage: loadNextPage,
+    loadCatalogue: () =>
+        Future.wait([_albums.load(), _shared.load(), loadPeople()]),
     items: () => items,
     preview: (file) => preview(file),
     storeWritten: () => _storeWrite,
@@ -460,11 +472,7 @@ class AppController extends ChangeNotifier implements StatusSink {
       await _wipeLocalData();
       _loadVersion++;
       _session.invalidate();
-      _changeOwner = null;
-      _changeEtag = null;
-      _lastIndexCheck = null;
-      _pendingChangeHint = false;
-      _pendingChangeIds = {};
+      _forgetChangeTracking();
       _clearPreviews();
       _covers.clear();
       warmUp.cancel();
@@ -475,7 +483,7 @@ class AppController extends ChangeNotifier implements StatusSink {
       fileStore.clear();
       _storeOwner = null;
       _restoringStore = null;
-      _pendingDays.clear();
+      _dayRequests.clear();
       _activeListing = null;
       _visibleListingKey = null;
       _albums.reset();
@@ -523,25 +531,6 @@ class AppController extends ChangeNotifier implements StatusSink {
     name: directory.lastOrNull ?? 'My drive',
     isDirectory: true,
   );
-
-  /// The main timeline resolves paths on demand; albums need paths for their
-  /// sub-folder chips.
-  bool _pathless(Destination currentDestination) =>
-      (activeMapBounds != null ||
-          activePerson != null ||
-          (pathlessTimeline && currentDestination == Destination.timeline)) &&
-      activeCloudAlbum == null;
-
-  /// Metadata-only batches are cheap, so the timeline asks for many more
-  /// photos per request than views that must look up paths.
-  int _dayBatchLimit(Destination currentDestination) =>
-      _pathless(currentDestination) ? 1500 : 200;
-
-  bool _recursiveMedia(Destination currentDestination, List<String> path) =>
-      activeMapBounds != null ||
-      activePerson != null ||
-      currentDestination != Destination.albums ||
-      !listEquals(path, photoRoot);
 
   Future<void> openMapArea(List<PhotoMapBounds> bounds) {
     if (bounds.isEmpty) throw const FormatException('Choose a map area.');
@@ -645,12 +634,16 @@ class AppController extends ChangeNotifier implements StatusSink {
     error = null;
     if (!keepItems) _activeListing = null;
     _timelineChanges = null;
-    _pendingDays.clear();
+    _dayRequests.clear();
+    _seededFrom = null;
     if (!keepItems) {
       final previous = _listings[run.listingKey];
-      items = previous != null
+      _seededFrom = previous;
+      items = run.view is AlbumHomeTarget
+          ? []
+          : previous != null
           ? fileStore.resolve(previous.keys)
-          : _seed(run.destination, run.path, run.view.serverAlbum);
+          : _seed(_queryFor(run.view));
       if (run.destination == Destination.drive &&
           !FileStore.validChildren(run.path, items)) {
         items = [];
@@ -694,7 +687,9 @@ class AppController extends ChangeNotifier implements StatusSink {
       items = [];
     }
     if (previous != null && known!.length == previous.keys.length) {
-      items = known;
+      if (!identical(previous, _seededFrom) || items.length != known.length) {
+        items = known;
+      }
       refreshing = true;
       _hydrate(items.take(_hydrateLimit));
       notifyListeners();
@@ -719,7 +714,7 @@ class AppController extends ChangeNotifier implements StatusSink {
                     pathStartsWith(file.path, run.path))
                   file.key: file,
             }.values.toList()
-          : cached ?? _seed(run.destination, run.path, run.view.serverAlbum);
+          : cached ?? _seed(_queryFor(run.view));
       if (seed.isNotEmpty && !keepItems) {
         items = seed;
         refreshing = true;
@@ -821,25 +816,22 @@ class AppController extends ChangeNotifier implements StatusSink {
         run.destination != Destination.sharedFolder) {
       listing.days = view is TimelineTarget && _initialDays != null
           ? _initialDays
-          : (await client.timeline(
-              session,
-              TimelineQuery(
-                path: run.path,
-                favorites: run.destination == Destination.favorites,
-                recursive: _recursiveMedia(run.destination, run.path),
-                person: view.person,
-                mapBounds: view.mapBounds,
-              ),
-            ))?.days;
+          : (await client.timeline(session, _queryFor(view).index))?.days;
       if (!_isCurrent(run)) return false;
       _initialDays = null;
     }
     listing.more = true;
     _reuseLoadedDays(listing, cached);
     if (listing.loaded.isEmpty) {
-      final page = await _nextPage(listing, session, run.destination, run.path);
+      final query = _queryFor(view);
+      final page = await _fetcher.next(
+        listing,
+        session,
+        query,
+        _storeKey(session),
+      );
       if (!_isCurrent(run)) return false;
-      _mergePage(listing, page);
+      _mergePage(listing, page, query);
     }
     return true;
   }
@@ -877,21 +869,19 @@ class AppController extends ChangeNotifier implements StatusSink {
 
   /// Files the shared store already knows for a view, shown instantly while
   /// the server confirms the authoritative list.
-  List<CloudFile> _seed(
-    Destination destination,
-    List<String> path,
-    CloudAlbum? native,
-  ) {
-    if (native != null ||
-        activePerson != null ||
-        activeMapBounds != null ||
+  List<CloudFile> _seed(ViewQuery query) {
+    final destination = query.destination;
+    final path = query.path;
+    if (query.target.serverAlbum != null ||
+        query.target.person != null ||
+        query.target.mapBounds != null ||
         destination == Destination.offline) {
       return [];
     }
     if (destination == Destination.drive) {
       return fileStore.folder(path, fresh: false) ?? [];
     }
-    final recursive = _recursiveMedia(destination, path);
+    final recursive = query.recursive;
     return fileStore.where(
       (f) =>
           f.isMedia &&
@@ -1028,142 +1018,26 @@ class AppController extends ChangeNotifier implements StatusSink {
     }
   }
 
-  /// Fetches the next unloaded days (or server page) without changing
-  /// [listing]; the caller merges the result only if it is still current.
-  Future<_Page> _nextPage(
-    MediaListing listing,
-    Account session,
-    Destination currentDestination,
-    List<String> path,
-  ) async {
-    final recursive = _recursiveMedia(currentDestination, path);
-    final person = activePerson;
-    final mapBounds = activeMapBounds;
-    if (listing.days case final days?) {
-      final ids = <int>[];
-      var count = 0;
-      final limit = _dayBatchLimit(currentDestination);
-      for (final day in days) {
-        if (listing.loaded.contains(day.id)) continue;
-        if (ids.length >= 120 ||
-            (ids.isNotEmpty && count + day.count > limit)) {
-          break;
-        }
-        ids.add(day.id);
-        count += day.count;
-      }
-      if (ids.isEmpty) {
-        return (files: <CloudFile>[], days: ids, nextCursor: null);
-      }
-      final cached = await _cachedDayFiles(
-        listing,
-        session,
-        ids,
-        currentDestination,
-        path,
-      );
-      final files =
-          cached ??
-          (await client.timeline(
-            session,
-            TimelineQuery(
-              dayIds: ids,
-              path: path,
-              favorites: currentDestination == Destination.favorites,
-              recursive: recursive,
-              resolvePaths: mapBounds == null && !_pathless(currentDestination),
-              person: person,
-              mapBounds: mapBounds,
-            ),
-          ))!.items!;
-      return (files: files, days: ids, nextCursor: null);
-    }
-    final page = (await client.timeline(
-      session,
-      TimelineQuery.page(
-        favorites: currentDestination == Destination.favorites,
-        path: path,
-        cursor: listing.cursor,
-        recursive: recursive,
-      ),
-    ))!;
-    if (page.nextCursor != null && page.nextCursor == listing.cursor) {
-      throw const CloudException(
-        'The server repeated a page. Pull to refresh your library.',
-      );
-    }
-    final existing = listing.keys.toSet();
-    if (page.items!.isNotEmpty &&
-        page.items!.every((f) => existing.contains(f.key))) {
-      throw const CloudException(
-        'The server repeated a page. Pull to refresh your library.',
-      );
-    }
-    return (files: page.items!, days: <int>[], nextCursor: page.nextCursor);
-  }
+  ViewQuery _queryFor(BrowseTarget view) =>
+      ViewQuery(view, pathlessTimeline: pathlessTimeline, photoRoot: photoRoot);
 
-  Future<List<CloudFile>?> _cachedDayFiles(
-    MediaListing listing,
-    Account session,
-    List<int> days,
-    Destination currentDestination,
-    List<String> path,
-  ) async {
-    if (cache == null ||
-        !listing.allowCachedDays ||
-        currentDestination != Destination.timeline ||
-        path.isNotEmpty ||
-        activeCloudAlbum != null ||
-        activePerson != null ||
-        activeMapBounds != null ||
-        listing.updated.isBefore(fileStore.staleBefore) ||
-        days.any(listing.staleDays.contains)) {
-      return null;
-    }
-    final saved = await cache!.readDayFiles(
-      _storeKey(session),
-      days,
-      freshSince: fileStore.staleBefore,
-    );
-    final counts = <int, int>{};
-    for (final file in saved) {
-      if (file.captureDay case final day?) {
-        counts[day] = (counts[day] ?? 0) + 1;
-      }
-    }
-    final expected = {for (final day in listing.days!) day.id: day.count};
-    return days.every((day) => counts[day] == expected[day]) ? saved : null;
-  }
+  ViewQuery get _query => _queryFor(target);
 
-  void _mergePage(MediaListing listing, _Page page) {
-    if (page.days.isNotEmpty) {
-      final days = page.days.toSet();
-      final previous = {
-        for (final key in listing.keys)
-          if (days.contains(fileStore[key]?.captureDay)) key,
-      };
-      if (destination == Destination.timeline &&
-          directory.isEmpty &&
-          activeCloudAlbum == null &&
-          activePerson == null &&
-          activeMapBounds == null) {
-        final returned = page.files.map((file) => file.key).toSet();
-        final gone = previous.difference(returned);
-        fileStore.removeKeys(gone);
-        for (final cached in _listings.values) {
-          cached.replace(const {}, gone);
-        }
+  /// Whether the loaded view is still the one a request was made for.
+  bool _stillShowing(MediaListing listing, Account session, int version) =>
+      !_disposed &&
+      version == _loadVersion &&
+      account == session &&
+      identical(_activeListing, listing);
+
+  /// Merges a fetched batch into [listing] and shows it.
+  void _mergePage(MediaListing listing, FetchedPage page, ViewQuery query) {
+    final gone = listing.merge(fileStore, page);
+    if (query.isMainTimeline && gone.isNotEmpty) {
+      fileStore.removeKeys(gone);
+      for (final cached in _listings.values) {
+        cached.replace(const {}, gone);
       }
-      listing.replace(const {}, previous);
-      listing.staleDays.removeAll(days);
-    }
-    listing.add(fileStore, page.files);
-    if (listing.days case final days?) {
-      listing.loaded.addAll(page.days);
-      listing.more = days.any((d) => !listing.loaded.contains(d.id));
-    } else {
-      listing.cursor = page.nextCursor;
-      listing.more = page.nextCursor != null;
     }
   }
 
@@ -1188,22 +1062,25 @@ class AppController extends ChangeNotifier implements StatusSink {
     if (listing == null ||
         session == null ||
         !listing.more ||
-        loading ||
-        loadingMore ||
+        _fetchingAny ||
         busy ||
         error != null) {
       return;
     }
     final version = _loadVersion;
-    final currentDestination = destination;
-    final path = [...directory];
+    final query = _query;
     final key = _listingKey();
     loadingMore = true;
     notifyListeners();
     try {
-      final page = await _nextPage(listing, session, currentDestination, path);
+      final page = await _fetcher.next(
+        listing,
+        session,
+        query,
+        _storeKey(session),
+      );
       if (version != _loadVersion || account != session || _disposed) return;
-      _mergePage(listing, page);
+      _mergePage(listing, page, query);
       await _publishListing(listing, key);
     } catch (e) {
       if (version == _loadVersion) error = errorMessage(e);
@@ -1215,18 +1092,24 @@ class AppController extends ChangeNotifier implements StatusSink {
     }
   }
 
+  bool get _fetchingAny => loading || loadingMore || fetchingDays;
+
+  /// Changes whenever a day of the current view is loaded, dropped or marked
+  /// stale, so views can tell when what they derived from the index is out of
+  /// date.
+  ({int loaded, int stale}) get dayLoadState => (
+    loaded: _activeListing?.loaded.length ?? 0,
+    stale: _activeListing?.staleDays.length ?? 0,
+  );
+
   /// Whether the photos of an indexed day are already in the current view.
   bool dayLoaded(int day) => _activeListing?.loaded.contains(day) ?? true;
   bool dayNeedsRefresh(int day) =>
       _activeListing?.staleDays.contains(day) ?? false;
 
-  /// Loads specific indexed days, such as those the timeline scrolled or was
-  /// scrubbed to. The most recently requested days load first and requests
-  /// left far behind by a fast scrub are dropped.
   ({List<TimelineDay> days, Set<int> changed, int added})? _timelineChanges;
   bool _checkingChanges = false;
-  bool _pendingChangeHint = false;
-  Set<String>? _pendingChangeIds = {};
+  final ChangeHints _hints = ChangeHints();
   String? _changeOwner;
   String? _changeEtag;
   DateTime? _lastIndexCheck;
@@ -1237,159 +1120,40 @@ class AppController extends ChangeNotifier implements StatusSink {
   /// Photos added on the server since the Timeline was shown.
   int get newPhotos => _timelineChanges?.added ?? 0;
 
-  /// Unchanged trees cost one depth-zero etag request, not a library scan.
+  void _forgetChangeTracking() {
+    _changeOwner = null;
+    _changeEtag = null;
+    _lastIndexCheck = null;
+    _hints.clear();
+  }
+
+  /// Compares the server with what is shown. Unchanged trees cost one
+  /// depth-zero etag request, not a library scan. [changedFileIds] says which
+  /// files a push named, and only counts together with [force].
   Future<bool> checkForChanges({
     Set<String>? changedFileIds,
     bool force = false,
   }) async {
-    if (force) {
-      _pendingChangeHint = true;
-      if (changedFileIds == null) {
-        _pendingChangeIds = null;
-      } else {
-        _pendingChangeIds?.addAll(changedFileIds);
-      }
-    }
-    final listing = _activeListing;
+    if (force) _hints.add(changedFileIds);
     final session = account;
-    final shown = listing?.days;
     if (_checkingChanges ||
         session == null ||
-        loading ||
-        loadingMore ||
-        fetchingDays ||
+        _fetchingAny ||
         busy ||
         !_browsingActive) {
       return false;
     }
-    force = force || _pendingChangeHint;
-    if (_pendingChangeHint) changedFileIds = _pendingChangeIds;
-    _pendingChangeHint = false;
-    _pendingChangeIds = {};
+    final hint = _hints.take();
     _checkingChanges = true;
-    final loadVersion = _loadVersion;
     try {
-      final owner = 'changes-v1|${session.storageKey}';
-      if (_changeOwner != owner) {
-        _changeOwner = owner;
-        _changeEtag = (await cache?.readDocument(owner))?['etag'] as String?;
-        _lastIndexCheck = null;
-      }
-      final etag = (await client.listFolder(
-        session,
-        const [],
-        metadataOnly: true,
-      )).revision;
-      if (_disposed || account != session) return false;
-      if (loadVersion != _loadVersion ||
-          loading ||
-          loadingMore ||
-          fetchingDays) {
-        if (force) {
-          _pendingChangeHint = true;
-          if (changedFileIds == null) {
-            _pendingChangeIds = null;
-          } else {
-            _pendingChangeIds?.addAll(changedFileIds);
-          }
-        }
+      final found = await _compareWithServer(session, hint);
+      if (found == null) {
+        if (hint != null) _hints.add(hint.ids);
         return false;
       }
-      final treeChanged =
-          force || (etag != null && _changeEtag != null && etag != _changeEtag);
-      final indexDue =
-          _lastIndexCheck == null ||
-          DateTime.now().difference(_lastIndexCheck!) >=
-              const Duration(minutes: 15);
-      final metadataSweep = indexDue && _lastIndexCheck != null;
-      if (!treeChanged && etag != null && etag == _changeEtag && !indexDue) {
-        return false;
-      }
-      if (treeChanged) {
-        _fileResolver.clear();
-        await cache?.invalidateListings(_storeKey(session));
-        await _invalidateBrowse();
-        final ids = changedFileIds;
-        final hinted = ids == null
-            ? <CloudFile>[]
-            : fileStore.where((file) => ids.contains(file.id));
-        final knownIds = hinted.map((file) => file.id).toSet();
-        final precise =
-            ids != null &&
-            ids.isNotEmpty &&
-            ids.every(knownIds.contains) &&
-            hinted.every((file) => file.captureDay != null);
-        final hintedDays = hinted.map((file) => file.captureDay).toSet();
-        for (final cached in _listings.values) {
-          cached.staleDays.addAll(
-            precise ? cached.loaded.where(hintedDays.contains) : cached.loaded,
-          );
-        }
-      }
-      if (metadataSweep && !treeChanged) {
-        listing?.staleDays.addAll(listing.loaded);
-      }
-      if (destination != Destination.timeline ||
-          shown == null ||
-          activeCloudAlbum != null) {
-        if (treeChanged || metadataSweep) await load(refresh: true);
-        if (_disposed || account != session || error != null) return false;
-        _changeEtag = etag;
-        _lastIndexCheck = DateTime.now();
-        await cache?.writeDocument(owner, {'etag': etag});
-        return treeChanged || metadataSweep;
-      }
-      final path = [...directory];
-      final days = (await client.timeline(
-        session,
-        TimelineQuery(
-          path: path,
-          recursive: _recursiveMedia(Destination.timeline, path),
-        ),
-      ))?.days;
-      if (days == null ||
-          _disposed ||
-          account != session ||
-          !identical(listing, _activeListing)) {
-        return false;
-      }
-      _lastIndexCheck = DateTime.now();
-      final before = {for (final day in shown) day.id: day.count};
-      final after = {for (final day in days) day.id: day.count};
-      final changed = {
-        for (final id in {...before.keys, ...after.keys})
-          if (before[id] != after[id]) id,
-      };
-      if (treeChanged || metadataSweep) {
-        listing!.staleDays.addAll(changed.where(listing.loaded.contains));
-      }
-      _changeEtag = etag;
-      await cache?.writeDocument(owner, {'etag': etag});
-      if (changed.isEmpty) {
-        if (treeChanged || metadataSweep) {
-          _persistStore();
-          await cache?.writeDocument(_listingKey()!, listing!.toJson());
-          notifyListeners();
-        }
-        return treeChanged || metadataSweep;
-      }
-      int total(Map<int, int> counts) => counts.values.fold(0, (a, b) => a + b);
-      _timelineChanges = (
-        days: days,
-        changed: changed,
-        added: math.max(0, total(after) - total(before)),
-      );
-      notifyListeners();
-      return true;
+      return found;
     } catch (e) {
-      if (force) {
-        _pendingChangeHint = true;
-        if (changedFileIds == null) {
-          _pendingChangeIds = null;
-        } else {
-          _pendingChangeIds?.addAll(changedFileIds);
-        }
-      }
+      if (hint != null) _hints.add(hint.ids);
       if (!_disposed && account == session) {
         notice = 'Could not check for library updates. ${errorMessage(e)}';
         notifyListeners();
@@ -1397,6 +1161,93 @@ class AppController extends ChangeNotifier implements StatusSink {
       rethrow;
     } finally {
       _checkingChanges = false;
+    }
+  }
+
+  /// Returns whether something changed, or null when the check could not
+  /// finish because the view moved on and should be repeated.
+  Future<bool?> _compareWithServer(
+    Account session,
+    ({Set<String>? ids})? hint,
+  ) async {
+    final listing = _activeListing;
+    final loadVersion = _loadVersion;
+    final owner = 'changes-v1|${session.storageKey}';
+    if (_changeOwner != owner) {
+      _changeOwner = owner;
+      _changeEtag = (await cache?.readDocument(owner))?['etag'] as String?;
+      _lastIndexCheck = null;
+    }
+    final etag = (await client.listFolder(
+      session,
+      const [],
+      metadataOnly: true,
+    )).revision;
+    if (_disposed || account != session) return false;
+    if (loadVersion != _loadVersion || _fetchingAny) return null;
+    final plan = planCheck(
+      force: hint != null,
+      etag: etag,
+      knownEtag: _changeEtag,
+      lastIndexCheck: _lastIndexCheck,
+      now: DateTime.now(),
+    );
+    if (plan.idle) return false;
+    if (plan.treeChanged) {
+      await _invalidateAfterTreeChange(session, hint?.ids);
+    } else if (plan.metadataSweep) {
+      listing?.markStale();
+    }
+    Future<void> remember() async {
+      _changeEtag = etag;
+      await cache?.writeDocument(owner, {'etag': etag});
+    }
+
+    final shown = listing?.days;
+    if (listing == null || shown == null || target is! TimelineTarget) {
+      if (plan.stale) await load(refresh: true);
+      if (_disposed || account != session || error != null) return false;
+      _lastIndexCheck = DateTime.now();
+      await remember();
+      return plan.stale;
+    }
+    final days = (await client.timeline(session, _query.index))?.days;
+    if (days == null || !_stillShowing(listing, session, loadVersion)) {
+      return false;
+    }
+    _lastIndexCheck = DateTime.now();
+    final changes = diffDays(shown, days);
+    if (plan.stale && changes != null) listing.markStale(only: changes.days);
+    await remember();
+    if (changes == null) {
+      if (plan.stale) {
+        _persistStore();
+        await cache?.writeDocument(_listingKey()!, listing.toJson());
+        notifyListeners();
+      }
+      return plan.stale;
+    }
+    _timelineChanges = (
+      days: days,
+      changed: changes.days,
+      added: changes.added,
+    );
+    notifyListeners();
+    return true;
+  }
+
+  /// A changed tree makes everything cached about it suspect; only the days
+  /// a push named stay trusted when it named files this device knows.
+  Future<void> _invalidateAfterTreeChange(
+    Account session,
+    Set<String>? hintedIds,
+  ) async {
+    _fileResolver.clear();
+    await cache?.invalidateListings(_storeKey(session));
+    await _invalidateBrowse();
+    final days = hintedDays(hintedIds, fileStore.where((_) => true));
+    for (final cached in _listings.values) {
+      cached.markStale(only: days);
     }
   }
 
@@ -1410,26 +1261,14 @@ class AppController extends ChangeNotifier implements StatusSink {
       notifyListeners();
       return;
     }
-    final reload = changes.changed.where(listing.loaded.contains).toList();
-    listing.staleDays.addAll(changes.changed);
-    final removed = changes.changed.difference(
-      changes.days.map((day) => day.id).toSet(),
-    );
-    listing.loaded.removeAll(removed);
-    listing.staleDays.removeAll(removed);
-    listing.replace(const {}, {
-      for (final key in listing.keys)
-        if (removed.contains(fileStore[key]?.captureDay)) key,
-    });
-    listing.days = changes.days;
-    listing.more = changes.days.any((d) => !listing.loaded.contains(d.id));
-    listing.updated = DateTime.now();
+    final reload = listing.applyIndex(fileStore, changes.days, changes.changed);
     unawaited(_publishListing(listing, _listingKey()));
     notifyListeners();
-    final present = {for (final day in changes.days) day.id};
-    ensureDays(reload.where(present.contains));
+    ensureDays(reload);
   }
 
+  /// Loads specific indexed days, such as those the timeline scrolled or was
+  /// scrubbed to.
   void ensureDays(Iterable<int> days) {
     final listing = _activeListing;
     if (loading || listing?.days == null || account == null || error != null) {
@@ -1439,105 +1278,61 @@ class AppController extends ChangeNotifier implements StatusSink {
       if (listing!.loaded.contains(day) && !listing.staleDays.contains(day)) {
         continue;
       }
-      _pendingDays
-        ..remove(day)
-        ..add(day);
+      _dayRequests.request(day);
     }
-    while (_pendingDays.length > 60) {
-      _pendingDays.remove(_pendingDays.first);
-    }
-    if (_browsingActive && !_fetchingDays && _pendingDays.isNotEmpty) {
+    if (_browsingActive && !fetchingDays && _dayRequests.isNotEmpty) {
       unawaited(_drainDays());
     }
   }
 
   Future<void> _drainDays() async {
-    _fetchingDays = true;
     fetchingDays = true;
     notifyListeners();
     MediaListing? requestListing;
     Account? requestSession;
     var requestVersion = _loadVersion;
     try {
-      while (_pendingDays.isNotEmpty && !_disposed && _browsingActive) {
+      while (_dayRequests.isNotEmpty && !_disposed && _browsingActive) {
         final listing = _activeListing;
         final session = account;
         final days = listing?.days;
         if (listing == null || session == null || days == null) break;
-        final counts = {for (final day in days) day.id: day.count};
-        final batch = <int>[];
-        var count = 0;
-        final limit = _dayBatchLimit(destination);
-        for (final day in _pendingDays.toList().reversed) {
-          final size = counts[day];
-          if (size == null ||
-              (listing.loaded.contains(day) &&
-                  !listing.staleDays.contains(day))) {
-            _pendingDays.remove(day);
-            continue;
-          }
-          if (batch.isNotEmpty && count + size > limit) break;
-          batch.add(day);
-          count += size;
-        }
-        _pendingDays.removeAll(batch);
+        final query = _query;
+        final batch = _dayRequests.takeBatch(
+          counts: {for (final day in days) day.id: day.count},
+          needed: (day) =>
+              !listing.loaded.contains(day) || listing.staleDays.contains(day),
+          limit: query.dayBatchLimit,
+        );
         if (batch.isEmpty) continue;
-        final version = _loadVersion;
-        requestVersion = version;
+        requestVersion = _loadVersion;
         requestListing = listing;
         requestSession = session;
-        final currentDestination = destination;
-        final path = [...directory];
         final key = _listingKey();
-        final person = activePerson;
-        final mapBounds = activeMapBounds;
-        final cached = await _cachedDayFiles(
+        final page = await _fetcher.fetchDays(
           listing,
           session,
+          query,
           batch,
-          currentDestination,
-          path,
+          _storeKey(session),
         );
-        final files =
-            cached ??
-            (await client.timeline(
-              session,
-              TimelineQuery(
-                dayIds: batch,
-                path: path,
-                favorites: currentDestination == Destination.favorites,
-                recursive: _recursiveMedia(currentDestination, path),
-                resolvePaths:
-                    mapBounds == null && !_pathless(currentDestination),
-                person: person,
-                mapBounds: mapBounds,
-              ),
-            ))!.items!;
-        if (version != _loadVersion ||
-            account != session ||
-            _disposed ||
-            !identical(_activeListing, listing)) {
-          continue;
-        }
-        _mergePage(listing, (files: files, days: batch, nextCursor: null));
+        if (!_stillShowing(listing, session, requestVersion)) continue;
+        _mergePage(listing, page, query);
         await _publishListing(listing, key);
         notifyListeners();
       }
     } catch (e) {
-      if (!_disposed &&
-          requestVersion == _loadVersion &&
-          account == requestSession &&
-          identical(requestListing, _activeListing)) {
+      if (requestListing != null &&
+          _stillShowing(requestListing, requestSession!, requestVersion)) {
         error ??= errorMessage(e);
-        _pendingDays.clear();
+        _dayRequests.clear();
       }
     } finally {
-      _fetchingDays = false;
       fetchingDays = false;
       notifyListeners();
       if (!_disposed &&
           _browsingActive &&
-          _pendingDays.isNotEmpty &&
+          _dayRequests.isNotEmpty &&
           error == null) {
         unawaited(_drainDays());
       }
@@ -1804,7 +1599,7 @@ class AppController extends ChangeNotifier implements StatusSink {
     loading = false;
     refreshing = false;
     loadingMore = false;
-    _pendingDays.clear();
+    _dayRequests.clear();
     _initialDays = null;
     _detectingTimelineIndex = null;
     _clearPreviews();
