@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 
+import 'album_folders.dart';
 import 'device_library.dart';
 
 void checkSyncPath(List<String> path) {
@@ -90,6 +91,10 @@ class NativeFolderAccess
   /// The library as last listed, so the folders below the top are answered
   /// without asking the phone again.
   LibraryTree? _tree;
+
+  /// The whole iPhone library with album folders, as last listed.
+  AlbumFolderTree? _albumTree;
+  String? _albumTreeToken;
   List<List<String>> _skipped = const [];
 
   @override
@@ -229,6 +234,11 @@ class NativeFolderAccess
   @override
   Future<List<DeviceEntry>> list(String token, List<String> path) async {
     if (token == DeviceFolder.libraryToken) return _listLibrary(path);
+    if (token.startsWith('photoset:')) return _listAlbumFolders(token, path);
+    return _nativeList(token, path);
+  }
+
+  Future<List<DeviceEntry>> _nativeList(String token, List<String> path) async {
     checkSyncPath(path);
     final values = await channel.invokeListMethod<dynamic>('list', {
       'token': token,
@@ -240,6 +250,34 @@ class NativeFolderAccess
     return [for (final value in values) _entry(value as Map<dynamic, dynamic>)];
   }
 
+  /// Lists the library once for each chosen album and once for everything,
+  /// and gives every photo to the first album that holds it. The listing is
+  /// read again whenever the top is listed, which is where a run starts.
+  Future<List<DeviceEntry>> _listAlbumFolders(
+    String token,
+    List<String> path,
+  ) async {
+    if (path.isEmpty || _albumTree == null || _albumTreeToken != token) {
+      final albums = albumsOf(token)!;
+      final lists = <List<DeviceEntry>>[];
+      final kept = <AlbumChoice>[];
+      for (final album in albums) {
+        try {
+          lists.add(await _nativeList(album.token, const []));
+          kept.add(album);
+        } on PlatformException catch (error) {
+          // An album that was deleted on the phone has nothing to back up; its
+          // photos are listed with the rest. Anything else is a real problem.
+          if (error.code != 'photos_album') rethrow;
+        }
+      }
+      final library = await _nativeList(cameraRollToken, const []);
+      _albumTree = AlbumFolderTree(kept, lists, library);
+      _albumTreeToken = token;
+    }
+    return _albumTree!.children(path);
+  }
+
   @override
   Future<File> export(
     String token,
@@ -249,6 +287,23 @@ class NativeFolderAccess
     if (token == DeviceFolder.libraryToken) {
       return _exportLibrary(path, expected);
     }
+    if (token.startsWith('photoset:')) {
+      final tree = _albumTree;
+      if (tree == null || _albumTreeToken != token) {
+        throw StateError('The photo library changed. Scan again.');
+      }
+      return _exportNative(tree.tokenFor(path) ?? cameraRollToken, [
+        path.last,
+      ], expected);
+    }
+    return _exportNative(token, path, expected);
+  }
+
+  Future<File> _exportNative(
+    String token,
+    List<String> path,
+    DeviceEntry expected,
+  ) async {
     checkSyncPath(path);
     final file = await channel.invokeMethod<String>('export', {
       'token': token,
