@@ -48,8 +48,13 @@ List<TimelineSection> buildTimelineSections({
   required String Function(DateTime? date) labelFor,
 }) {
   final sections = <TimelineSection>[];
+  // Formatting a date is slow and thousands of photos share each day.
+  final labels = <int, String>{};
   void add(DateTime? date, List<CloudFile> files, int expected, int? pending) {
-    final label = labelFor(date);
+    final label = labels.putIfAbsent(
+      date == null ? -1 : date.year * 10000 + date.month * 100 + date.day,
+      () => labelFor(date),
+    );
     var section = sections.lastOrNull;
     if (section == null || section.label != label) {
       section = TimelineSection(label: label, date: date);
