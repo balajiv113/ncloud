@@ -536,6 +536,14 @@ class FolderSyncController extends ChangeNotifier {
     _notify();
   }
 
+  /// Deletes the account's backup records and any staged transfer files.
+  /// Call after [disconnect], while the account is still known.
+  Future<void> wipe() async {
+    final owner = _owner ?? _accountKey;
+    if (owner != null) await journal.clearAccount(owner);
+    await access.clearStaging();
+  }
+
   Future<void> run(FolderPair pair, {bool headless = false}) async {
     if (_running != null || _disposed || (!_foreground && !headless)) return;
     final session = account();

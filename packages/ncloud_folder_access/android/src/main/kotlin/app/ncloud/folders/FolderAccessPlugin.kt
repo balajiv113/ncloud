@@ -129,6 +129,12 @@ class FolderAccessPlugin : FlutterPlugin, ActivityAware, PluginRegistry.Activity
                                 check(!file.exists() || file.delete()) { "Could not remove transfer file." }
                                 null
                             }
+                            "clearStaging" -> {
+                                stageRoot.listFiles()?.filter { it.isFile }?.forEach {
+                                    check(it.delete()) { "Could not remove transfer file." }
+                                }
+                                null
+                            }
                             else -> {
                                 val token = Uri.parse(call.argument<String>("token")!!)
                                 val path = call.argument<List<String>>("path")!!

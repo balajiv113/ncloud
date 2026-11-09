@@ -299,6 +299,25 @@ class SyncJournal {
     await txn.delete('pairs', where: 'id=?', whereArgs: [id]);
   });
 
+  /// Removes every folder pair, receipt and run state of [account], and its
+  /// enabled flag, as when the account signs out.
+  Future<void> clearAccount(String account) async => (await db).transaction((
+    txn,
+  ) async {
+    for (final row in await txn.query(
+      'pairs',
+      columns: ['id'],
+      where: 'account=?',
+      whereArgs: [account],
+    )) {
+      final id = row['id'] as String;
+      await txn.delete('run_state', where: 'pair=?', whereArgs: [id]);
+      await txn.delete('receipts', where: 'pair=?', whereArgs: [id]);
+      await txn.delete('pairs', where: 'id=?', whereArgs: [id]);
+    }
+    await txn.delete('sync_sessions', where: 'account=?', whereArgs: [account]);
+  });
+
   Future<void> close() async {
     await _opening;
     await _database?.close();

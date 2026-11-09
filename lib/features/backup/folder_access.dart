@@ -59,6 +59,9 @@ abstract interface class FolderAccess {
   Future<File> stage();
   Future<DeviceEntry> import(String token, List<String> path, File staged);
   Future<void> discard(File staged);
+
+  /// Deletes every staged transfer file, such as when the account signs out.
+  Future<void> clearStaging();
   Future<SyncConditions> conditions();
 }
 
@@ -185,4 +188,7 @@ class NativeFolderAccess implements FolderAccess, PhotoAlbumAccess {
   @override
   Future<void> discard(File staged) =>
       channel.invokeMethod<void>('discard', {'staged': staged.path});
+
+  @override
+  Future<void> clearStaging() => channel.invokeMethod<void>('clearStaging');
 }

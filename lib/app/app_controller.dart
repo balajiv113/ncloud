@@ -417,21 +417,47 @@ class AppController extends ChangeNotifier implements StatusSink {
     onChanged: notifyListeners,
   );
 
+  /// Removes everything the signed-in account left on the device: the saved
+  /// login, backup records and staged transfer files, downloads, and the
+  /// browsing cache. Every part runs even if an earlier one fails; the first
+  /// failure is rethrown afterwards.
+  Future<void> _wipeLocalData() async {
+    Object? failure;
+    Future<void> step(Future<void> Function() part) async {
+      try {
+        await part();
+      } catch (e) {
+        failure ??= e;
+      }
+    }
+
+    final backup = _folderSync;
+    if (backup != null) {
+      await step(backup.disconnect);
+      await step(backup.wipe);
+    }
+    await step(store.clear);
+    await step(() async {
+      final downloads = Directory(
+        '${(await getTemporaryDirectory()).path}/ncloud-downloads',
+      );
+      if (await downloads.exists()) await downloads.delete(recursive: true);
+    });
+    await step(() async {
+      _storeOwner = null;
+      await _storeWrite;
+    });
+    await step(() async => await cache?.clearAll());
+    if (failure != null) throw failure!;
+  }
+
   Future<void> signOut() async {
     if (busy || _session.saving) return;
     busy = true;
     error = null;
     notifyListeners();
     try {
-      await _folderSync?.disconnect();
-      await store.clear();
-      final downloads = Directory(
-        '${(await getTemporaryDirectory()).path}/ncloud-downloads',
-      );
-      if (await downloads.exists()) await downloads.delete(recursive: true);
-      _storeOwner = null;
-      await _storeWrite;
-      await cache?.clearAll();
+      await _wipeLocalData();
       _loadVersion++;
       _session.invalidate();
       _changeOwner = null;
