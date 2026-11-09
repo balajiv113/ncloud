@@ -1,7 +1,12 @@
 /// Calendar schedules follow the device's current local timezone. A wall date
 /// identifies an occurrence, so the repeated DST hour never runs twice.
 class BackupSchedule {
-  BackupSchedule({required this.created, this.hour = 2, this.minute = 0}) {
+  BackupSchedule({
+    required this.created,
+    this.hour = 2,
+    this.minute = 0,
+    this.onNewPhotos = false,
+  }) {
     if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
       throw const FormatException('Choose a valid daily backup time.');
     }
@@ -9,6 +14,10 @@ class BackupSchedule {
 
   final DateTime created;
   final int hour, minute;
+
+  /// Also back up soon after photos or videos are added (Android), not only at
+  /// the daily time.
+  final bool onNewPhotos;
 
   /// A daily schedule at [hour]:[minute]. Editing other settings of a pair
   /// that keeps its time ([previous]) keeps its creation time too, so
@@ -18,6 +27,7 @@ class BackupSchedule {
     int minute, {
     BackupSchedule? previous,
     DateTime? now,
+    bool onNewPhotos = false,
   }) => BackupSchedule(
     created:
         previous != null && previous.hour == hour && previous.minute == minute
@@ -25,6 +35,7 @@ class BackupSchedule {
         : now ?? DateTime.now(),
     hour: hour,
     minute: minute,
+    onNewPhotos: onNewPhotos,
   );
 
   DateTime _calendar(DateTime now, int offset) =>
@@ -61,10 +72,12 @@ class BackupSchedule {
     'created': created.toUtc().toIso8601String(),
     'hour': hour,
     'minute': minute,
+    'onNewPhotos': onNewPhotos,
   };
   factory BackupSchedule.fromJson(Map<String, dynamic> value) => BackupSchedule(
     created: DateTime.parse(value['created'] as String),
     hour: value['hour'] as int,
     minute: value['minute'] as int,
+    onNewPhotos: value['onNewPhotos'] == true,
   );
 }

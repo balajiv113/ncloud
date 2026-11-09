@@ -125,6 +125,73 @@ void main() {
     await root.delete(recursive: true);
   });
 
+  group('backing up when new photos arrive', () {
+    BackupSchedule withTrigger({bool on = true}) =>
+        BackupSchedule(created: created, hour: 10, minute: 20, onNewPhotos: on);
+
+    test('the choice is saved and survives editing other settings', () {
+      expect(withTrigger().onNewPhotos, isTrue);
+      expect(schedule().onNewPhotos, isFalse);
+      expect(
+        BackupSchedule.fromJson(withTrigger().toJson()).onNewPhotos,
+        isTrue,
+      );
+      expect(
+        BackupSchedule.fromJson({
+          'created': created.toIso8601String(),
+          'hour': 1,
+          'minute': 0,
+        }).onNewPhotos,
+        isFalse,
+        reason: 'older saved schedules have no such choice',
+      );
+      expect(
+        BackupSchedule.forTime(10, 20, onNewPhotos: true).onNewPhotos,
+        isTrue,
+      );
+    });
+
+    test('a change runs the backup even when no daily time is due', () async {
+      await device.put('a.jpg', 'one');
+      final pair = await add(value: withTrigger());
+      await runner().run(pair.id, pair.revision);
+      expect(cloud.uploads, 1);
+      // Today's occurrence is used up, so a plain run does nothing...
+      await device.put('b.jpg', 'two');
+      await runner().run(pair.id, pair.revision);
+      expect(cloud.uploads, 1);
+      // ...but a new photo is picked up at once.
+      await runner().run(pair.id, pair.revision, onChange: true);
+      expect(cloud.uploads, 2);
+    });
+
+    test('a change does not use up the daily occurrence', () async {
+      await device.put('a.jpg', 'one');
+      final pair = await add(value: withTrigger());
+      await runner().run(pair.id, pair.revision, onChange: true);
+      expect(cloud.uploads, 1);
+      expect((await journal.state(pair.id))['slot'], isNull);
+      await device.put('b.jpg', 'two');
+      await runner().run(pair.id, pair.revision);
+      expect(cloud.uploads, 2, reason: 'the daily run still happens');
+      expect((await journal.state(pair.id))['slot'], isNotNull);
+    });
+
+    test('a backup that did not ask for it ignores a change', () async {
+      await device.put('a.jpg', 'one');
+      final pair = await add(value: withTrigger(on: false));
+      await runner().run(pair.id, pair.revision, onChange: true);
+      expect(cloud.uploads, 0);
+    });
+
+    test('a change for an old revision is ignored', () async {
+      await device.put('a.jpg', 'one');
+      final pair = await add(value: withTrigger());
+      await runner().run(pair.id, 'older-revision', onChange: true);
+      expect(cloud.uploads, 0);
+    });
+  });
+
   test('daily time validation and serialization', () {
     expect(
       () => BackupSchedule(created: created, hour: 24),

@@ -9,8 +9,9 @@ Status: step 1 is built for device-folder backups. The rest is still a plan.
 | Moves and copies on the device are followed on the server | Free up space (decided for the next release) |
 | Back up again (card menu) | iPhone Photos library source and Files folders |
 | No per-file server listing; receipts read in groups; newest first | Duplicate review, Reorganise, Needs attention list |
-| One bad file no longer ends a run; retries, circuit breaker, Try again | Android change trigger for near-instant pickup |
+| One bad file no longer ends a run; retries, circuit breaker, Try again | |
 | Live count, percent, time left and a list of problems on each card | |
+| Android "also when new photos arrive": a WorkManager media-change trigger, set again after each run | Verified on a device (the trigger itself has only been written, not run) |
 | iPhone album folders: albums in priority order inside Camera Roll, each photo stored once, moves followed | Verified on a device (the combining is Dart and tested; the native calls it uses already existed) |
 | A preview (dry run) before the first backup, and from the card menu at any time | |
 | Android "All photos & videos" source: flat album folders, permissions, limited access, covered folders skipped | Verified on a device (the Kotlin has only been written, not compiled) |

@@ -9,7 +9,7 @@ import '../../../models.dart';
 import '../platform/sync_run_lock.dart';
 
 abstract interface class HeadlessBackupRunner {
-  Future<bool> run(String pairId, String revision);
+  Future<bool> run(String pairId, String revision, {bool onChange = false});
   Future<void> stop(String reason);
 }
 
@@ -57,7 +57,11 @@ class ScheduledBackupRunner implements HeadlessBackupRunner {
   }
 
   @override
-  Future<bool> run(String pairId, String revision) async {
+  Future<bool> run(
+    String pairId,
+    String revision, {
+    bool onChange = false,
+  }) async {
     Account? session;
     try {
       session = await readAccount();
@@ -97,11 +101,16 @@ class ScheduledBackupRunner implements HeadlessBackupRunner {
           pair.account != owner ||
           pair.revision != revision ||
           pair.schedule == null ||
+          (onChange && !pair.schedule!.onNewPhotos) ||
           !await journal.accountEnabled(owner)) {
         return true;
       }
-      final slot = pair.dueSlot(await journal.state(pairId), clock());
-      if (slot == null) return true;
+      // A change-triggered run is not tied to the daily time, and does not use
+      // up that day's occurrence.
+      final slot = onChange
+          ? null
+          : pair.dueSlot(await journal.state(pairId), clock());
+      if (!onChange && slot == null) return true;
       _pairId = pairId;
       final runner = _runner = SyncRunner(
         client: client,
@@ -160,7 +169,8 @@ class ScheduledBackupRunner implements HeadlessBackupRunner {
       // A run that finished with a few files it could not back up still used
       // today's occurrence; those files are tried again at the next one, and
       // retrying all day would only drain the battery.
-      if (!_stopped &&
+      if (!onChange &&
+          !_stopped &&
           runner.error == null &&
           const {
             'success',
