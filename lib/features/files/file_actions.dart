@@ -39,6 +39,9 @@ Future<void> fileActions(
   final action = await showModalBottomSheet<String>(
     context: context,
     showDragHandle: true,
+    // The list is long; without this the sheet stops at about half the screen
+    // and the last item, Delete, is out of sight.
+    isScrollControlled: true,
     builder: (context) => SafeArea(
       child: SingleChildScrollView(
         child: Column(
