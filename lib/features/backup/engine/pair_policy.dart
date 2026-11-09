@@ -31,6 +31,12 @@ void validatePair({
       'Apple Photos albums support upload-only backup on iOS.',
     );
   }
+  if (folder.kind == DeviceSourceKind.library && ios) {
+    throw const FormatException(
+      'Backing up the whole photo library is available on Android first. '
+      'Choose a Photos album.',
+    );
+  }
   if (schedule != null && !schedulerSupported) {
     throw const FormatException(
       'Scheduled backups require a supported upload-only source.',
@@ -61,4 +67,33 @@ void validateConcurrency(int concurrency) {
   if (concurrency < 1 || concurrency > 3) {
     throw const FormatException('Use 1 to 3 uploads.');
   }
+}
+
+/// The folders of the phone's library that another backup already covers, so
+/// the whole-library backup leaves them alone and no photo is uploaded twice.
+///
+/// Only a device folder on the phone's main storage can be matched, since the
+/// library names a photo's folder the same way the folder picker does. Returns
+/// the folder paths, such as `['DCIM', 'Camera']`; empty for any other backup.
+List<List<String>> coveredFolders(FolderPair pair, Iterable<FolderPair> all) {
+  if (pair.folder.kind != DeviceSourceKind.library) return const [];
+  return [
+    for (final other in all)
+      if (other.id != pair.id && other.folder.kind == DeviceSourceKind.folder)
+        ?_primaryFolder(other.folder.token),
+  ];
+}
+
+/// The path of a folder-picker grant on main storage, or null. A grant looks
+/// like `content://…/tree/primary%3ADCIM%2FCamera`.
+List<String>? _primaryFolder(String token) {
+  final marker = token.indexOf('/tree/');
+  if (marker < 0) return null;
+  final id = Uri.decodeComponent(token.substring(marker + 6));
+  if (!id.startsWith('primary:')) return null;
+  final path = [
+    for (final part in id.substring('primary:'.length).split('/'))
+      if (part.isNotEmpty) part,
+  ];
+  return path.isEmpty ? null : path;
 }

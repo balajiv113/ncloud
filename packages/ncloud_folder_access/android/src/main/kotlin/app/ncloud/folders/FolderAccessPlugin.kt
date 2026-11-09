@@ -4,6 +4,8 @@ import android.app.Activity
 import android.app.NotificationManager
 import android.Manifest
 import android.content.pm.PackageManager
+import android.content.ContentResolver
+import android.content.ContentUris
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -11,10 +13,13 @@ import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.BatteryManager
+import android.os.Bundle
+import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.os.Build
 import android.provider.DocumentsContract
+import android.provider.MediaStore
 import android.webkit.MimeTypeMap
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
@@ -32,7 +37,8 @@ import java.security.MessageDigest
 import java.util.concurrent.Executors
 
 /** GeneratedPluginRegistrant installs this in every engine, including Workmanager. */
-class FolderAccessPlugin : FlutterPlugin, ActivityAware, PluginRegistry.ActivityResultListener, MethodChannel.MethodCallHandler {
+class FolderAccessPlugin : FlutterPlugin, ActivityAware, PluginRegistry.ActivityResultListener,
+    PluginRegistry.RequestPermissionsResultListener, MethodChannel.MethodCallHandler {
     private lateinit var context: Context
     private lateinit var channel: MethodChannel
     private val worker = Executors.newSingleThreadExecutor()
@@ -40,6 +46,7 @@ class FolderAccessPlugin : FlutterPlugin, ActivityAware, PluginRegistry.Activity
     private var activity: Activity? = null
     private var binding: ActivityPluginBinding? = null
     private var picker: MethodChannel.Result? = null
+    private var mediaRequest: MethodChannel.Result? = null
     private val locks = mutableMapOf<String, Pair<RandomAccessFile, FileLock>>()
     private val stageRoot get() = File(context.cacheDir, "ncloud-sync-staging").apply { mkdirs() }
 
@@ -70,6 +77,39 @@ class FolderAccessPlugin : FlutterPlugin, ActivityAware, PluginRegistry.Activity
                     }
                 }
                 "headless_picker" -> result.error("foreground_required", "Choose folders in the app, not in a worker.", null)
+                "mediaAccess" -> result.success(mapOf("status" to mediaStatus()))
+                "mediaRequest" -> {
+                    if (mediaRequest != null) {
+                        result.error("busy", "A permission request is already open.", null)
+                    } else if (mediaStatus() == "granted") {
+                        result.success(mapOf("status" to "granted"))
+                    } else {
+                        mediaRequest = result
+                        activity!!.requestPermissions(mediaPermissions(), 9143)
+                    }
+                }
+                "mediaTransfer" -> worker.execute {
+                    try {
+                        val output: Any? = when (call.method) {
+                            "mediaList" -> mediaPage(
+                                call.argument<Number>("offset")!!.toInt(),
+                                call.argument<Number>("limit")!!.toInt())
+                            else -> mediaExport(
+                                call.argument<String>("id")!!,
+                                call.argument<Number>("size")!!.toLong(),
+                                call.argument<Number>("modified")!!.toLong())
+                        }
+                        main.post { result.success(output) }
+                    } catch (error: Exception) {
+                        val code = when (error) {
+                            is SecurityException -> "media_permission"
+                            is FileNotFoundException -> "folder_unavailable"
+                            is IOException -> "folder_io"
+                            else -> "folder_transfer"
+                        }
+                        main.post { result.error(code, "The photo library operation failed.", null) }
+                    }
+                }
                 "workerNotification" -> {
                     val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
                     val permitted = Build.VERSION.SDK_INT < 33 ||
@@ -224,6 +264,134 @@ class FolderAccessPlugin : FlutterPlugin, ActivityAware, PluginRegistry.Activity
             }
     }
 
+    private fun has(permission: String) =
+        context.checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
+
+    /** What to ask for: the photo and video permissions of this Android version, and the location in photos. */
+    private fun mediaPermissions(): Array<String> {
+        val wanted = mutableListOf<String>()
+        if (Build.VERSION.SDK_INT >= 33) {
+            wanted += Manifest.permission.READ_MEDIA_IMAGES
+            wanted += Manifest.permission.READ_MEDIA_VIDEO
+            if (Build.VERSION.SDK_INT >= 34) wanted += "android.permission.READ_MEDIA_VISUAL_USER_SELECTED"
+        } else {
+            wanted += Manifest.permission.READ_EXTERNAL_STORAGE
+        }
+        if (Build.VERSION.SDK_INT >= 29) wanted += Manifest.permission.ACCESS_MEDIA_LOCATION
+        return wanted.toTypedArray()
+    }
+
+    /** "granted" for the whole library, "partial" for only some of it (selected photos, or photos but not videos), else "denied". */
+    private fun mediaStatus(): String {
+        if (Build.VERSION.SDK_INT >= 33) {
+            val images = has(Manifest.permission.READ_MEDIA_IMAGES)
+            val videos = has(Manifest.permission.READ_MEDIA_VIDEO)
+            return when {
+                images && videos -> "granted"
+                images || videos -> "partial"
+                Build.VERSION.SDK_INT >= 34 && has("android.permission.READ_MEDIA_VISUAL_USER_SELECTED") -> "partial"
+                else -> "denied"
+            }
+        }
+        return if (has(Manifest.permission.READ_EXTERNAL_STORAGE)) "granted" else "denied"
+    }
+
+    /** One page of the photo and video library, oldest first, so paging is steady while it is read. */
+    private fun mediaPage(offset: Int, limit: Int): List<Map<String, Any?>> {
+        require(offset >= 0 && limit in 1..5000)
+        val relative = Build.VERSION.SDK_INT >= 29
+        val projection = arrayOf(
+            MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DISPLAY_NAME, MediaStore.MediaColumns.SIZE,
+            MediaStore.MediaColumns.MIME_TYPE, MediaStore.MediaColumns.DATE_MODIFIED,
+            MediaStore.Files.FileColumns.MEDIA_TYPE,
+            if (relative) MediaStore.MediaColumns.RELATIVE_PATH else MediaStore.MediaColumns.DATA)
+        val selection = "${MediaStore.Files.FileColumns.MEDIA_TYPE} IN (?, ?)"
+        val arguments = arrayOf(
+            MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE.toString(),
+            MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO.toString())
+        val order = "${MediaStore.MediaColumns._ID} ASC"
+        val uri = MediaStore.Files.getContentUri("external")
+        val cursor = if (Build.VERSION.SDK_INT >= 26) {
+            val query = Bundle().apply {
+                putString(ContentResolver.QUERY_ARG_SQL_SELECTION, selection)
+                putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, arguments)
+                putString(ContentResolver.QUERY_ARG_SQL_SORT_ORDER, order)
+                putInt(ContentResolver.QUERY_ARG_LIMIT, limit)
+                putInt(ContentResolver.QUERY_ARG_OFFSET, offset)
+            }
+            context.contentResolver.query(uri, projection, query, null)
+        } else {
+            context.contentResolver.query(uri, projection, selection, arguments, "$order LIMIT $limit OFFSET $offset")
+        }
+        val items = mutableListOf<Map<String, Any?>>()
+        cursor.use {
+            checkNotNull(it) { "Photo library listing failed." }
+            val root = Environment.getExternalStorageDirectory().absolutePath
+            while (it.moveToNext()) {
+                val name = it.getString(1)
+                val size = it.getLong(2)
+                // Without a name or a size a file cannot be backed up or checked.
+                if (name.isNullOrEmpty() || size <= 0) continue
+                val kind = if (it.getInt(5) == MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO) "video" else "image"
+                val place = it.getString(6) ?: ""
+                val folder = if (relative) place.trim('/') else {
+                    val parent = java.io.File(place).parent ?: ""
+                    (if (parent.startsWith(root)) parent.removePrefix(root) else parent).trim('/')
+                }
+                items.add(mapOf(
+                    "id" to "$kind:${it.getLong(0)}", "name" to name, "size" to size,
+                    "modified" to it.getLong(4) * 1000, "contentType" to (it.getString(3) ?: ""),
+                    "folder" to folder))
+            }
+        }
+        return items
+    }
+
+    /** Copies one photo or video, as the original with its location when allowed, after checking it is unchanged. */
+    private fun mediaExport(id: String, size: Long, modified: Long): String {
+        val parts = id.split(":")
+        check(parts.size == 2) { "Unsupported photo id." }
+        val base = if (parts[0] == "video") MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+            else MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+        val uri = ContentUris.withAppendedId(base, parts[1].toLong())
+        context.contentResolver.query(uri, arrayOf(MediaStore.MediaColumns.SIZE, MediaStore.MediaColumns.DATE_MODIFIED),
+            null, null, null).use { cursor ->
+            check(cursor != null && cursor.moveToFirst()) { "That photo is no longer in the library." }
+            check(cursor.getLong(0) == size && cursor.getLong(1) * 1000 == modified) { "Source changed. Scan again." }
+        }
+        val temp = newStage()
+        try {
+            openMedia(uri).use { input ->
+                temp.outputStream().use { input.copyTo(it) }
+            }
+            check(temp.length() == size) { "Source changed during transfer." }
+            return temp.path
+        } catch (error: Exception) {
+            temp.delete()
+            throw error
+        }
+    }
+
+    /** Opens the original, with its location, when Android allows it; otherwise the file as Android gives it. */
+    private fun openMedia(uri: Uri): java.io.InputStream {
+        if (Build.VERSION.SDK_INT >= 29 && has(Manifest.permission.ACCESS_MEDIA_LOCATION)) {
+            try {
+                context.contentResolver.openInputStream(MediaStore.setRequireOriginal(uri))?.let { return it }
+            } catch (_: UnsupportedOperationException) {
+            } catch (_: SecurityException) {
+            }
+        }
+        return checkNotNull(context.contentResolver.openInputStream(uri)) { "Could not read the photo." }
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray): Boolean {
+        if (requestCode != 9143) return false
+        val pending = mediaRequest ?: return false
+        mediaRequest = null
+        pending.success(mapOf("status" to mediaStatus()))
+        return true
+    }
+
     private fun validate(path: List<String>) {
         check(path.size <= 64 && path.none { it.isEmpty() || it == "." || it == ".." ||
             it.any { char -> char == '/' || char == '\\' || char.code < 32 } })
@@ -302,13 +470,17 @@ class FolderAccessPlugin : FlutterPlugin, ActivityAware, PluginRegistry.Activity
         this.binding = binding
         activity = binding.activity
         binding.addActivityResultListener(this)
+        binding.addRequestPermissionsResultListener(this)
     }
     override fun onDetachedFromActivity() {
         binding?.removeActivityResultListener(this)
+        binding?.removeRequestPermissionsResultListener(this)
         binding = null
         activity = null
         picker?.error("foreground_required", "Folder picker closed with the activity.", null)
         picker = null
+        mediaRequest?.error("foreground_required", "The permission request closed with the activity.", null)
+        mediaRequest = null
     }
     override fun onDetachedFromActivityForConfigChanges() = onDetachedFromActivity()
     override fun onReattachedToActivityForConfigChanges(binding: ActivityPluginBinding) = onAttachedToActivity(binding)

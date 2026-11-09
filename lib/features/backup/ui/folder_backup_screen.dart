@@ -7,6 +7,7 @@ import '../state/backup_controller.dart';
 import '../../../core/ui/messages.dart' show showError;
 import '../engine/sync_errors.dart' show sourceNeedsReselect;
 import 'backup_setup_screen.dart';
+import 'backup_preview_sheet.dart';
 import 'backup_status.dart';
 import 'failures_sheet.dart';
 
@@ -49,6 +50,27 @@ class _FolderBackupScreenState extends State<FolderBackupScreen> {
           BackupSetupScreen(controller: widget.controller, pair: pair),
     ),
   );
+
+  /// The first backup shows what it is about to do and waits for a yes; later
+  /// ones simply run.
+  Future<void> _backUp(FolderPair pair, Map<String, dynamic>? state) {
+    final neverRun = pair.lastRun == null && state?['status'] == null;
+    return neverRun
+        ? _preview(pair, start: true)
+        : _perform(() => sync.run(pair));
+  }
+
+  /// Shows what a backup would do. With [start], saying yes runs it.
+  Future<void> _preview(FolderPair pair, {required bool start}) async {
+    final go = await showModalBottomSheet<bool>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (_) =>
+          BackupPreviewSheet(sync: sync, pair: pair, canStart: start),
+    );
+    if (go == true) await _perform(() => sync.run(pair));
+  }
 
   Future<void> _backUpAgain(FolderPair pair) async {
     final confirmed = await showDialog<bool>(
@@ -177,8 +199,14 @@ class _FolderBackupScreenState extends State<FolderBackupScreen> {
                 PopupMenuButton<String>(
                   tooltip: 'More for ${pair.name}',
                   enabled: !sync.busy && !active,
-                  onSelected: (_) => _backUpAgain(pair),
+                  onSelected: (choice) => choice == 'preview'
+                      ? _preview(pair, start: false)
+                      : _backUpAgain(pair),
                   itemBuilder: (_) => const [
+                    PopupMenuItem(
+                      value: 'preview',
+                      child: Text('Preview what will be backed up'),
+                    ),
                     PopupMenuItem(value: 'again', child: Text('Back up again')),
                   ],
                 ),
@@ -208,7 +236,7 @@ class _FolderBackupScreenState extends State<FolderBackupScreen> {
                         )
                       : sync.busy
                       ? null
-                      : () => _perform(() => sync.run(pair)),
+                      : () => _backUp(pair, state),
                   child: Text(
                     active
                         ? 'Pause'

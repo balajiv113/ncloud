@@ -848,6 +848,24 @@ void main() {
     },
   );
 
+  test('a preview changes nothing and matches the run that follows', () async {
+    await device.put('a.jpg', 'first');
+    await device.put('b.jpg', 'second');
+    final value = await pair();
+    final folders = Set.of(cloud.folders);
+    final preview = await sync.preview(value);
+    expect(preview.toUpload, 2);
+    expect(preview.found, 2);
+    expect(preview.alreadyBackedUp, 0);
+    expect(cloud.uploads, 0);
+    expect(cloud.folders, folders);
+    expect(await sync.journal.receipt(value.id, 'local', ['a.jpg']), isNull);
+    expect(sync.busy, isFalse);
+    await sync.run(value);
+    expect(cloud.uploads, preview.toUpload);
+    expect((await sync.preview(value)).isEmpty, isTrue);
+  });
+
   test('Wi-Fi policy blocks work without losing pending files', () async {
     await device.put('file.txt', 'source');
     final value = await pair();

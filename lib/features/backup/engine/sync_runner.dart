@@ -5,6 +5,9 @@ import '../../../models.dart';
 import '../platform/folder_access.dart';
 import '../platform/sync_background.dart';
 import 'sync_engine.dart';
+import '../platform/device_library.dart';
+import 'backup_preview.dart';
+import 'pair_policy.dart';
 import 'sync_errors.dart';
 import '../state/sync_journal.dart';
 import '../platform/sync_run_lock.dart';
@@ -94,6 +97,29 @@ class SyncRunner {
     }
   }
 
+  /// The whole-library backup leaves out folders another backup covers.
+  Future<void> _skipCoveredFolders(FolderPair pair) async {
+    if (access case final LibraryAccess library) {
+      library.skipFolders(
+        coveredFolders(pair, await journal.pairs(pair.account)),
+      );
+    }
+  }
+
+  /// What a run would do, worked out under the same rules and without changing
+  /// anything. It takes no lock and starts no upload service.
+  Future<BackupPreview> preview(Account session, FolderPair pair) async {
+    await _skipCoveredFolders(pair);
+    return SyncEngine(
+      client: client,
+      access: access,
+      journal: journal,
+      progress: SyncProgress(),
+      check: _check,
+      onChanged: () {},
+    ).preview(session, pair);
+  }
+
   Future<SyncRunResult> run(Account session, FolderPair pair) async {
     progress.reset();
     String? backgroundReason;
@@ -114,6 +140,7 @@ class SyncRunner {
           'cancel': false,
         });
         await prepareExecution?.call();
+        await _skipCoveredFolders(pair);
         final service = backgroundService;
         _backgroundRequested =
             !headless && service != null && await service.permission();

@@ -7,12 +7,14 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import '../../../models.dart';
+import '../platform/device_library.dart';
 import '../platform/folder_access.dart';
 import 'sync_journal.dart';
 
 import '../../../core/cloud/cloud_backend.dart';
 import '../model/backup_id.dart';
 import '../engine/pair_policy.dart';
+import '../engine/backup_preview.dart';
 import '../engine/sync_engine.dart';
 import '../engine/sync_errors.dart';
 import '../engine/sync_runner.dart';
@@ -495,6 +497,55 @@ class BackupController extends ChangeNotifier {
     final owner = _owner ?? _accountKey;
     if (owner != null) await journal.clearAccount(owner);
     await access.clearStaging();
+  }
+
+  /// Whether this phone can back up its whole photo library, and how much of
+  /// it may be read; null where it cannot.
+  Future<LibraryPermission?> libraryPermission() async {
+    if (access case final LibraryAccess library) {
+      return library.libraryPermission();
+    }
+    return null;
+  }
+
+  /// Offers the phone's whole photo and video library as a source, asking for
+  /// access if needed. Throws when the user does not allow it.
+  Future<DeviceFolder> chooseLibrary() async {
+    final library = access;
+    if (library is! LibraryAccess) {
+      throw const FormatException(
+        'Backing up the whole photo library is not available here.',
+      );
+    }
+    final reader = library as LibraryAccess;
+    var permission = await reader.libraryPermission();
+    if (permission == LibraryPermission.denied) {
+      permission = await reader.requestLibraryPermission();
+    }
+    if (permission == LibraryPermission.denied) {
+      throw const FormatException(
+        'Allow access to photos and videos to back up your whole library. '
+        'You can change this in your phone\'s settings.',
+      );
+    }
+    return const DeviceFolder.library();
+  }
+
+  /// What backing up [pair] would do right now, without doing any of it.
+  Future<BackupPreview> preview(FolderPair pair) async {
+    final session = account();
+    if (session == null || syncAccount(session) != pair.account) {
+      throw StateError('Sign in to this account to preview its backup.');
+    }
+    return SyncRunner(
+      client: client,
+      access: access,
+      journal: journal,
+      runLock: runLock,
+      foreground: () => true,
+      accountKey: () => _accountKey,
+      onChanged: () {},
+    ).preview(session, pair);
   }
 
   /// The files of [pair] that could not be backed up, with the reasons.

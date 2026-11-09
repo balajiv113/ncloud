@@ -52,15 +52,20 @@ final class PhotoKitAlbumSource: AlbumPhotoSource {
     PHPhotoLibrary.requestAuthorization(for: .readWrite, handler: completion)
   }
 
+  /// Stands for the whole library, so it can be backed up like any album.
+  static let cameraRoll = "ncloud.camera-roll"
+
   func albums() throws -> [BackupAlbum] {
-    var albums: [BackupAlbum] = []
+    // The whole library comes first, as one folder, since a photo can be in
+    // several albums and would otherwise be stored once for each.
+    var albums: [BackupAlbum] = [BackupAlbum(identifier: Self.cameraRoll, title: "Camera Roll")]
     let append: (PHAssetCollection, Int, UnsafeMutablePointer<ObjCBool>) -> Void = { album, _, _ in
       albums.append(BackupAlbum(identifier: album.localIdentifier,
                                 title: album.localizedTitle ?? "Album"))
     }
     PHAssetCollection.fetchAssetCollections(with: .album, subtype: .any, options: nil)
       .enumerateObjects(append)
-    // Deliberately do not offer Hidden, Recently Deleted, or the entire library.
+    // Deliberately do not offer Hidden or Recently Deleted.
     for subtype in [PHAssetCollectionSubtype.smartAlbumRecentlyAdded, .smartAlbumFavorites] {
       PHAssetCollection.fetchAssetCollections(with: .smartAlbum, subtype: subtype, options: nil)
         .enumerateObjects(append)
@@ -69,6 +74,13 @@ final class PhotoKitAlbumSource: AlbumPhotoSource {
   }
 
   func assets(in album: String) throws -> [BackupAsset]? {
+    if album == Self.cameraRoll {
+      var assets: [BackupAsset] = []
+      PHAsset.fetchAssets(with: nil).enumerateObjects { asset, _, _ in
+        assets.append(self.snapshot(asset))
+      }
+      return assets
+    }
     guard let collection = PHAssetCollection.fetchAssetCollections(
       withLocalIdentifiers: [album], options: nil).firstObject else { return nil }
     var assets: [BackupAsset] = []
@@ -79,6 +91,10 @@ final class PhotoKitAlbumSource: AlbumPhotoSource {
   }
 
   func asset(_ identifier: String, in album: String) throws -> BackupAsset? {
+    if album == Self.cameraRoll {
+      return PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil).firstObject
+        .map { snapshot($0) }
+    }
     guard let collection = PHAssetCollection.fetchAssetCollections(
       withLocalIdentifiers: [album], options: nil).firstObject,
       let asset = PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil).firstObject,

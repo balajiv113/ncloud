@@ -2,6 +2,8 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 
+import 'device_library.dart';
+
 void checkSyncPath(List<String> path) {
   for (final name in path) {
     if (name.isEmpty ||
@@ -13,7 +15,7 @@ void checkSyncPath(List<String> path) {
   }
 }
 
-enum DeviceSourceKind { folder, photoAlbum }
+enum DeviceSourceKind { folder, photoAlbum, library }
 
 class DeviceFolder {
   const DeviceFolder(
@@ -22,6 +24,13 @@ class DeviceFolder {
     this.identity, {
     this.kind = DeviceSourceKind.folder,
   });
+
+  /// The phone's whole photo and video library, as the folders it has.
+  const DeviceFolder.library()
+    : this(libraryToken, 'Phone', libraryToken, kind: DeviceSourceKind.library);
+
+  static const libraryToken = 'library:all';
+
   final String token;
   final String name;
   final String identity;
@@ -74,8 +83,88 @@ abstract interface class PhotoAlbumAccess {
   Future<List<DeviceFolder>> albums();
 }
 
-class NativeFolderAccess implements FolderAccess, PhotoAlbumAccess {
+class NativeFolderAccess
+    implements FolderAccess, PhotoAlbumAccess, LibraryAccess {
   static const channel = MethodChannel('app.ncloud/folder_sync');
+
+  /// The library as last listed, so the folders below the top are answered
+  /// without asking the phone again.
+  LibraryTree? _tree;
+  List<List<String>> _skipped = const [];
+
+  @override
+  void skipFolders(List<List<String>> folders) => _skipped = folders;
+
+  @override
+  Future<LibraryPermission> libraryPermission() async => _permission(
+    await channel.invokeMapMethod<String, dynamic>('mediaAccess'),
+  );
+
+  @override
+  Future<LibraryPermission> requestLibraryPermission() async => _permission(
+    await channel.invokeMapMethod<String, dynamic>('mediaRequest'),
+  );
+
+  LibraryPermission _permission(Map<String, dynamic>? value) =>
+      switch (value?['status']) {
+        'granted' => LibraryPermission.granted,
+        'partial' => LibraryPermission.partial,
+        _ => LibraryPermission.denied,
+      };
+
+  /// Every photo and video, read a page at a time so a very large library never
+  /// has to cross the channel in one message.
+  Future<List<LibraryItem>> _libraryItems() async {
+    if (await libraryPermission() == LibraryPermission.denied) {
+      throw PlatformException(
+        code: 'media_permission',
+        message: 'Allow access to photos and videos to back up your library.',
+      );
+    }
+    const page = 2000;
+    final byId = <String, LibraryItem>{};
+    var offset = 0;
+    while (true) {
+      final values = await channel.invokeListMethod<dynamic>('mediaList', {
+        'offset': offset,
+        'limit': page,
+      });
+      if (values == null) {
+        throw StateError('The photo library returned no listing.');
+      }
+      for (final value in values) {
+        final item = LibraryItem.fromMap(value as Map<dynamic, dynamic>);
+        byId[item.id] = item;
+      }
+      offset += values.length;
+      if (values.length < page) break;
+    }
+    return byId.values.toList();
+  }
+
+  Future<List<DeviceEntry>> _listLibrary(List<String> path) async {
+    checkSyncPath(path);
+    // The top of the library starts a new look; the folders below reuse it.
+    if (path.isEmpty || _tree == null) {
+      _tree = LibraryTree(await _libraryItems(), exclude: _skipped);
+    }
+    return _tree!.children(path);
+  }
+
+  Future<File> _exportLibrary(List<String> path, DeviceEntry expected) async {
+    checkSyncPath(path);
+    final id = expected.id ?? _tree?.file(path)?.id;
+    if (id == null) {
+      throw StateError('That photo is no longer in the library. Scan again.');
+    }
+    final file = await channel.invokeMethod<String>('mediaExport', {
+      'id': id,
+      'size': expected.size,
+      'modified': expected.modified,
+    });
+    if (file == null) throw StateError('Could not prepare the source file.');
+    return File(file);
+  }
 
   @override
   Future<List<DeviceFolder>> albums() async {
@@ -139,6 +228,7 @@ class NativeFolderAccess implements FolderAccess, PhotoAlbumAccess {
 
   @override
   Future<List<DeviceEntry>> list(String token, List<String> path) async {
+    if (token == DeviceFolder.libraryToken) return _listLibrary(path);
     checkSyncPath(path);
     final values = await channel.invokeListMethod<dynamic>('list', {
       'token': token,
@@ -156,6 +246,9 @@ class NativeFolderAccess implements FolderAccess, PhotoAlbumAccess {
     List<String> path,
     DeviceEntry expected,
   ) async {
+    if (token == DeviceFolder.libraryToken) {
+      return _exportLibrary(path, expected);
+    }
     checkSyncPath(path);
     final file = await channel.invokeMethod<String>('export', {
       'token': token,

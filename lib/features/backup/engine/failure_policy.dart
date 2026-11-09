@@ -46,6 +46,7 @@ FailureKind classifyFailure(Object error) {
       'folder_permission' ||
       'photos_permission' ||
       'photos_album' ||
+      'media_permission' ||
       'conditions_permission' ||
       'background_permission' ||
       'background_start' ||

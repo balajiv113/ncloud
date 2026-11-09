@@ -6,11 +6,14 @@ Status: step 1 is built for device-folder backups. The rest is still a plan.
 | --- | --- |
 | Fingerprints sent with every upload; the server verifies and stores them | Moves for backups made before fingerprints (needs the one-time preview) |
 | A file already on the server is recognised, never uploaded twice | Counting "removed from your server" (needs a server scan) |
-| Moves and copies on the device are followed on the server | Android photo-library source, and Free up space |
+| Moves and copies on the device are followed on the server | Free up space (decided for the next release) |
 | Back up again (card menu) | iPhone Photos library source and Files folders |
 | No per-file server listing; receipts read in groups; newest first | Duplicate review, Reorganise, Needs attention list |
 | One bad file no longer ends a run; retries, circuit breaker, Try again | Android change trigger for near-instant pickup |
 | Live count, percent, time left and a list of problems on each card | |
+| A preview (dry run) before the first backup, and from the card menu at any time | |
+| Android "All photos & videos" source: flat album folders, permissions, limited access, covered folders skipped | Verified on a device (the Kotlin has only been written, not compiled) |
+| iPhone "Camera Roll": the whole library as one album | Verified on a device (the Swift has only been written, not compiled) |
 
 ## The idea in one paragraph
 
