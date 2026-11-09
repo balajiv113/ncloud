@@ -87,6 +87,46 @@ into one of these, and only the first four ever cause an action:
 
 Order in a run: moves first, then uploads. Nothing in a run deletes anything.
 
+## How a move is recognised
+
+A move looks like "one file gone, one file new". The app turns that into "same
+file, new place" only when it can show it is the same file. In order of strength:
+
+1. **The fingerprint.** For every new file the app computes its SHA-1 before
+   deciding anything. If it equals the fingerprint stored for a file that has gone
+   missing from the phone, it is the same file. Name, date and folder do not matter,
+   so a move plus a rename is still recognised. This is the proof.
+2. **The phone's own id.** iPhone's asset id never changes. Android's media id
+   usually survives a move. It is a quick pointer to the candidate, and the
+   fingerprint still confirms it. (Android folder-picker ids are made from the path,
+   so they change on a move and are not used.)
+3. **Name, size and modified time all equal, and only one candidate.** Used only for
+   backups made before fingerprints were stored, because those files cannot be hashed
+   once they are gone. It is weaker, so such moves are listed in the one-time preview
+   instead of happening on their own.
+
+Fingerprints are cheap to have: the app hashes a file while it uploads it and stores
+the result, and a new file is hashed once before it is uploaded. Hashing runs at
+hundreds of megabytes a second.
+
+**Moved or copied?** If the old file is still on the phone, nothing moved. It is a
+copy, and it is recorded as already backed up under the same fingerprint, so it is
+neither uploaded again nor moved on the server.
+
+**When the server move happens** (all must hold):
+
+* the file is confirmed as the same one, as above;
+* the server copy is still the one this app uploaded (same revision);
+* the destination does not already exist (a move never overwrites);
+* the destination follows the link's folder layout.
+
+If any of these fail, nothing moves and the item is listed under Needs attention.
+When the evidence is unclear, for example two files that both match, the app does
+nothing rather than guess. The worst case is a file that stays where it was.
+
+A wrong move is also easy to undo: it is the same file in another folder, so moving
+it back loses nothing.
+
 ## Removing from the phone (in the app)
 
 This is the only thing that ever deletes on the phone, and it is always your tap.
