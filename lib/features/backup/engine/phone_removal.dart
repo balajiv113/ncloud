@@ -32,10 +32,13 @@ enum KeepReason {
 }
 
 class KeptFile {
-  const KeptFile(this.path, this.reason);
+  const KeptFile(this.path, this.reason, [this.detail]);
 
   final List<String> path;
   final KeepReason reason;
+
+  /// What exactly did not match, in words, for the screen.
+  final String? detail;
 }
 
 /// One file that is safe to remove.
@@ -193,12 +196,16 @@ Future<RemovalPlan> verify({
   }
 
   final reasons = <String, KeepReason>{};
+  final details = <String, String>{};
   final receiptOf = <String, Receipt>{};
   for (final f in files) {
     final key = jsonEncode(f.path);
     final receipt = receipts[key];
     if (receipt == null || receipt.version != f.entry.version) {
       reasons[key] = KeepReason.notBackedUp;
+      details[key] = receipt == null
+          ? 'the backup has no record of it'
+          : 'it changed on the phone after it was backed up';
       continue;
     }
     final parent = receipt.target.take(receipt.target.length - 1).toList();
@@ -209,15 +216,24 @@ Future<RemovalPlan> verify({
         onServer.isDirectory ||
         (size != null && onServer.size != size)) {
       reasons[key] = KeepReason.notOnServer;
+      details[key] = onServer == null
+          ? 'not found at /${[...pair.cloudRoot, ...receipt.target].join('/')}'
+          : onServer.isDirectory
+          ? 'a folder is there instead'
+          : 'the size differs: backed up as $size bytes, the server has '
+                '${onServer.size}';
       continue;
     }
     // The revision is the quick proof. A file that was moved, or touched by
     // the server, has a new one, so its checksum is compared instead: the same
     // checksum is the same file.
-    if (_bare(onServer.etag) != _bare(parts.first) &&
-        !await _sameChecksum(client, session, pair, receipt)) {
-      reasons[key] = KeepReason.notOnServer;
-      continue;
+    if (_bare(onServer.etag) != _bare(parts.first)) {
+      final why = await _checksumProblem(client, session, pair, receipt);
+      if (why != null) {
+        reasons[key] = KeepReason.notOnServer;
+        details[key] = 'the server revision differs and $why';
+        continue;
+      }
     }
     receiptOf[key] = receipt;
   }
@@ -234,7 +250,7 @@ Future<RemovalPlan> verify({
     final key = jsonEncode(f.path);
     final receipt = receiptOf[key];
     if (receipt == null) {
-      kept.add(KeptFile(f.path, reasons[key]!));
+      kept.add(KeptFile(f.path, reasons[key]!, details[key]));
     } else if (f.entry.id != null && blocked.contains(f.entry.id)) {
       kept.add(KeptFile(f.path, KeepReason.partOfUnverified));
     } else {
@@ -244,20 +260,23 @@ Future<RemovalPlan> verify({
   return RemovalPlan(target: target, removable: removable, kept: kept);
 }
 
-/// Whether the server's copy has the checksum recorded when it was uploaded.
-Future<bool> _sameChecksum(
+/// Null when the server's copy has the checksum recorded at upload; otherwise
+/// why that could not be shown.
+Future<String?> _checksumProblem(
   CloudBackend client,
   Account session,
   FolderPair pair,
   Receipt receipt,
 ) async {
   final recorded = receipt.fingerprint;
-  if (recorded == null) return false;
+  if (recorded == null) return 'no checksum was recorded when it was uploaded';
   final stat = await client.stat(session, [
     ...pair.cloudRoot,
     ...receipt.target,
   ]);
-  return stat != null && !stat.isDirectory && stat.sha1 == recorded;
+  if (stat == null || stat.isDirectory) return 'the server could not be read';
+  if (stat.sha1 == null) return 'the server holds no checksum to compare';
+  return stat.sha1 == recorded ? null : 'its checksum is different';
 }
 
 /// Files per system confirmation. Small enough to read about, large enough

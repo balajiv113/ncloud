@@ -212,6 +212,41 @@ void main() {
       },
     );
 
+    test('each file kept says exactly what did not match', () async {
+      device.add('Trips/gone.jpg', bytes(1));
+      device.add('Trips/size.jpg', bytes(2));
+      device.add('Trips/sum.jpg', bytes(3));
+      device.add('Trips/nosum.jpg', bytes(4));
+      device.add('Trips/new.jpg', bytes(5));
+      await run();
+      device.add('Trips/late.jpg', bytes(6));
+      server.files.remove('Backup/Camera/Trips/gone.jpg');
+      server.put('Backup/Camera/Trips/size.jpg', [1]);
+      Future<void> retag(String name, String? sha1) async {
+        final old = server.files['Backup/Camera/Trips/$name']!;
+        server.files['Backup/Camera/Trips/$name'] = (
+          bytes: old.bytes,
+          size: old.size,
+          etag: '"other"',
+          sha1: sha1,
+        );
+      }
+
+      await retag('sum.jpg', 'different');
+      await retag('nosum.jpg', null);
+      final byName = {
+        for (final k in (await plan()).kept) k.path.last: k.detail,
+      };
+      expect(
+        byName['gone.jpg'],
+        contains('not found at /Backup/Camera/Trips/gone.jpg'),
+      );
+      expect(byName['size.jpg'], contains('the size differs'));
+      expect(byName['sum.jpg'], contains('its checksum is different'));
+      expect(byName['nosum.jpg'], contains('holds no checksum'));
+      expect(byName['late.jpg'], contains('no record'));
+    });
+
     test('a removed server folder keeps everything in it', () async {
       device.add('Trips/a.jpg', bytes(1));
       await run();
