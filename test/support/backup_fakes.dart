@@ -8,7 +8,7 @@ import 'package:ncloud/models.dart';
 
 /// A server that counts the work it is asked to do, and can be told to fail in
 /// specific ways, so tests can check cost and error handling.
-class FakeServer implements CloudBackend {
+class FakeServer implements CloudBackend, ResumableUploads {
   FakeServer() {
     folders.addAll(['', 'Backup']);
   }
@@ -68,6 +68,58 @@ class FakeServer implements CloudBackend {
       throw const CloudException('checksum mismatch', statusCode: 400);
     }
     put(name, data, sha1: dropFingerprints ? null : sha1);
+    uploads++;
+    uploadLog.add((path: path, sha1: sha1, modified: modified));
+    return UploadResult(etag: files[name]!.etag);
+  }
+
+  /// Pieces of resumable uploads that reached the server and were not joined
+  /// yet, by destination, so a later try can carry on.
+  final Map<String, Set<int>> pieces = {};
+  int pieceSize = 10;
+  int piecesSent = 0;
+
+  /// Runs before each piece is taken; throw to drop the connection there.
+  FutureOr<void> Function(List<String> path, int piece, int attempt)?
+  beforePiece;
+  final _pieceAttempts = <String, int>{};
+
+  @override
+  Future<UploadResult> uploadResumable(
+    Account account,
+    List<String> path,
+    Stream<List<int>> Function(int start, int end) read,
+    int size, {
+    required String sha1,
+    DateTime? modified,
+    void Function(int sent)? onProgress,
+  }) async {
+    final name = path.join('/');
+    final attempt = _pieceAttempts[name] = (_pieceAttempts[name] ?? 0) + 1;
+    final done = pieces.putIfAbsent(name, () => {});
+    final count = (size + pieceSize - 1) ~/ pieceSize;
+    for (var i = 0; i < count; i++) {
+      final end = (i + 1) * pieceSize > size ? size : (i + 1) * pieceSize;
+      if (done.contains(i)) {
+        onProgress?.call(end);
+        continue;
+      }
+      await beforePiece?.call(path, i, attempt);
+      await read(i * pieceSize, end).expand((c) => c).toList();
+      done.add(i);
+      piecesSent++;
+      onProgress?.call(end);
+    }
+    if (files.containsKey(name)) {
+      pieces.remove(name);
+      throw const CloudException('exists', statusCode: 412);
+    }
+    final data = await read(0, size).expand((chunk) => chunk).toList();
+    if (sha1 != sha1Of(data)) {
+      throw const CloudException('checksum mismatch', statusCode: 400);
+    }
+    put(name, data, sha1: dropFingerprints ? null : sha1);
+    pieces.remove(name);
     uploads++;
     uploadLog.add((path: path, sha1: sha1, modified: modified));
     return UploadResult(etag: files[name]!.etag);

@@ -1,5 +1,7 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:ncloud/app/browse_target.dart';
@@ -419,4 +421,75 @@ void main() {
     skip: !enabled,
     timeout: const Timeout(Duration(minutes: 3)),
   );
+
+  test(
+    'real server: a large upload cut off halfway resumes with only what is missing',
+    () async {
+      final transport = _Cuts(http.Client());
+      final client = NextcloudClient(transport: transport, chunkBytes: 1000000);
+      addTearDown(client.close);
+      final session = await client.authenticate(
+        Uri.parse('http://127.0.0.1:8080'),
+        'ncloud-ci',
+        const String.fromEnvironment('NEXTCLOUD_TEST_PASSWORD'),
+      );
+      final data = Uint8List.fromList(
+        List.generate(2500000, (i) => (i * 31 + i ~/ 7) & 255),
+      );
+      final sha = sha1.convert(data).toString();
+      await client.ensureFolder(session, ['Resume']);
+      final path = [
+        'Resume',
+        'movie-${DateTime.now().millisecondsSinceEpoch}.bin',
+      ];
+      Stream<List<int>> read(int start, int end) =>
+          Stream.value(data.sublist(start, end));
+      transport.cutOn = 2;
+      await expectLater(
+        client.uploadResumable(session, path, read, data.length, sha1: sha),
+        throwsA(isA<CloudException>()),
+      );
+      expect(transport.names, ['00001', '00002']);
+      transport.names.clear();
+      final result = await client.uploadResumable(
+        session,
+        path,
+        read,
+        data.length,
+        sha1: sha,
+        modified: DateTime.fromMillisecondsSinceEpoch(1700000000000),
+      );
+      expect(transport.names, ['00002', '00003']);
+      final stat = await client.stat(session, path);
+      expect(stat!.size, data.length);
+      expect(stat.sha1, sha);
+      expect(stat.etag!.replaceAll('"', ''), result.etag!.replaceAll('"', ''));
+      await expectLater(
+        client.uploadResumable(session, path, read, data.length, sha1: sha),
+        throwsA(
+          isA<CloudException>().having((e) => e.statusCode, 'status', 412),
+        ),
+      );
+    },
+    skip: !enabled,
+  );
+}
+
+/// Drops the connection on one chosen upload of a piece.
+class _Cuts extends http.BaseClient {
+  _Cuts(this.inner);
+
+  final http.Client inner;
+  int puts = 0;
+  int cutOn = -1;
+  final names = <String>[];
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    if (request.method == 'PUT' && request.url.path.contains('/uploads/')) {
+      names.add(request.url.pathSegments.last);
+      if (++puts == cutOn) throw http.ClientException('connection dropped');
+    }
+    return inner.send(request);
+  }
 }

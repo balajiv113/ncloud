@@ -733,6 +733,55 @@ void main() {
     );
 
     test(
+      'a large file goes in pieces and a cut connection resumes where it stopped',
+      () async {
+        // 40 bytes in pieces of 10: four pieces. The connection drops while the
+        // third is being taken, once.
+        device.add('movie.mp4', List.generate(40, (i) => i + 1));
+        server.pieceSize = 10;
+        server.beforePiece = (path, piece, attempt) {
+          if (piece == 2 && attempt == 1) {
+            throw const CloudException('Upload interrupted.', retryable: true);
+          }
+        };
+        final progress = SyncProgress();
+        await SyncEngine(
+          client: server,
+          access: device,
+          journal: journal,
+          progress: progress,
+          check: (_) {},
+          onChanged: () {},
+          resumableFrom: 20,
+          clock: () => now = now.add(const Duration(milliseconds: 1)),
+          pause: (_) async {},
+        ).run(account, pair(concurrency: 1));
+        expect(server.files, hasLength(1));
+        expect(server.files.values.single.size, 40);
+        // Every piece went once: the first two were not sent again.
+        expect(server.piecesSent, 4);
+        // And the file was taken off the phone once.
+        expect(device.exports, 1);
+        expect(server.pieces, isEmpty);
+      },
+    );
+
+    test('a small file is not sent in pieces', () async {
+      device.add('small.jpg', bytes(1));
+      await SyncEngine(
+        client: server,
+        access: device,
+        journal: journal,
+        progress: progress,
+        check: (_) {},
+        onChanged: () {},
+        resumableFrom: 100,
+      ).run(account, pair(concurrency: 1));
+      expect(server.files, hasLength(1));
+      expect(server.piecesSent, 0);
+    });
+
+    test(
       'a fingerprint taken while copying is used without reading again',
       () async {
         final known = _KnownChecksums(device);
