@@ -194,7 +194,14 @@ import workmanager_apple
                 throw AlbumBackupError(code: "photos_changed", message: "Refresh the album before exporting its originals.")
               }
               // PhotoKit requires a nonexistent destination and owns only this unique partial.
-              let destination = try self.newStage(create: false)
+              let destination: URL
+              if let into = args["into"] as? String {
+                // Dart named the file so it can watch it grow; PhotoKit needs it absent.
+                destination = try self.stageFile(into)
+                try? self.manager.removeItem(at: destination)
+              } else {
+                destination = try self.newStage(create: false)
+              }
               let exported = try self.albums.export(token: token, path: path, version: version,
                                                     destination: destination)
               // Photos writes the original itself, so the fingerprint is worked
@@ -241,7 +248,7 @@ import workmanager_apple
                         before["directory"] as? Bool == false,
                         before["size"] as? Int64 == size.int64Value,
                         before["modified"] as? Int64 == modified.int64Value else { throw self.failure() }
-                  let temp = try self.newStage()
+                  let temp = try (args["into"] as? String).map { try self.stageFile($0) } ?? self.newStage()
                   do {
                     let sha1 = try self.copyBytes(source, temp)
                     let after = try self.metadata(source)

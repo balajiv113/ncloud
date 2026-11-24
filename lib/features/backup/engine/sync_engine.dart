@@ -400,28 +400,27 @@ class _Uploader {
   /// Staged copies are kept under 1 GiB where they can be.
   final ByteBudget _budget = ByteBudget(1024 * 1024 * 1024);
 
-  /// Runs one stage of a file's backup and keeps the count of files in it.
+  /// Runs one stage of a file's backup, which the file shows while it lasts.
   Future<T> _stage<T>(
+    ActiveFile file,
     String step,
-    String name,
     Future<T> Function() run,
   ) async {
-    _progress.enter(step, name);
+    file.step = step;
     engine._tick();
     try {
       return await run();
     } finally {
-      _progress.leave(step);
       engine._tick();
     }
   }
 
   /// Sends a file once one of the upload places is free.
-  Future<T> _sendFile<T>(String name, Future<T> Function() send) async {
+  Future<T> _sendFile<T>(ActiveFile file, Future<T> Function() send) async {
     await limit.acquire();
     try {
       engine.check(pair);
-      return await _stage('Uploading', name, send);
+      return await _stage(file, ActiveFile.upload, send);
     } finally {
       limit.release();
     }
@@ -487,23 +486,46 @@ class _Uploader {
     }
   }
 
+  /// Takes a file off the phone. A device that can say how far a copy has got
+  /// shows it on the file's row while it goes.
+  Future<File> _copyOut(
+    List<String> path,
+    DeviceEntry file,
+    ActiveFile active,
+  ) {
+    return switch (_access) {
+      final CopyProgress tracked => tracked.exportTracked(
+        pair.folder.token,
+        path,
+        file,
+        (bytes) {
+          active.copied = bytes;
+          engine._tick();
+        },
+      ),
+      final access => access.export(pair.folder.token, path, file),
+    };
+  }
+
   Future<void> _send(_Item item) async {
     final path = item.path;
     final file = item.entry;
     await engine._requireNetwork(pair);
     File? staged;
-    final meter = _Meter(_progress, engine._tick);
+    final active = _progress.start(file.name, file.size);
+    final meter = _Meter(active, _progress, engine);
     final reserved = file.size > 0 ? file.size : 0;
     await _budget.acquire(reserved);
     try {
-      final copy = await _stage('Copying', file.name, () async {
+      final copy = await _stage(active, ActiveFile.copy, () async {
         await _copies.acquire();
         try {
-          return await _access.export(pair.folder.token, path, file);
+          return await _copyOut(path, file, active);
         } finally {
           _copies.release();
         }
       });
+      active.copied = file.size > 0 ? file.size : active.copied;
       staged = copy;
       engine.check(pair);
       final size = await copy.length();
@@ -512,7 +534,7 @@ class _Uploader {
           'The source changed while preparing it. Run again.',
         );
       }
-      final fingerprint = await _stage('Checking', file.name, () async {
+      final fingerprint = await _stage(active, ActiveFile.check, () async {
         await _checks.acquire();
         try {
           // A device that fingerprinted the file while copying it already
@@ -550,7 +572,7 @@ class _Uploader {
           await engine._requireNetwork(pair);
           try {
             final result = await _sendFile(
-              file.name,
+              active,
               () => _client.uploadNew(
                 session,
                 [...pair.cloudRoot, ...target],
@@ -567,6 +589,7 @@ class _Uploader {
               );
             }
             await _record(item, target, '$etag|$size', fingerprint, size);
+            meter.file.sent = 0;
             _progress.uploaded(size, engine._clock());
             limit.sent(size);
             engine._tick();
@@ -611,7 +634,7 @@ class _Uploader {
         done.complete();
       }
     } finally {
-      meter.done();
+      _progress.finish(active);
       try {
         if (staged != null) await _access.discard(staged);
       } finally {
@@ -663,7 +686,7 @@ class _Uploader {
     await engine._requireNetwork(pair);
     try {
       final result = await _sendFile(
-        item.entry.name,
+        meter.file,
         () => _client.uploadNew(
           session,
           at,
@@ -681,6 +704,7 @@ class _Uploader {
         );
       }
       await _record(item, before.target, '$next|$size', fingerprint, size);
+      meter.file.sent = 0;
       _progress.uploaded(size, engine._clock());
       limit.sent(size);
       engine._tick();
@@ -905,28 +929,21 @@ Future<void> runConcurrently<T>(
   if (failure != null) Error.throwWithStackTrace(failure!, failureStack!);
 }
 
-/// Counts the bytes of one file as they are sent, for the progress bar, and
-/// takes them back when the file is finished or fails.
+/// Counts the bytes of one file as they are sent, for its row and for the bar.
 class _Meter {
-  _Meter(this._progress, this._tick);
+  _Meter(this.file, this._progress, this._engine);
 
+  final ActiveFile file;
   final SyncProgress _progress;
-  final void Function() _tick;
-  int _count = 0;
+  final SyncEngine _engine;
 
   Stream<List<int>> watch(Stream<List<int>> bytes) {
-    _progress.sending -= _count;
-    _count = 0;
+    file.sent = 0;
     return bytes.map((chunk) {
-      _count += chunk.length;
-      _progress.sending += chunk.length;
-      _tick();
+      file.sent += chunk.length;
+      _progress.moving(_engine._clock());
+      _engine._tick();
       return chunk;
     });
-  }
-
-  void done() {
-    _progress.sending -= _count;
-    _count = 0;
   }
 }

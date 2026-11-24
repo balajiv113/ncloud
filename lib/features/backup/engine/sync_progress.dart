@@ -16,39 +16,32 @@ class SyncProgress {
   int transferred = 0;
   int bytesDone = 0;
 
-  /// Bytes of files still on their way that have already reached the server, so
-  /// a large video moves the bar while it uploads.
-  int sending = 0;
+  /// The files being worked on right now, each with its own step and bytes.
+  /// The counts, the bar and the per-file rows all come from this list, so they
+  /// cannot disagree.
+  final List<ActiveFile> active = [];
+
+  /// A file starts being worked on.
+  ActiveFile start(String name, int size) {
+    final file = ActiveFile(name, size);
+    active.add(file);
+    return file;
+  }
+
+  /// A file is finished with, whether it worked or not.
+  void finish(ActiveFile file) => active.remove(file);
 
   /// Files in each step right now: being copied off the phone, being checked
   /// (checksummed), and being uploaded. A file is in one at a time.
-  int copying = 0;
-  int checking = 0;
-  int uploading = 0;
+  int get copying => active.where((f) => f.step == ActiveFile.copy).length;
+  int get checking => active.where((f) => f.step == ActiveFile.check).length;
+  int get uploading => active.where((f) => f.step == ActiveFile.upload).length;
 
-  /// The step the latest file entered, with its name in [current].
-  String step = 'Uploading';
+  /// Bytes of files still on their way that have already reached the server.
+  int get sending => active.fold(0, (sum, f) => sum + f.sent);
 
-  /// A file enters a step.
-  void enter(String stepName, String name) {
-    step = stepName;
-    current = name;
-    _count(stepName, 1);
-  }
-
-  /// A file leaves a step, finished or not.
-  void leave(String stepName) => _count(stepName, -1);
-
-  void _count(String stepName, int by) {
-    switch (stepName) {
-      case 'Copying':
-        copying += by;
-      case 'Checking':
-        checking += by;
-      default:
-        uploading += by;
-    }
-  }
+  /// Work done on the files in hand, as a share of whole files.
+  double get _partial => active.fold(0.0, (sum, f) => sum + f.fraction);
 
   /// Files that needed nothing because they were already backed up.
   int alreadyBackedUp = 0;
@@ -68,9 +61,6 @@ class SyncProgress {
 
   /// Uploads renamed because their destination already existed.
   int conflicts = 0;
-
-  /// The file being uploaded now.
-  String? current;
 
   /// Progress at recent moments, to measure speed over the last minute rather
   /// than from one file: a single large video would otherwise swing the figure
@@ -95,48 +85,58 @@ class SyncProgress {
   int get problems => failed + blocked;
 
   /// How far through the files to upload the run is, from 0 to 1, or null while
-  /// that is not known yet.
+  /// that is not known yet. Files in hand count for the part of their work that
+  /// is done: a fifth for the copy off the phone, the rest for the upload.
   double? get fraction {
     if (toUpload <= 0) return null;
-    final byFiles = settled / toUpload;
-    if (bytesTotal > 0 && bytesDone + sending > 0) {
-      // Large files move the bar smoothly; many small ones keep it honest.
-      return (((bytesDone + sending) / bytesTotal + byFiles) / 2).clamp(
-        0.0,
-        1.0,
-      );
+    if (bytesTotal > 0) {
+      final inHand = active.fold(0.0, (sum, f) => sum + f.size * f.fraction);
+      return ((bytesDone + inHand) / bytesTotal).clamp(0.0, 1.0);
     }
-    return byFiles.clamp(0.0, 1.0);
+    return ((settled + _partial) / toUpload).clamp(0.0, 1.0);
   }
 
   /// A rough time left, from the recent upload speed, or null until there is
   /// enough to go on.
   Duration? get estimatedRemaining {
     final speed = _bytesPerSecond;
-    if (speed == null || speed < 1 || bytesTotal <= bytesDone) return null;
-    return Duration(seconds: ((bytesTotal - bytesDone) / speed).round());
+    final left = bytesTotal - bytesDone - sending;
+    if (speed == null || speed < 1 || left <= 0) return null;
+    return Duration(seconds: (left / speed).round());
   }
 
   /// Starts timing a run's uploads.
   void begin(DateTime now) {
     _samples
       ..clear()
-      ..add((now, bytesDone, _bytesSent));
+      ..add((now, bytesDone + sending, _bytesSent + sending));
     _bytesPerSecond = null;
     _sendRate = null;
   }
 
   /// Notes the progress at [now] and works out the speed over the last minute.
   void _measure(DateTime now) {
-    _samples.add((now, bytesDone, _bytesSent));
+    final done = bytesDone + sending;
+    final sent = _bytesSent + sending;
+    _samples.add((now, done, sent));
     while (_samples.length > 2 && now.difference(_samples[1].$1) >= _window) {
       _samples.removeAt(0);
     }
     final first = _samples.first;
     final seconds = now.difference(first.$1).inMilliseconds / 1000;
     if (seconds < 2) return;
-    _bytesPerSecond = (bytesDone - first.$2) / seconds;
-    _sendRate = (_bytesSent - first.$3) / seconds;
+    _bytesPerSecond = (done - first.$2) / seconds;
+    _sendRate = (sent - first.$3) / seconds;
+  }
+
+  /// Notes that bytes are moving, at most once a second, so the speed and the
+  /// time left follow a large file while it uploads.
+  void moving(DateTime now) {
+    if (_samples.isNotEmpty &&
+        now.difference(_samples.last.$1) < const Duration(seconds: 1)) {
+      return;
+    }
+    _measure(now);
   }
 
   /// Records that a file of [bytes] was found on the server already.
@@ -163,11 +163,9 @@ class SyncProgress {
 
   void reset() {
     phase = '';
-    found = toUpload = bytesTotal = transferred = bytesDone = sending = 0;
-    step = 'Uploading';
-    copying = checking = uploading = 0;
+    found = toUpload = bytesTotal = transferred = bytesDone = 0;
+    active.clear();
     alreadyBackedUp = recognised = moved = failed = blocked = conflicts = 0;
-    current = null;
     _samples.clear();
     _bytesSent = 0;
     _bytesPerSecond = null;
@@ -180,6 +178,7 @@ class SyncProgress {
     'bytesTotal': bytesTotal,
     'transferred': transferred,
     'bytesDone': bytesDone,
+    'fraction': fraction,
     'copying': copying,
     'checking': checking,
     'uploading': uploading,
@@ -190,4 +189,38 @@ class SyncProgress {
     'blocked': blocked,
     'conflicts': conflicts,
   };
+}
+
+/// One file being worked on: copied off the phone, checked, then uploaded.
+class ActiveFile {
+  ActiveFile(this.name, this.size);
+
+  static const copy = 'Copying';
+  static const check = 'Checking';
+  static const upload = 'Uploading';
+
+  final String name;
+
+  /// Its size, or a negative number when the phone does not say.
+  final int size;
+
+  String step = copy;
+
+  /// Bytes copied off the phone so far, and bytes sent to the server so far.
+  int copied = 0;
+  int sent = 0;
+
+  /// How much of this file's work is done, from 0 to 1. The copy is a fifth,
+  /// because the fingerprint is taken in the same pass and the upload is what
+  /// takes the time.
+  double get fraction {
+    const copyShare = 0.2;
+    final copyPart = step == copy
+        ? (size > 0 ? (copied / size).clamp(0.0, 1.0) : 0.0)
+        : 1.0;
+    final uploadPart = step == upload && size > 0
+        ? (sent / size).clamp(0.0, 1.0)
+        : 0.0;
+    return copyShare * copyPart + (1 - copyShare) * uploadPart;
+  }
 }

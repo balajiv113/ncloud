@@ -129,8 +129,7 @@ void main() {
       expect(p.fraction, 0);
       p.begin(DateTime(2025));
       p.uploaded(100, DateTime(2025));
-      // One of four files but a tenth of the bytes: it reports between them.
-      expect(p.fraction, closeTo((0.25 + 0.1) / 2, 0.001));
+      expect(p.fraction, closeTo(0.1, 0.001));
       expect(p.remaining, 3);
     });
 
@@ -158,13 +157,70 @@ void main() {
       expect(p.estimatedRemaining, const Duration(seconds: 90));
     });
 
-    test('bytes of a file still uploading move the bar', () {
+    test(
+      'a file being copied moves the bar a little, then uploading the rest',
+      () {
+        final p = SyncProgress()
+          ..toUpload = 2
+          ..bytesTotal = 1000;
+        expect(p.fraction, 0);
+        final file = p.start('a.mp4', 500);
+        file.copied = 250;
+        // Half copied is half of a fifth of half the bytes.
+        expect(p.fraction, closeTo(0.05, 0.001));
+        file.copied = 500;
+        file.step = ActiveFile.upload;
+        expect(p.fraction, closeTo(0.1, 0.001));
+        file.sent = 250;
+        expect(p.sending, 250);
+        expect(p.fraction, closeTo(0.3, 0.001));
+        file.sent = 0;
+        p.uploaded(500, DateTime(2025));
+        p.finish(file);
+        expect(p.fraction, closeTo(0.5, 0.001));
+      },
+    );
+
+    test('counts come from the files in hand and add up', () {
+      final p = SyncProgress()..toUpload = 5;
+      final a = p.start('a', 10);
+      final b = p.start('b', 10)..step = ActiveFile.check;
+      final c = p.start('c', 10)..step = ActiveFile.upload;
+      p.start('d', 10).step = ActiveFile.upload;
+      expect([p.copying, p.checking, p.uploading], [1, 1, 2]);
+      p.finish(c);
+      expect([p.copying, p.checking, p.uploading], [1, 1, 1]);
+      p.finish(a);
+      p.finish(b);
+      expect(p.active, hasLength(1));
+      p.reset();
+      expect(
+        [p.copying, p.checking, p.uploading, p.active.length],
+        [0, 0, 0, 0],
+      );
+    });
+
+    test('without sizes the bar counts each file by its step', () {
+      final p = SyncProgress()..toUpload = 4;
+      p.start('a', -1).step = ActiveFile.upload;
+      p.start('b', -1);
+      p.transferred = 1;
+      // One done, one past its copy (a fifth), one just started.
+      expect(p.fraction, closeTo((1 + 0.2) / 4, 0.001));
+    });
+
+    test('the time left follows a file while it uploads', () {
       final p = SyncProgress()
         ..toUpload = 2
-        ..bytesTotal = 1000;
-      expect(p.fraction, 0);
-      p.sending = 400;
-      expect(p.fraction, closeTo(0.2, 0.001));
+        ..bytesTotal = 10000;
+      final start = DateTime(2025);
+      p.begin(start);
+      final file = p.start('a', 10000)..step = ActiveFile.upload;
+      file.sent = 1000;
+      p.moving(start.add(const Duration(seconds: 10)));
+      // 100 bytes a second, 9000 left, before any file has finished.
+      expect(p.uploadSpeed, closeTo(100, 1));
+      expect(p.estimatedRemaining, const Duration(seconds: 90));
     });
 
     test('measures speed over the last minute, not from one file', () {
