@@ -25,7 +25,12 @@ class AlbumChoice {
 /// it, or in the top folder when it is in none of them. Photos moved into or
 /// out of an album therefore move on the server instead of being uploaded
 /// again.
-DeviceFolder cameraRollWith(List<AlbumChoice> albums) => albums.isEmpty
+///
+/// Photos in any of the [exclude] albums are left out altogether.
+DeviceFolder cameraRollWith(
+  List<AlbumChoice> albums, {
+  List<AlbumChoice> exclude = const [],
+}) => albums.isEmpty && exclude.isEmpty
     ? DeviceFolder(
         cameraRollToken,
         'Camera Roll',
@@ -33,9 +38,14 @@ DeviceFolder cameraRollWith(List<AlbumChoice> albums) => albums.isEmpty
         kind: DeviceSourceKind.photoAlbum,
       )
     : DeviceFolder(
-        '$_setPrefix${base64Url.encode(utf8.encode(jsonEncode([
-          for (final a in albums) [a.token, a.name],
-        ])))}',
+        '$_setPrefix${base64Url.encode(utf8.encode(jsonEncode({
+          'folders': [
+            for (final a in albums) [a.token, a.name],
+          ],
+          'exclude': [
+            for (final a in exclude) [a.token, a.name],
+          ],
+        })))}',
         'Camera Roll',
         // The same identity as the plain library, so adding or removing
         // albums keeps this backup and what it has recorded.
@@ -45,14 +55,23 @@ DeviceFolder cameraRollWith(List<AlbumChoice> albums) => albums.isEmpty
 
 /// The albums chosen in a whole-library backup, or null when [token] is not
 /// one. An empty list means the library with no album folders.
-List<AlbumChoice>? albumsOf(String token) {
+List<AlbumChoice>? albumsOf(String token) => _choices(token, 'folders');
+
+/// The albums left out of a whole-library backup; empty when [token] is not
+/// one.
+List<AlbumChoice> excludedOf(String token) =>
+    _choices(token, 'exclude') ?? const [];
+
+List<AlbumChoice>? _choices(String token, String key) {
   if (token == cameraRollToken) return const [];
   if (!token.startsWith(_setPrefix)) return null;
-  final values =
-      jsonDecode(
-            utf8.decode(base64Url.decode(token.substring(_setPrefix.length))),
-          )
-          as List<dynamic>;
+  final decoded = jsonDecode(
+    utf8.decode(base64Url.decode(token.substring(_setPrefix.length))),
+  );
+  // Tokens made before albums could be left out are just the list of folders.
+  final values = decoded is List
+      ? (key == 'folders' ? decoded : const [])
+      : (decoded as Map)[key] as List<dynamic>;
   return [
     for (final value in values)
       AlbumChoice((value as List<dynamic>)[0] as String, value[1] as String),
@@ -68,14 +87,23 @@ class AlbumFolderTree {
   AlbumFolderTree(
     List<AlbumChoice> albums,
     List<List<DeviceEntry>> inAlbum,
-    List<DeviceEntry> library,
-  ) {
+    List<DeviceEntry> library, {
+    List<List<DeviceEntry>> excluded = const [],
+  }) {
+    // A photo in an excluded album is not backed up, whatever else holds it.
+    final left = {
+      for (final list in excluded)
+        for (final entry in list) entry.name,
+    };
     final claimed = <String>{};
     final used = <String>{};
     for (var i = 0; i < albums.length; i++) {
       final files = [
         for (final entry in inAlbum[i])
-          if (!entry.directory && claimed.add(entry.name)) entry,
+          if (!entry.directory &&
+              !left.contains(entry.name) &&
+              claimed.add(entry.name))
+            entry,
       ];
       if (files.isEmpty) continue;
       final folder = _unique(albums[i].name, used);
@@ -84,7 +112,10 @@ class AlbumFolderTree {
     }
     _top = [
       for (final entry in library)
-        if (!entry.directory && !claimed.contains(entry.name)) entry,
+        if (!entry.directory &&
+            !left.contains(entry.name) &&
+            !claimed.contains(entry.name))
+          entry,
     ];
   }
 

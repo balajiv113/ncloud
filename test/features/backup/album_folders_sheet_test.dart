@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ncloud/features/backup/platform/album_folders.dart';
+import 'package:ncloud/features/backup/ui/album_exclude_sheet.dart';
 import 'package:ncloud/features/backup/ui/album_folders_sheet.dart';
 
 void main() {
@@ -73,5 +74,35 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Add an album'), findsOneWidget);
     expect(find.text('Trips'), findsOneWidget);
+  });
+
+  testWidgets('leaving albums out: tick, untick and done', (tester) async {
+    List<AlbumChoice>? result;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => TextButton(
+            onPressed: () async => result = await showModalBottomSheet(
+              context: context,
+              isScrollControlled: true,
+              builder: (_) => const AlbumExcludeSheet(
+                available: [w1, trips],
+                chosen: [trips],
+              ),
+            ),
+            child: const Text('open'),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    expect(find.text('Leave out albums'), findsOneWidget);
+    await tester.tap(find.text('Trips'));
+    await tester.tap(find.text('W1'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Done'));
+    await tester.pumpAndSettle();
+    expect([for (final a in result!) a.name], ['W1']);
   });
 }

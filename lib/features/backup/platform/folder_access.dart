@@ -324,8 +324,19 @@ class NativeFolderAccess
           if (error.code != 'photos_album') rethrow;
         }
       }
+      // Photos in the albums to leave out. An album that cannot be read must
+      // stop the run, or its photos would be uploaded after all; one that was
+      // deleted on the phone has nothing to leave out.
+      final left = <List<DeviceEntry>>[];
+      for (final album in excludedOf(token)) {
+        try {
+          left.add(await _nativeList(album.token, const []));
+        } on PlatformException catch (error) {
+          if (error.code != 'photos_album') rethrow;
+        }
+      }
       final library = await _nativeList(cameraRollToken, const []);
-      _albumTree = AlbumFolderTree(kept, lists, library);
+      _albumTree = AlbumFolderTree(kept, lists, library, excluded: left);
       _albumTreeToken = token;
     }
     return _albumTree!.children(path);
