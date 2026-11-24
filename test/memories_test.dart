@@ -301,7 +301,13 @@ void main() {
     () async {
       final root = await Directory.systemTemp.createTemp('ncloud-hot-albums-');
       addTearDown(() async {
-        if (await root.exists()) await root.delete(recursive: true);
+        // The cache can still be writing or clearing inside this folder, so a
+        // file or the folder itself may vanish while it is being deleted.
+        try {
+          await root.delete(recursive: true);
+        } on FileSystemException {
+          // Already gone.
+        }
       });
       final cache = LocalCache(() async => root);
       await cache.writeDocument(
@@ -850,7 +856,13 @@ void main() {
         'ncloud-memory-index-',
       );
       addTearDown(() async {
-        if (await root.exists()) await root.delete(recursive: true);
+        // The cache can still be writing or clearing inside this folder, so a
+        // file or the folder itself may vanish while it is being deleted.
+        try {
+          await root.delete(recursive: true);
+        } on FileSystemException {
+          // Already gone.
+        }
       });
       final cache = LocalCache(() async => root);
       var calls = 0;
