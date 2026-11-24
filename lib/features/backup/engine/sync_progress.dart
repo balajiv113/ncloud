@@ -16,6 +16,13 @@ class SyncProgress {
   int transferred = 0;
   int bytesDone = 0;
 
+  /// Bytes of files still on their way that have already reached the server, so
+  /// a large video moves the bar while it uploads.
+  int sending = 0;
+
+  /// What the file in hand is doing: copying it off the phone or uploading it.
+  String step = 'Uploading';
+
   /// Files that needed nothing because they were already backed up.
   int alreadyBackedUp = 0;
 
@@ -65,9 +72,12 @@ class SyncProgress {
   double? get fraction {
     if (toUpload <= 0) return null;
     final byFiles = settled / toUpload;
-    if (bytesTotal > 0 && bytesDone > 0) {
+    if (bytesTotal > 0 && bytesDone + sending > 0) {
       // Large files move the bar smoothly; many small ones keep it honest.
-      return ((bytesDone / bytesTotal + byFiles) / 2).clamp(0.0, 1.0);
+      return (((bytesDone + sending) / bytesTotal + byFiles) / 2).clamp(
+        0.0,
+        1.0,
+      );
     }
     return byFiles.clamp(0.0, 1.0);
   }
@@ -126,7 +136,8 @@ class SyncProgress {
 
   void reset() {
     phase = '';
-    found = toUpload = bytesTotal = transferred = bytesDone = 0;
+    found = toUpload = bytesTotal = transferred = bytesDone = sending = 0;
+    step = 'Uploading';
     alreadyBackedUp = recognised = moved = failed = blocked = conflicts = 0;
     current = null;
     _samples.clear();
