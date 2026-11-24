@@ -1,6 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ncloud/features/backup/engine/adaptive_limit.dart';
-import 'package:ncloud/features/backup/engine/sync_engine.dart';
 
 void main() {
   group('AdaptiveLimit', () {
@@ -17,7 +16,7 @@ void main() {
     ) async {
       for (var w = 0; w < windows; w++) {
         while (limit.active < limit.limit) {
-          await limit.acquire(1);
+          await limit.acquire();
         }
         final bytes = (rateAt(limit.limit) * 20).round();
         now = now.add(const Duration(seconds: 20));
@@ -60,7 +59,7 @@ void main() {
       limit.struggled();
       expect(limit.limit, before ~/ 2);
       while (limit.active > 0) {
-        limit.release(1);
+        limit.release();
       }
       await drive(limit, 5, (n) => n * 1000.0);
       expect(limit.limit, before ~/ 2);
@@ -82,61 +81,65 @@ void main() {
       },
     );
 
-    test('keeps the staged bytes in flight under the budget', () async {
-      final limit = AdaptiveLimit(start: 3, max: 8, byteBudget: 100);
+    test('waits for a free place and never runs more than the limit', () async {
+      final limit = make();
       var running = 0;
       var peak = 0;
-      var peakBytes = 0;
-      var bytesNow = 0;
-      await runConcurrently(
-        List.generate(12, (i) => 40),
-        8,
-        (size) async {
-          running++;
-          bytesNow += size;
-          peak = running > peak ? running : peak;
-          peakBytes = bytesNow > peakBytes ? bytesNow : peakBytes;
-          await Future<void>.delayed(const Duration(milliseconds: 2));
-          running--;
-          bytesNow -= size;
-        },
-        limit: limit,
-        sizeOf: (size) => size,
-      );
-      expect(peakBytes, lessThanOrEqualTo(100));
+      Future<void> one() async {
+        await limit.acquire();
+        running++;
+        peak = running > peak ? running : peak;
+        await Future<void>.delayed(const Duration(milliseconds: 1));
+        running--;
+        limit.release();
+      }
+
+      await Future.wait(List.generate(40, (_) => one()));
+      expect(peak, 3);
+      expect(limit.active, 0);
+    });
+  });
+
+  group('Gate', () {
+    test('lets only its size through at once', () async {
+      final gate = Gate(2);
+      var running = 0;
+      var peak = 0;
+      Future<void> one() async {
+        await gate.acquire();
+        running++;
+        peak = running > peak ? running : peak;
+        await Future<void>.delayed(const Duration(milliseconds: 1));
+        running--;
+        gate.release();
+      }
+
+      await Future.wait(List.generate(10, (_) => one()));
       expect(peak, 2);
     });
+  });
 
-    test('always lets one file through, however large', () async {
-      final limit = AdaptiveLimit(start: 3, max: 8, byteBudget: 10);
-      var done = 0;
-      await runConcurrently(
-        [1000, 1000, 1000],
-        8,
-        (size) async => done++,
-        limit: limit,
-        sizeOf: (size) => size,
-      );
-      expect(done, 3);
-    });
+  group('ByteBudget', () {
+    test(
+      'lets one file through however large and holds the rest back',
+      () async {
+        final budget = ByteBudget(100);
+        await budget.acquire(1000);
+        var second = false;
+        final waiting = budget.acquire(10).then((_) => second = true);
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+        expect(second, isFalse);
+        budget.release(1000);
+        await waiting;
+        expect(second, isTrue);
+      },
+    );
 
-    test('never runs more at once than the limit', () async {
-      final limit = AdaptiveLimit(start: 3, max: 8);
-      var running = 0;
-      var peak = 0;
-      await runConcurrently(
-        List.generate(40, (i) => i),
-        8,
-        (item) async {
-          running++;
-          peak = running > peak ? running : peak;
-          await Future<void>.delayed(const Duration(milliseconds: 1));
-          running--;
-        },
-        limit: limit,
-        sizeOf: (item) => 1,
-      );
-      expect(peak, 3);
+    test('keeps admitting while under the budget', () async {
+      final budget = ByteBudget(100);
+      await budget.acquire(40);
+      await budget.acquire(40);
+      await budget.acquire(40);
     });
   });
 }
