@@ -326,17 +326,31 @@ import workmanager_apple
               "modified": Int64((values.contentModificationDate?.timeIntervalSince1970 ?? 0) * 1000)]
     }
 
+    /// When a staged file was made. New files carry it in their name, because the
+    /// modified date cannot be trusted: Photos gives an exported file the photo's
+    /// own date, which can be years ago while the file is still being uploaded.
+    /// Older files, named without a time, are judged by their modified date.
+    private func stagedAt(_ file: URL, _ values: URLResourceValues) -> Date? {
+      let stem = file.deletingPathExtension().lastPathComponent
+      if let dash = stem.firstIndex(of: "-"), stem[..<dash].count >= 10,
+         let seconds = TimeInterval(stem[..<dash]) {
+        return Date(timeIntervalSince1970: seconds)
+      }
+      return values.contentModificationDate
+    }
+
     func newStage(create: Bool = true) throws -> URL {
       let cutoff = Date().addingTimeInterval(-24 * 60 * 60)
       for file in try manager.contentsOfDirectory(
         at: staging, includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey]) {
         let values = try file.resourceValues(forKeys: [.contentModificationDateKey, .isRegularFileKey])
         if file.pathExtension == "part", values.isRegularFile == true,
-           let modified = values.contentModificationDate, modified < cutoff {
+           let made = stagedAt(file, values), made < cutoff {
           try manager.removeItem(at: file)
         }
       }
-      let file = staging.appendingPathComponent(UUID().uuidString + ".part")
+      let name = "\(Int(Date().timeIntervalSince1970))-\(UUID().uuidString).part"
+      let file = staging.appendingPathComponent(name)
       if create {
         guard manager.createFile(atPath: file.path, contents: nil) else { throw failure() }
       }
