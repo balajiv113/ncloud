@@ -157,6 +157,25 @@ class TimelineResult {
 /// Paths are account-relative names; album references are opaque to consumers.
 /// Optional discovery returns null only when unsupported, never on auth or
 /// connection failure. Implementations retain their own protocol fallbacks.
+/// A server that takes a large file in pieces and carries on where an
+/// interrupted upload stopped, instead of starting again.
+abstract interface class ResumableUploads {
+  /// Creates a new file like [CloudBackend.uploadNew], fails with status 412 if
+  /// the destination exists, and sends the file in pieces. [read] gives the
+  /// bytes from `start` up to, not including, `end`. Pieces that reached the
+  /// server in an earlier try are not sent again. [onProgress] is told how many
+  /// bytes of the file are on the server so far.
+  Future<UploadResult> uploadResumable(
+    Account account,
+    List<String> path,
+    Stream<List<int>> Function(int start, int end) read,
+    int size, {
+    required String sha1,
+    DateTime? modified,
+    void Function(int sent)? onProgress,
+  });
+}
+
 abstract interface class CloudBackend {
   void close();
 

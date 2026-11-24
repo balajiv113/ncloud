@@ -108,6 +108,7 @@ class SyncEngine {
     this.maxUploads,
     this.prefetch = 0,
     this.bigFile = 512 * 1024 * 1024,
+    this.resumableFrom = 64 * 1024 * 1024,
   }) : _clock = clock ?? DateTime.now,
        _pause = pause ?? Future<void>.delayed;
 
@@ -132,6 +133,9 @@ class SyncEngine {
   /// Files larger than this copy one at a time, so they cannot take every copy
   /// place from the small ones.
   final int bigFile;
+
+  /// Files at least this large are uploaded in pieces where the server allows.
+  final int resumableFrom;
   late AdaptiveLimit _limit;
 
   DateTime _notified = DateTime.fromMillisecondsSinceEpoch(0);
@@ -637,14 +641,31 @@ class _Uploader {
           try {
             final result = await _sendFile(
               active,
-              () => _client.uploadNew(
-                session,
-                [...pair.cloudRoot, ...target],
-                meter.watch(copy.openRead()),
-                size,
-                sha1: fingerprint,
-                modified: DateTime.fromMillisecondsSinceEpoch(file.modified),
-              ),
+              () => switch (_client) {
+                // A large file goes in pieces, so a dropped connection costs
+                // the piece in flight and not the whole file.
+                final ResumableUploads pieces
+                    when size >= engine.resumableFrom =>
+                  pieces.uploadResumable(
+                    session,
+                    [...pair.cloudRoot, ...target],
+                    (start, end) => copy.openRead(start, end),
+                    size,
+                    sha1: fingerprint,
+                    modified: DateTime.fromMillisecondsSinceEpoch(
+                      file.modified,
+                    ),
+                    onProgress: meter.reached,
+                  ),
+                final client => client.uploadNew(
+                  session,
+                  [...pair.cloudRoot, ...target],
+                  meter.watch(copy.openRead()),
+                  size,
+                  sha1: fingerprint,
+                  modified: DateTime.fromMillisecondsSinceEpoch(file.modified),
+                ),
+              },
             );
             final etag = result.etag;
             if (etag == null || etag.isEmpty) {
@@ -996,6 +1017,14 @@ class _Meter {
   final ActiveFile file;
   final SyncProgress _progress;
   final SyncEngine _engine;
+
+  /// Notes how many bytes of the file are on the server, when they are sent in
+  /// pieces and the client counts them.
+  void reached(int sent) {
+    file.sent = sent;
+    _progress.moving(_engine._clock());
+    _engine._tick();
+  }
 
   Stream<List<int>> watch(Stream<List<int>> bytes) {
     file.sent = 0;

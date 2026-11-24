@@ -5,6 +5,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart' as crypto;
 import 'package:http/http.dart' as http;
 import 'package:xml/xml.dart';
 
@@ -52,14 +53,19 @@ extension NextcloudAuthorization on Account {
       'Basic ${base64Encode(utf8.encode('$loginName:$appPassword'))}';
 }
 
-class NextcloudClient implements CloudBackend {
+class NextcloudClient implements CloudBackend, ResumableUploads {
   NextcloudClient({
     http.Client? transport,
     Future<WebSocket> Function(Uri)? connectPush,
+    this.chunkBytes = 32 * 1024 * 1024,
   }) : _transport = transport ?? http.Client(),
        _connectPush = connectPush;
 
   final http.Client _transport;
+
+  /// The size of each piece of a large upload. It stays under the request size
+  /// limits that proxies and CDNs commonly set (often 100 MB).
+  final int chunkBytes;
 
   @override
   NextcloudAccount restoreAccount(String value) {
@@ -1923,6 +1929,178 @@ class NextcloudClient implements CloudBackend {
         'Upload interrupted. It will be retried.',
         retryable: true,
       );
+    }
+  }
+
+  /// The folder on the server that holds the pieces of one upload. Its name is
+  /// worked out from what is being uploaded and where, so a later try, or a
+  /// later run, finds the pieces an earlier one left.
+  Uri _uploadFolder(Account account, List<String> path, String sha1, int size) {
+    final id = crypto.sha1
+        .convert(utf8.encode('ncloud|$sha1|$size|${path.join('/')}'))
+        .toString();
+    return serverEndpoint(account.server, [
+      'remote.php',
+      'dav',
+      'uploads',
+      account.userId,
+      'ncloud-$id',
+    ]);
+  }
+
+  Future<http.Response> _uploadCall(
+    http.BaseRequest request,
+    Duration allowance,
+  ) async {
+    try {
+      return await http.Response.fromStream(
+        await _transport.send(request).timeout(allowance),
+      ).timeout(allowance);
+    } on TimeoutException {
+      throw const CloudException(
+        'Upload timed out. It will be retried.',
+        retryable: true,
+      );
+    } on http.ClientException {
+      throw const CloudException(
+        'Upload interrupted. It will be retried.',
+        retryable: true,
+      );
+    } on SocketException {
+      throw const CloudException(
+        'Upload interrupted. It will be retried.',
+        retryable: true,
+      );
+    }
+  }
+
+  /// The pieces of an upload that are on the server, by name, with their size.
+  Future<Map<String, int>> _uploadedPieces(Account account, Uri folder) async {
+    final response = await _request(
+      'PROPFIND',
+      folder,
+      account: account,
+      headers: {'Depth': '1', 'Content-Type': 'application/xml; charset=utf-8'},
+      body:
+          '<d:propfind xmlns:d="DAV:"><d:prop><d:getcontentlength/></d:prop></d:propfind>',
+    );
+    if (response.statusCode == 404) return {};
+    _expect(response, {207});
+    final pieces = <String, int>{};
+    for (final item in XmlDocument.parse(
+      response.body,
+    ).findAllElements('response', namespace: 'DAV:')) {
+      final href = item.getElement('href', namespace: 'DAV:')?.innerText ?? '';
+      final name = Uri.decodeComponent(
+        href.split('/').lastWhere((p) => p.isNotEmpty, orElse: () => ''),
+      );
+      final size = int.tryParse(
+        item
+                .findAllElements('getcontentlength', namespace: 'DAV:')
+                .firstOrNull
+                ?.innerText ??
+            '',
+      );
+      if (RegExp(r'^\d{5}$').hasMatch(name) && size != null) {
+        pieces[name] = size;
+      }
+    }
+    return pieces;
+  }
+
+  @override
+  Future<UploadResult> uploadResumable(
+    Account account,
+    List<String> path,
+    Stream<List<int>> Function(int start, int end) read,
+    int size, {
+    required String sha1,
+    DateTime? modified,
+    void Function(int sent)? onProgress,
+  }) async {
+    validateName(path.last);
+    final folder = _uploadFolder(account, path, sha1, size);
+    final destination = davUri(account, path).toString();
+    final headers = {
+      'Authorization': account.authorization,
+      'User-Agent': 'ncloud/0.5.5',
+      'Destination': destination,
+      'OC-Total-Length': '$size',
+    };
+    // An upload that is already started answers 405, which is what a later try
+    // expects; the pieces it already holds are listed next.
+    final made = await _request(
+      'MKCOL',
+      folder,
+      account: account,
+      headers: {'Destination': destination, 'OC-Total-Length': '$size'},
+    );
+    _expect(made, {201, 405});
+    final have = await _uploadedPieces(account, folder);
+    final pieces = (size + chunkBytes - 1) ~/ chunkBytes;
+    for (var index = 0; index < pieces; index++) {
+      final start = index * chunkBytes;
+      final end = math.min(size, start + chunkBytes);
+      final name = (index + 1).toString().padLeft(5, '0');
+      if (have[name] == end - start) {
+        onProgress?.call(end);
+        continue;
+      }
+      var counted = 0;
+      final request =
+          _UploadRequest(
+              Uri.parse('$folder/$name'),
+              read(start, end).map((chunk) {
+                counted += chunk.length;
+                onProgress?.call(start + counted);
+                return chunk;
+              }),
+            )
+            ..contentLength = end - start
+            ..followRedirects = false
+            ..headers.addAll({
+              ...headers,
+              'Content-Type': 'application/octet-stream',
+            });
+      final response = await _uploadCall(
+        request,
+        Duration(seconds: math.max(300, (end - start) ~/ 131072)),
+      );
+      _expect(response, {201, 204});
+    }
+    // The pieces are joined into the file on the server. The server refuses to
+    // replace an existing file ("Overwrite: F") and checks the total length.
+    final join = http.Request('MOVE', Uri.parse('$folder/.file'))
+      ..followRedirects = false
+      ..headers.addAll({
+        ...headers,
+        'Overwrite': 'F',
+        'OC-Checksum': 'SHA1:$sha1',
+        'X-OC-Mtime': ?modified == null
+            ? null
+            : '${modified.millisecondsSinceEpoch ~/ 1000}',
+      });
+    try {
+      final response = await _uploadCall(
+        join,
+        Duration(seconds: math.max(600, size ~/ (5 * 1024 * 1024))),
+      );
+      _expect(response, {201, 204});
+      onProgress?.call(size);
+      return UploadResult(
+        etag: response.headers['oc-etag'] ?? response.headers['etag'],
+        fileId: response.headers['oc-fileid'],
+      );
+    } on CloudException catch (error) {
+      // The destination exists, so the pieces are of no use.
+      if (error.statusCode == 412) {
+        try {
+          await _request('DELETE', folder, account: account);
+        } on Object {
+          // The server clears abandoned uploads by itself.
+        }
+      }
+      rethrow;
     }
   }
 

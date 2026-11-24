@@ -166,4 +166,204 @@ void main() {
       );
     });
   });
+
+  group('uploadResumable', () {
+    String multistatus(Map<String, int> pieces) =>
+        '''
+<d:multistatus xmlns:d="DAV:">
+  <d:response><d:href>/remote.php/dav/uploads/alice/x/</d:href></d:response>
+  <d:response><d:href>/remote.php/dav/uploads/alice/x/.file</d:href>
+    <d:propstat><d:prop><d:getcontentlength>25</d:getcontentlength></d:prop></d:propstat></d:response>
+  ${pieces.entries.map((e) => '<d:response><d:href>/remote.php/dav/uploads/alice/x/${e.key}</d:href><d:propstat><d:prop><d:getcontentlength>${e.value}</d:getcontentlength></d:prop></d:propstat></d:response>').join()}
+</d:multistatus>''';
+
+    Stream<List<int>> Function(int, int) source(List<int> data) =>
+        (start, end) => Stream.value(data.sublist(start, end));
+
+    test(
+      'makes the upload, sends each piece, then joins them without overwriting',
+      () async {
+        final seen = <http.Request>[];
+        final client = NextcloudClient(
+          chunkBytes: 10,
+          transport: MockClient((request) async {
+            seen.add(request);
+            return switch (request.method) {
+              'MKCOL' => http.Response('', 201),
+              'PROPFIND' => http.Response(multistatus({}), 207),
+              'PUT' => http.Response('', 201),
+              _ => http.Response(
+                '',
+                201,
+                headers: {'oc-etag': '"joined"', 'oc-fileid': '9'},
+              ),
+            };
+          }),
+        );
+        addTearDown(client.close);
+        final data = List.generate(25, (i) => i);
+        final sent = <int>[];
+        final result = await client.uploadResumable(
+          account,
+          ['Backup', 'big.mp4'],
+          source(data),
+          25,
+          sha1: 'abc123',
+          modified: DateTime.fromMillisecondsSinceEpoch(1700000123456),
+          onProgress: sent.add,
+        );
+        expect(seen.map((r) => r.method), [
+          'MKCOL',
+          'PROPFIND',
+          'PUT',
+          'PUT',
+          'PUT',
+          'MOVE',
+        ]);
+        final folder = seen.first.url;
+        expect(
+          folder.path,
+          startsWith('/nextcloud/remote.php/dav/uploads/alice/ncloud-'),
+        );
+        expect(
+          seen.first.headers['Destination'],
+          contains('/remote.php/dav/files/alice/Backup/big.mp4'),
+        );
+        expect(seen[2].url.path, '${folder.path}/00001');
+        expect(seen[3].url.path, '${folder.path}/00002');
+        expect(seen[4].url.path, '${folder.path}/00003');
+        expect(seen[2].bodyBytes, data.sublist(0, 10));
+        expect(seen[4].bodyBytes, data.sublist(20, 25));
+        final join = seen.last;
+        expect(join.url.path, '${folder.path}/.file');
+        expect(join.headers['Overwrite'], 'F');
+        expect(join.headers['OC-Total-Length'], '25');
+        expect(join.headers['OC-Checksum'], 'SHA1:abc123');
+        expect(join.headers['X-OC-Mtime'], '1700000123');
+        expect(result.etag, '"joined"');
+        expect(sent.last, 25);
+        expect(sent, orderedEquals([...sent]..sort()));
+      },
+    );
+
+    test('carries on after the pieces that are already there', () async {
+      final puts = <String>[];
+      final client = NextcloudClient(
+        chunkBytes: 10,
+        transport: MockClient((request) async {
+          switch (request.method) {
+            case 'MKCOL':
+              return http.Response('', 405);
+            case 'PROPFIND':
+              // The first piece is whole, the second is cut short.
+              return http.Response(multistatus({'00001': 10, '00002': 4}), 207);
+            case 'PUT':
+              puts.add(request.url.pathSegments.last);
+              return http.Response('', 201);
+          }
+          return http.Response('', 201, headers: {'etag': '"e"'});
+        }),
+      );
+      addTearDown(client.close);
+      final sent = <int>[];
+      await client.uploadResumable(
+        account,
+        ['a.mp4'],
+        source(List.filled(25, 1)),
+        25,
+        sha1: 'ab',
+        onProgress: sent.add,
+      );
+      expect(puts, ['00002', '00003']);
+      expect(sent.first, 10, reason: 'the piece already there counts at once');
+    });
+
+    test(
+      'a destination that exists is refused, and the pieces are cleared',
+      () async {
+        final methods = <String>[];
+        final client = NextcloudClient(
+          chunkBytes: 10,
+          transport: MockClient((request) async {
+            methods.add(request.method);
+            return switch (request.method) {
+              'MKCOL' => http.Response('', 201),
+              'PROPFIND' => http.Response(multistatus({}), 207),
+              'PUT' => http.Response('', 201),
+              'MOVE' => http.Response('', 412),
+              _ => http.Response('', 204),
+            };
+          }),
+        );
+        addTearDown(client.close);
+        await expectLater(
+          client.uploadResumable(
+            account,
+            ['a.mp4'],
+            source(List.filled(5, 1)),
+            5,
+            sha1: 'ab',
+          ),
+          throwsA(
+            isA<CloudException>().having((e) => e.statusCode, 'status', 412),
+          ),
+        );
+        expect(methods.last, 'DELETE');
+      },
+    );
+
+    test('a dropped connection is a retryable failure', () async {
+      final client = NextcloudClient(
+        chunkBytes: 10,
+        transport: MockClient((request) async {
+          if (request.method == 'PUT') throw http.ClientException('reset');
+          return request.method == 'PROPFIND'
+              ? http.Response(multistatus({}), 207)
+              : http.Response('', 201);
+        }),
+      );
+      addTearDown(client.close);
+      await expectLater(
+        client.uploadResumable(
+          account,
+          ['a.mp4'],
+          source(List.filled(5, 1)),
+          5,
+          sha1: 'ab',
+        ),
+        throwsA(
+          isA<CloudException>().having((e) => e.retryable, 'retryable', isTrue),
+        ),
+      );
+    });
+
+    test('the same file and place always use the same upload folder', () async {
+      final folders = <String>[];
+      final client = NextcloudClient(
+        chunkBytes: 10,
+        transport: MockClient((request) async {
+          if (request.method == 'MKCOL') folders.add(request.url.path);
+          return request.method == 'PROPFIND'
+              ? http.Response(multistatus({}), 207)
+              : http.Response('', 201, headers: {'etag': '"e"'});
+        }),
+      );
+      addTearDown(client.close);
+      for (final where in [
+        ['a.mp4'],
+        ['a.mp4'],
+        ['b.mp4'],
+      ]) {
+        await client.uploadResumable(
+          account,
+          where,
+          source(List.filled(5, 1)),
+          5,
+          sha1: 'ab',
+        );
+      }
+      expect(folders[0], folders[1]);
+      expect(folders[2], isNot(folders[0]));
+    });
+  });
 }
