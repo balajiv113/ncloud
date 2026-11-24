@@ -60,6 +60,14 @@ class _Item {
 
   /// Whether an earlier run recorded a failure for it, to be cleared on success.
   bool hadFailure = false;
+
+  /// What the file holds while it is tried, and kept across retries: its row on
+  /// the card, the temporary copy and its fingerprint, and the copy space
+  /// reserved for it. They are given back when the file is finished with.
+  ActiveFile? active;
+  File? staged;
+  String? fingerprint;
+  int? reserved;
 }
 
 /// The key the journal stores a path under.
@@ -99,6 +107,7 @@ class SyncEngine {
     Future<void> Function(Duration)? pause,
     this.maxUploads,
     this.prefetch = 0,
+    this.bigFile = 512 * 1024 * 1024,
   }) : _clock = clock ?? DateTime.now,
        _pause = pause ?? Future<void>.delayed;
 
@@ -119,6 +128,10 @@ class SyncEngine {
 
   /// Files to copy and check ahead of the uploads, beyond those uploading.
   final int prefetch;
+
+  /// Files larger than this copy one at a time, so they cannot take every copy
+  /// place from the small ones.
+  final int bigFile;
   late AdaptiveLimit _limit;
 
   DateTime _notified = DateTime.fromMillisecondsSinceEpoch(0);
@@ -392,9 +405,10 @@ class _Uploader {
   SyncJournal get _journal => engine.journal;
   SyncProgress get _progress => engine.progress;
 
-  /// Copies are taken off the phone a couple at a time, because the phone's
+  /// Copies are taken off the phone a few at a time, because the phone's
   /// library serves them one after another anyway; checksums use the cores.
-  final Gate _copies = Gate(2);
+  final Gate _copies = Gate(3);
+  final Gate _bigCopies = Gate(1);
   late final Gate _checks = Gate(AdaptiveLimit.deviceMax.clamp(2, 4));
 
   /// Staged copies are kept under 1 GiB where they can be.
@@ -427,6 +441,33 @@ class _Uploader {
   }
 
   Future<void> upload(_Item item) async {
+    try {
+      await _attempts(item);
+    } finally {
+      await _release(item);
+    }
+  }
+
+  /// Lets go of what a file held while it was tried: its row, its temporary
+  /// copy and its share of the copy space. Retries reuse these, so they are only
+  /// given back once the file is finished with, whichever way.
+  Future<void> _release(_Item item) async {
+    final row = item.active;
+    if (row != null) _progress.finish(row);
+    final copy = item.staged;
+    item
+      ..active = null
+      ..staged = null
+      ..fingerprint = null;
+    try {
+      if (copy != null) await _access.discard(copy);
+    } finally {
+      if (item.reserved != null) _budget.release(item.reserved!);
+      item.reserved = null;
+    }
+  }
+
+  Future<void> _attempts(_Item item) async {
     engine.check(pair);
     for (var attempt = 0; ; attempt++) {
       try {
@@ -511,22 +552,42 @@ class _Uploader {
     final path = item.path;
     final file = item.entry;
     await engine._requireNetwork(pair);
-    File? staged;
-    final active = _progress.start(file.name, file.size);
+    final active = item.active ??= _progress.start(file.name, file.size);
     final meter = _Meter(active, _progress, engine);
-    final reserved = file.size > 0 ? file.size : 0;
-    await _budget.acquire(reserved);
+    if (item.reserved == null) {
+      final reserved = file.size > 0 ? file.size : 0;
+      await _budget.acquire(reserved);
+      item.reserved = reserved;
+    }
     try {
-      final copy = await _stage(active, ActiveFile.copy, () async {
-        await _copies.acquire();
-        try {
-          return await _copyOut(path, file, active);
-        } finally {
-          _copies.release();
-        }
-      });
+      // A very large file takes one of the copy places for a long time, so only
+      // one at a time may; the others keep copying the smaller files.
+      final big = file.size > engine.bigFile;
+      // A retry after a dropped connection uses the copy already made, as long
+      // as it is still there, instead of taking the file off the phone again.
+      final kept = item.staged;
+      final copy = kept != null && await kept.exists()
+          ? kept
+          : await () async {
+              if (big) await _bigCopies.acquire();
+              try {
+                await _copies.acquire();
+                try {
+                  return await _stage(
+                    active,
+                    ActiveFile.copy,
+                    () => _copyOut(path, file, active),
+                  );
+                } finally {
+                  _copies.release();
+                }
+              } finally {
+                if (big) _bigCopies.release();
+              }
+            }();
+      if (!identical(copy, kept)) item.fingerprint = null;
+      item.staged = copy;
       active.copied = file.size > 0 ? file.size : active.copied;
-      staged = copy;
       engine.check(pair);
       final size = await copy.length();
       if (file.size >= 0 && size != file.size) {
@@ -534,21 +595,24 @@ class _Uploader {
           'The source changed while preparing it. Run again.',
         );
       }
-      final fingerprint = await _stage(active, ActiveFile.check, () async {
-        await _checks.acquire();
-        try {
-          // A device that fingerprinted the file while copying it already
-          // knows; reading it again is only the fallback.
-          final access = _access;
-          final known = switch (access) {
-            final StagedChecksums checks => await checks.checksumOf(copy),
-            _ => null,
-          };
-          return known ?? await fingerprintOf(copy);
-        } finally {
-          _checks.release();
-        }
-      });
+      final fingerprint =
+          item.fingerprint ??
+          await _stage<String>(active, ActiveFile.check, () async {
+            await _checks.acquire();
+            try {
+              // A device that fingerprinted the file while copying it already
+              // knows; reading it again is only the fallback.
+              final access = _access;
+              final known = switch (access) {
+                final StagedChecksums checks => await checks.checksumOf(copy),
+                _ => null,
+              };
+              return known ?? await fingerprintOf(copy);
+            } finally {
+              _checks.release();
+            }
+          });
+      item.fingerprint = fingerprint;
       engine.check(pair);
       if (await _sameFile(item, fingerprint, size, copy, meter)) return;
       // Files with the same content are sent one at a time: while one is on its
@@ -634,12 +698,8 @@ class _Uploader {
         done.complete();
       }
     } finally {
-      _progress.finish(active);
-      try {
-        if (staged != null) await _access.discard(staged);
-      } finally {
-        _budget.release(reserved);
-      }
+      // Between tries, and until the file is finished with, it is not working.
+      active.step = ActiveFile.wait;
     }
   }
 

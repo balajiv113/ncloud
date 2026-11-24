@@ -41,6 +41,9 @@ import workmanager_apple
     private weak var controller: UIViewController?
     private let channel: FlutterMethodChannel
     private let queue: DispatchQueue
+    // Copies off the phone run apart from everything else and from each other, so
+    // one very large video does not hold up the small files behind it.
+    private let copyQueue = DispatchQueue(label: "app.ncloud.folder-copy", attributes: .concurrent)
     private var pickerResult: FlutterResult?
     private let manager = FileManager.default
     private let albums = AlbumBackupService()
@@ -165,7 +168,7 @@ import workmanager_apple
         result(FlutterMethodNotImplemented)
         return
       }
-      queue.async {
+      (call.method == "export" ? copyQueue : queue).async {
         do {
           let args = call.arguments as? [String: Any] ?? [:]
           try self.manager.createDirectory(at: self.staging, withIntermediateDirectories: true)

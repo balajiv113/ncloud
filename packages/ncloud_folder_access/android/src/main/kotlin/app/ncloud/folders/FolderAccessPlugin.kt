@@ -42,6 +42,10 @@ class FolderAccessPlugin : FlutterPlugin, ActivityAware, PluginRegistry.Activity
     private lateinit var context: Context
     private lateinit var channel: MethodChannel
     private val worker = Executors.newSingleThreadExecutor()
+    // Copies off the phone run apart from everything else and from each other, so
+    // one very large video does not hold up the small files behind it, nor the
+    // calls that make and remove their temporary files.
+    private val copiers = Executors.newFixedThreadPool(3)
     private val main = Handler(Looper.getMainLooper())
     private var activity: Activity? = null
     private var binding: ActivityPluginBinding? = null
@@ -112,7 +116,7 @@ class FolderAccessPlugin : FlutterPlugin, ActivityAware, PluginRegistry.Activity
                         }
                     }
                 }
-                "mediaTransfer" -> worker.execute {
+                "mediaTransfer" -> (if (call.method == "mediaExport") copiers else worker).execute {
                     try {
                         val output: Any? = when (call.method) {
                             "mediaList" -> mediaPage(
@@ -185,7 +189,7 @@ class FolderAccessPlugin : FlutterPlugin, ActivityAware, PluginRegistry.Activity
                 } catch (error: SecurityException) {
                     result.error("sync_lock", "Could not access the backup lock.", null)
                 }
-                "transfer" -> worker.execute {
+                "transfer" -> (if (call.method == "export") copiers else worker).execute {
                     try {
                         val output: Any? = when (call.method) {
                             "stage" -> newStage().path
@@ -571,5 +575,6 @@ class FolderAccessPlugin : FlutterPlugin, ActivityAware, PluginRegistry.Activity
             locks.clear()
         }
         worker.shutdown()
+        copiers.shutdown()
     }
 }

@@ -31,8 +31,9 @@ class SyncProgress {
   /// A file is finished with, whether it worked or not.
   void finish(ActiveFile file) => active.remove(file);
 
-  /// Files in each step right now: being copied off the phone, being checked
+  /// Files in each step right now: waiting for a turn, being copied off the phone, being checked
   /// (checksummed), and being uploaded. A file is in one at a time.
+  int get waiting => active.where((f) => f.step == ActiveFile.wait).length;
   int get copying => active.where((f) => f.step == ActiveFile.copy).length;
   int get checking => active.where((f) => f.step == ActiveFile.check).length;
   int get uploading => active.where((f) => f.step == ActiveFile.upload).length;
@@ -179,6 +180,7 @@ class SyncProgress {
     'transferred': transferred,
     'bytesDone': bytesDone,
     'fraction': fraction,
+    'waiting': waiting,
     'copying': copying,
     'checking': checking,
     'uploading': uploading,
@@ -195,6 +197,7 @@ class SyncProgress {
 class ActiveFile {
   ActiveFile(this.name, this.size);
 
+  static const wait = 'Waiting';
   static const copy = 'Copying';
   static const check = 'Checking';
   static const upload = 'Uploading';
@@ -204,7 +207,8 @@ class ActiveFile {
   /// Its size, or a negative number when the phone does not say.
   final int size;
 
-  String step = copy;
+  /// Waiting for its turn until the copy starts.
+  String step = wait;
 
   /// Bytes copied off the phone so far, and bytes sent to the server so far.
   int copied = 0;
@@ -215,7 +219,9 @@ class ActiveFile {
   /// takes the time.
   double get fraction {
     const copyShare = 0.2;
-    final copyPart = step == copy
+    final copyPart = step == wait
+        ? 0.0
+        : step == copy
         ? (size > 0 ? (copied / size).clamp(0.0, 1.0) : 0.0)
         : 1.0;
     final uploadPart = step == upload && size > 0

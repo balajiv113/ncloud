@@ -165,6 +165,9 @@ void main() {
           ..bytesTotal = 1000;
         expect(p.fraction, 0);
         final file = p.start('a.mp4', 500);
+        // Waiting for a turn adds nothing yet.
+        expect(p.fraction, 0);
+        file.step = ActiveFile.copy;
         file.copied = 250;
         // Half copied is half of a fifth of half the bytes.
         expect(p.fraction, closeTo(0.05, 0.001));
@@ -183,20 +186,21 @@ void main() {
 
     test('counts come from the files in hand and add up', () {
       final p = SyncProgress()..toUpload = 5;
-      final a = p.start('a', 10);
+      final a = p.start('a', 10)..step = ActiveFile.copy;
+      p.start('w', 10);
       final b = p.start('b', 10)..step = ActiveFile.check;
       final c = p.start('c', 10)..step = ActiveFile.upload;
       p.start('d', 10).step = ActiveFile.upload;
-      expect([p.copying, p.checking, p.uploading], [1, 1, 2]);
+      expect([p.waiting, p.copying, p.checking, p.uploading], [1, 1, 1, 2]);
       p.finish(c);
-      expect([p.copying, p.checking, p.uploading], [1, 1, 1]);
+      expect([p.waiting, p.copying, p.checking, p.uploading], [1, 1, 1, 1]);
       p.finish(a);
       p.finish(b);
-      expect(p.active, hasLength(1));
+      expect(p.active, hasLength(2));
       p.reset();
       expect(
-        [p.copying, p.checking, p.uploading, p.active.length],
-        [0, 0, 0, 0],
+        [p.waiting, p.copying, p.checking, p.uploading, p.active.length],
+        [0, 0, 0, 0, 0],
       );
     });
 
