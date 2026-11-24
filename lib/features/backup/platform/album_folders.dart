@@ -13,10 +13,13 @@ const _setPrefix = 'photoset:';
 
 /// An iPhone album that gets a folder of its own on the server.
 class AlbumChoice {
-  const AlbumChoice(this.token, this.name);
+  const AlbumChoice(this.token, this.name, {this.subtitle});
 
   final String token;
   final String name;
+
+  /// A line under the name, such as how many files it holds.
+  final String? subtitle;
 }
 
 /// The whole library, with some albums kept in folders of their own.

@@ -100,6 +100,48 @@ class _BackupSetupScreenState extends State<BackupSetupScreen> {
     }
   });
 
+  /// Chooses which phone folders are left out of the whole-library backup.
+  Future<void> _chooseExcludedFolders() => _perform(() async {
+    final source = _source;
+    if (source == null) return;
+    final left = {
+      for (final path in DeviceFolder.excludedFolders(source.token))
+        path.join('/'),
+    };
+    final folders = [
+      for (final folder in await sync.libraryFolders())
+        // Files at the very top of the storage have no folder to name.
+        if (folder.path.isNotEmpty)
+          AlbumChoice(
+            folder.path.join('/'),
+            folder.name,
+            subtitle: '${folder.files} ${folder.files == 1 ? 'file' : 'files'}',
+          ),
+    ];
+    if (!mounted) return;
+    final result = await showModalBottomSheet<List<AlbumChoice>>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (_) => AlbumExcludeSheet(
+        available: folders,
+        chosen: [
+          for (final folder in folders)
+            if (left.contains(folder.token)) folder,
+        ],
+        title: 'Leave out folders',
+        empty: 'No photo folders were found on this phone.',
+      ),
+    );
+    if (mounted && result != null) {
+      setState(
+        () => _source = DeviceFolder.library(
+          excluded: [for (final folder in result) folder.token.split('/')],
+        ),
+      );
+    }
+  });
+
   /// Chooses which albums are left out of the whole-library backup.
   Future<void> _chooseExcluded() => _perform(() async {
     final source = _source;
@@ -200,6 +242,17 @@ class _BackupSetupScreenState extends State<BackupSetupScreen> {
     }
   });
 
+  /// Include and exclude patterns are for choosing files in a folder. A whole
+  /// library is chosen by album or folder instead, so they are hidden there,
+  /// unless the backup already has some, which must stay visible to be changed.
+  bool get _showPatterns {
+    final source = _source;
+    final whole =
+        source != null &&
+        (source.kind == DeviceSourceKind.library || isCameraRoll(source.token));
+    return !whole || _include.text.isNotEmpty || _exclude.text.isNotEmpty;
+  }
+
   /// What the source is called: the library is not just "Phone".
   static String _sourceLabel(DeviceFolder source) =>
       source.kind == DeviceSourceKind.library
@@ -279,6 +332,19 @@ class _BackupSetupScreenState extends State<BackupSetupScreen> {
             trailing: const Icon(Icons.chevron_right),
             onTap: _busy ? null : _chooseExcluded,
           ),
+        if (_source?.kind == DeviceSourceKind.library)
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Leave out folders'),
+            subtitle: Text(switch (DeviceFolder.excludedFolders(
+              _source!.token,
+            )) {
+              [] => 'None',
+              final paths => paths.map((p) => p.last).join(', '),
+            }),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: _busy ? null : _chooseExcludedFolders,
+          ),
         if (_libraryPermission == LibraryPermission.partial)
           Padding(
             padding: const EdgeInsets.only(bottom: 8),
@@ -314,24 +380,26 @@ class _BackupSetupScreenState extends State<BackupSetupScreen> {
                   }
                 }),
         ),
-        const SizedBox(height: 16),
-        TextField(
-          controller: _include,
-          enabled: !_busy,
-          decoration: const InputDecoration(
-            labelText: 'Include patterns',
-            hintText: '*.jpg, *.mp4',
+        if (_showPatterns) ...[
+          const SizedBox(height: 16),
+          TextField(
+            controller: _include,
+            enabled: !_busy,
+            decoration: const InputDecoration(
+              labelText: 'Include patterns',
+              hintText: '*.jpg, *.mp4',
+            ),
           ),
-        ),
-        const SizedBox(height: 16),
-        TextField(
-          controller: _exclude,
-          enabled: !_busy,
-          decoration: const InputDecoration(
-            labelText: 'Exclude patterns',
-            hintText: 'Screenshots/**, *.tmp',
+          const SizedBox(height: 16),
+          TextField(
+            controller: _exclude,
+            enabled: !_busy,
+            decoration: const InputDecoration(
+              labelText: 'Exclude patterns',
+              hintText: 'Screenshots/**, *.tmp',
+            ),
           ),
-        ),
+        ],
         if (sync.scheduler.supported) ...[
           const SizedBox(height: 20),
           DropdownButtonFormField<bool>(

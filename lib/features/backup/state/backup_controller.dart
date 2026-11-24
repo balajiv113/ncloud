@@ -513,6 +513,15 @@ class BackupController extends ChangeNotifier {
     return null;
   }
 
+  /// The phone folders that hold photos or videos, for choosing which to leave
+  /// out of a whole-library backup; empty where that is not available.
+  Future<List<LibraryFolder>> libraryFolders() async {
+    if (access case final LibraryAccess library) {
+      return library.libraryFolders();
+    }
+    return const [];
+  }
+
   /// Offers the phone's whole photo and video library as a source, asking for
   /// access if needed. Throws when the user does not allow it.
   Future<DeviceFolder> chooseLibrary() async {
@@ -533,7 +542,7 @@ class BackupController extends ChangeNotifier {
         'You can change this in your phone\'s settings.',
       );
     }
-    return const DeviceFolder.library();
+    return DeviceFolder.library();
   }
 
   /// What backing up [pair] would do right now, without doing any of it.

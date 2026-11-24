@@ -81,7 +81,7 @@ void main() {
     id: 'lib',
     account: syncAccount(fixtures.account),
     name: 'All photos & videos',
-    folder: const DeviceFolder.library(),
+    folder: DeviceFolder.library(),
     remote: const ['Backup'],
     wifiOnly: false,
   );

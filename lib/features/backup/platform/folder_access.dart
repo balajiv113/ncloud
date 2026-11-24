@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/services.dart';
@@ -26,11 +27,40 @@ class DeviceFolder {
     this.kind = DeviceSourceKind.folder,
   });
 
-  /// The phone's whole photo and video library, as the folders it has.
-  const DeviceFolder.library()
-    : this(libraryToken, 'Phone', libraryToken, kind: DeviceSourceKind.library);
+  /// The phone's whole photo and video library, as the folders it has, without
+  /// the phone folders in [excluded] (such as `Pictures/Screenshots`). The
+  /// identity stays the same, so leaving folders out keeps the backup and what
+  /// it has recorded.
+  DeviceFolder.library({List<List<String>> excluded = const []})
+    : this(
+        excluded.isEmpty
+            ? libraryToken
+            : '$libraryToken:${base64Url.encode(utf8.encode(jsonEncode(excluded)))}',
+        'Phone',
+        libraryToken,
+        kind: DeviceSourceKind.library,
+      );
 
   static const libraryToken = 'library:all';
+
+  /// Whether [token] is the phone's library, with or without folders left out.
+  static bool isLibraryToken(String token) =>
+      token == libraryToken || token.startsWith('$libraryToken:');
+
+  /// The phone folders left out of a library [token].
+  static List<List<String>> excludedFolders(String token) {
+    if (!token.startsWith('$libraryToken:')) return const [];
+    final values =
+        jsonDecode(
+              utf8.decode(
+                base64Url.decode(token.substring(libraryToken.length + 1)),
+              ),
+            )
+            as List<dynamic>;
+    return [
+      for (final value in values) (value as List<dynamic>).cast<String>(),
+    ];
+  }
 
   final String token;
   final String name;
@@ -102,6 +132,7 @@ class NativeFolderAccess
   /// The library as last listed, so the folders below the top are answered
   /// without asking the phone again.
   LibraryTree? _tree;
+  String? _treeToken;
 
   /// The whole iPhone library with album folders, as last listed.
   AlbumFolderTree? _albumTree;
@@ -158,14 +189,25 @@ class NativeFolderAccess
     return byId.values.toList();
   }
 
-  Future<List<DeviceEntry>> _listLibrary(List<String> path) async {
+  Future<List<DeviceEntry>> _listLibrary(
+    String token,
+    List<String> path,
+  ) async {
     checkSyncPath(path);
     // The top of the library starts a new look; the folders below reuse it.
-    if (path.isEmpty || _tree == null) {
-      _tree = LibraryTree(await _libraryItems(), exclude: _skipped);
+    if (path.isEmpty || _tree == null || _treeToken != token) {
+      _tree = LibraryTree(
+        await _libraryItems(),
+        exclude: [..._skipped, ...DeviceFolder.excludedFolders(token)],
+      );
+      _treeToken = token;
     }
     return _tree!.children(path);
   }
+
+  @override
+  Future<List<LibraryFolder>> libraryFolders() async =>
+      LibraryTree(await _libraryItems()).folders;
 
   Future<File> _exportLibrary(List<String> path, DeviceEntry expected) async {
     checkSyncPath(path);
@@ -188,7 +230,7 @@ class NativeFolderAccess
     List<RemovalFile> files,
   ) async {
     if (files.isEmpty) return const [];
-    if (token == DeviceFolder.libraryToken) {
+    if (DeviceFolder.isLibraryToken(token)) {
       final paths = <String, List<String>>{};
       for (final f in files) {
         final id = f.entry.id ?? _tree?.file(f.path)?.id;
@@ -286,7 +328,7 @@ class NativeFolderAccess
 
   @override
   Future<List<DeviceEntry>> list(String token, List<String> path) async {
-    if (token == DeviceFolder.libraryToken) return _listLibrary(path);
+    if (DeviceFolder.isLibraryToken(token)) return _listLibrary(token, path);
     if (token.startsWith('photoset:')) return _listAlbumFolders(token, path);
     return _nativeList(token, path);
   }
@@ -348,7 +390,7 @@ class NativeFolderAccess
     List<String> path,
     DeviceEntry expected,
   ) async {
-    if (token == DeviceFolder.libraryToken) {
+    if (DeviceFolder.isLibraryToken(token)) {
       return _exportLibrary(path, expected);
     }
     if (token.startsWith('photoset:')) {
