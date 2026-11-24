@@ -300,7 +300,9 @@ void main() {
     'startup warms Smart and native albums from disk without waiting for network discovery',
     () async {
       final root = await Directory.systemTemp.createTemp('ncloud-hot-albums-');
-      addTearDown(() => root.delete(recursive: true));
+      addTearDown(() async {
+        if (await root.exists()) await root.delete(recursive: true);
+      });
       final cache = LocalCache(() async => root);
       await cache.writeDocument(
         'incoming-albums-v1|${account.server}|${account.userId}',
@@ -847,7 +849,9 @@ void main() {
       final root = await Directory.systemTemp.createTemp(
         'ncloud-memory-index-',
       );
-      addTearDown(() => root.delete(recursive: true));
+      addTearDown(() async {
+        if (await root.exists()) await root.delete(recursive: true);
+      });
       final cache = LocalCache(() async => root);
       var calls = 0;
       AppController create() => AppController(
