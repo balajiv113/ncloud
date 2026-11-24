@@ -595,6 +595,52 @@ void main() {
       expect(server.files, hasLength(9));
     });
 
+    test('files are copied and checked while others upload', () async {
+      var uploading = 0;
+      var copiedWhileUploading = 0;
+      var peakUploads = 0;
+      server.beforeUpload = (path, attempt) async {
+        peakUploads = ++uploading > peakUploads ? uploading : peakUploads;
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+        uploading--;
+      };
+      device.beforeExport = (name) {
+        if (uploading > 0) copiedWhileUploading++;
+      };
+      for (var i = 0; i < 12; i++) {
+        device.add('f$i.jpg', bytes(i));
+      }
+      final stages = <String>[];
+      var ticks = DateTime(2025);
+      await SyncEngine(
+        client: server,
+        access: device,
+        journal: journal,
+        progress: progress,
+        check: (_) {},
+        onChanged: () {
+          final line = [
+            if (progress.copying > 0) 'c',
+            if (progress.checking > 0) 'k',
+            if (progress.uploading > 0) 'u',
+          ].join();
+          if (line.isNotEmpty) stages.add(line);
+        },
+        maxUploads: 3,
+        prefetch: 3,
+        clock: () => ticks = ticks.add(const Duration(seconds: 1)),
+      ).run(account, pair(concurrency: 3));
+      expect(server.files, hasLength(12));
+      expect(peakUploads, lessThanOrEqualTo(3));
+      expect(copiedWhileUploading, greaterThan(0));
+      // Every step was shown, and nothing is left counted afterwards.
+      expect(stages.join(), allOf(contains('c'), contains('k'), contains('u')));
+      expect(
+        [progress.copying, progress.checking, progress.uploading],
+        [0, 0, 0],
+      );
+    });
+
     test('identical files in flight together are stored once', () async {
       server.beforeUpload = (path, attempt) =>
           Future<void>.delayed(const Duration(milliseconds: 20));

@@ -98,6 +98,7 @@ class SyncEngine {
     DateTime Function()? clock,
     Future<void> Function(Duration)? pause,
     this.maxUploads,
+    this.prefetch = 0,
   }) : _clock = clock ?? DateTime.now,
        _pause = pause ?? Future<void>.delayed;
 
@@ -115,6 +116,9 @@ class SyncEngine {
   /// The most uploads at once. Without it, a backup keeps to the number its
   /// settings start with; the app passes what the device allows.
   final int? maxUploads;
+
+  /// Files to copy and check ahead of the uploads, beyond those uploading.
+  final int prefetch;
   late AdaptiveLimit _limit;
 
   DateTime _notified = DateTime.fromMillisecondsSinceEpoch(0);
@@ -351,13 +355,10 @@ class SyncEngine {
     );
     final worker = _Uploader(this, session, pair, _limit);
     try {
-      await runConcurrently(
-        todo,
-        _limit.max,
-        worker.upload,
-        limit: _limit,
-        sizeOf: (item) => item.entry.size,
-      );
+      // More workers than uploads at once: while some files upload, others are
+      // being copied off the phone and checked, so the connection is never
+      // waiting for the next file.
+      await runConcurrently(todo, _limit.max + prefetch, worker.upload);
     } finally {
       await worker.finish();
     }
@@ -390,6 +391,41 @@ class _Uploader {
   FolderAccess get _access => engine.access;
   SyncJournal get _journal => engine.journal;
   SyncProgress get _progress => engine.progress;
+
+  /// Copies are taken off the phone a couple at a time, because the phone's
+  /// library serves them one after another anyway; checksums use the cores.
+  final Gate _copies = Gate(2);
+  late final Gate _checks = Gate(AdaptiveLimit.deviceMax.clamp(2, 4));
+
+  /// Staged copies are kept under 1 GiB where they can be.
+  final ByteBudget _budget = ByteBudget(1024 * 1024 * 1024);
+
+  /// Runs one stage of a file's backup and keeps the count of files in it.
+  Future<T> _stage<T>(
+    String step,
+    String name,
+    Future<T> Function() run,
+  ) async {
+    _progress.enter(step, name);
+    engine._tick();
+    try {
+      return await run();
+    } finally {
+      _progress.leave(step);
+      engine._tick();
+    }
+  }
+
+  /// Sends a file once one of the upload places is free.
+  Future<T> _sendFile<T>(String name, Future<T> Function() send) async {
+    await limit.acquire();
+    try {
+      engine.check(pair);
+      return await _stage('Uploading', name, send);
+    } finally {
+      limit.release();
+    }
+  }
 
   Future<void> upload(_Item item) async {
     engine.check(pair);
@@ -455,24 +491,37 @@ class _Uploader {
     final path = item.path;
     final file = item.entry;
     await engine._requireNetwork(pair);
-    _progress.current = file.name;
-    engine._tick();
     File? staged;
     final meter = _Meter(_progress, engine._tick);
+    final reserved = file.size > 0 ? file.size : 0;
+    await _budget.acquire(reserved);
     try {
-      _progress.step = 'Copying';
-      staged = await _access.export(pair.folder.token, path, file);
+      final copy = await _stage('Copying', file.name, () async {
+        await _copies.acquire();
+        try {
+          return await _access.export(pair.folder.token, path, file);
+        } finally {
+          _copies.release();
+        }
+      });
+      staged = copy;
       engine.check(pair);
-      _progress.step = 'Uploading';
-      final size = await staged.length();
+      final size = await copy.length();
       if (file.size >= 0 && size != file.size) {
         throw const FormatException(
           'The source changed while preparing it. Run again.',
         );
       }
-      final fingerprint = await fingerprintOf(staged);
+      final fingerprint = await _stage('Checking', file.name, () async {
+        await _checks.acquire();
+        try {
+          return await fingerprintOf(copy);
+        } finally {
+          _checks.release();
+        }
+      });
       engine.check(pair);
-      if (await _sameFile(item, fingerprint, size, staged, meter)) return;
+      if (await _sameFile(item, fingerprint, size, copy, meter)) return;
       // Files with the same content are sent one at a time: while one is on its
       // way, the others wait and then reuse it, so identical photos are stored
       // once however many are in flight.
@@ -493,13 +542,16 @@ class _Uploader {
           engine.check(pair);
           await engine._requireNetwork(pair);
           try {
-            final result = await _client.uploadNew(
-              session,
-              [...pair.cloudRoot, ...target],
-              meter.watch(staged.openRead()),
-              size,
-              sha1: fingerprint,
-              modified: DateTime.fromMillisecondsSinceEpoch(file.modified),
+            final result = await _sendFile(
+              file.name,
+              () => _client.uploadNew(
+                session,
+                [...pair.cloudRoot, ...target],
+                meter.watch(copy.openRead()),
+                size,
+                sha1: fingerprint,
+                modified: DateTime.fromMillisecondsSinceEpoch(file.modified),
+              ),
             );
             final etag = result.etag;
             if (etag == null || etag.isEmpty) {
@@ -553,7 +605,11 @@ class _Uploader {
       }
     } finally {
       meter.done();
-      if (staged != null) await _access.discard(staged);
+      try {
+        if (staged != null) await _access.discard(staged);
+      } finally {
+        _budget.release(reserved);
+      }
     }
   }
 
@@ -599,14 +655,17 @@ class _Uploader {
     engine.check(pair);
     await engine._requireNetwork(pair);
     try {
-      final result = await _client.uploadNew(
-        session,
-        at,
-        meter.watch(staged.openRead()),
-        size,
-        sha1: fingerprint,
-        modified: DateTime.fromMillisecondsSinceEpoch(item.entry.modified),
-        replacing: etag,
+      final result = await _sendFile(
+        item.entry.name,
+        () => _client.uploadNew(
+          session,
+          at,
+          meter.watch(staged.openRead()),
+          size,
+          sha1: fingerprint,
+          modified: DateTime.fromMillisecondsSinceEpoch(item.entry.modified),
+          replacing: etag,
+        ),
       );
       final next = result.etag;
       if (next == null || next.isEmpty) {
@@ -814,39 +873,23 @@ class _Uploader {
 
 /// Runs [work] on every item, at most [concurrency] at a time. The first
 /// failure stops new work and is rethrown; a real failure outranks a stop.
-///
-/// With a [limit], the number running follows it and the size of the files
-/// being sent is kept in check; [concurrency] is then the most there can be.
 Future<void> runConcurrently<T>(
   List<T> items,
   int concurrency,
-  Future<void> Function(T item) work, {
-  AdaptiveLimit? limit,
-  int Function(T item)? sizeOf,
-}) async {
+  Future<void> Function(T item) work,
+) async {
   var next = 0;
   Object? failure;
   StackTrace? failureStack;
   Future<void> worker() async {
     while (failure == null && next < items.length) {
-      final item = items[next++];
-      final bytes = limit == null ? 0 : (sizeOf?.call(item) ?? 0);
       try {
-        await limit?.acquire(bytes);
-      } on Object catch (e, stack) {
-        failure ??= e;
-        failureStack ??= stack;
-        return;
-      }
-      try {
-        await work(item);
+        await work(items[next++]);
       } on Object catch (e, stack) {
         if (failure == null || failure is SyncStopped) {
           failure = e;
           failureStack = stack;
         }
-      } finally {
-        limit?.release(bytes);
       }
     }
   }

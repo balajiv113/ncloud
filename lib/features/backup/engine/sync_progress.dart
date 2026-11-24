@@ -20,8 +20,35 @@ class SyncProgress {
   /// a large video moves the bar while it uploads.
   int sending = 0;
 
-  /// What the file in hand is doing: copying it off the phone or uploading it.
+  /// Files in each step right now: being copied off the phone, being checked
+  /// (checksummed), and being uploaded. A file is in one at a time.
+  int copying = 0;
+  int checking = 0;
+  int uploading = 0;
+
+  /// The step the latest file entered, with its name in [current].
   String step = 'Uploading';
+
+  /// A file enters a step.
+  void enter(String stepName, String name) {
+    step = stepName;
+    current = name;
+    _count(stepName, 1);
+  }
+
+  /// A file leaves a step, finished or not.
+  void leave(String stepName) => _count(stepName, -1);
+
+  void _count(String stepName, int by) {
+    switch (stepName) {
+      case 'Copying':
+        copying += by;
+      case 'Checking':
+        checking += by;
+      default:
+        uploading += by;
+    }
+  }
 
   /// Files that needed nothing because they were already backed up.
   int alreadyBackedUp = 0;
@@ -138,6 +165,7 @@ class SyncProgress {
     phase = '';
     found = toUpload = bytesTotal = transferred = bytesDone = sending = 0;
     step = 'Uploading';
+    copying = checking = uploading = 0;
     alreadyBackedUp = recognised = moved = failed = blocked = conflicts = 0;
     current = null;
     _samples.clear();
@@ -152,6 +180,9 @@ class SyncProgress {
     'bytesTotal': bytesTotal,
     'transferred': transferred,
     'bytesDone': bytesDone,
+    'copying': copying,
+    'checking': checking,
+    'uploading': uploading,
     'alreadyBackedUp': alreadyBackedUp,
     'recognised': recognised,
     'moved': moved,

@@ -50,6 +50,9 @@ class BackupNumbers {
     this.blocked = 0,
     this.bytesDone = 0,
     this.step = 'Uploading',
+    this.copying = 0,
+    this.checking = 0,
+    this.uploading = 0,
     this.bytesTotal = 0,
     this.current,
     this.fraction,
@@ -66,6 +69,9 @@ class BackupNumbers {
   final int blocked;
   final int bytesDone;
   final String step;
+  final int copying;
+  final int checking;
+  final int uploading;
   final int bytesTotal;
 
   /// The file being uploaded now.
@@ -86,6 +92,9 @@ class BackupNumbers {
     blocked: p.blocked,
     bytesDone: p.bytesDone + p.sending,
     step: p.step,
+    copying: p.copying,
+    checking: p.checking,
+    uploading: p.uploading,
     bytesTotal: p.bytesTotal,
     current: p.current,
     fraction: p.fraction,
@@ -107,6 +116,9 @@ class BackupNumbers {
       failed: number('failed'),
       blocked: number('blocked'),
       bytesDone: number('bytesDone'),
+      copying: number('copying'),
+      checking: number('checking'),
+      uploading: number('uploading'),
       bytesTotal: number('bytesTotal'),
       fraction: toUpload > 0 ? (settled / toUpload).clamp(0.0, 1.0) : null,
     );
@@ -119,6 +131,17 @@ class BackupNumbers {
     final speed = bytesPerSecond;
     return '${formatSize(bytesDone)} of ${formatSize(bytesTotal)}'
         '${speed == null || speed < 1 ? '' : ' · ${formatSize(speed.round())}/s'}';
+  }
+
+  /// What the files in hand are doing, such as "Copying 1 · Checking 1 ·
+  /// Uploading 3", or null when none is.
+  String? get stageLine {
+    final parts = [
+      if (copying > 0) 'Copying $copying',
+      if (checking > 0) 'Checking $checking',
+      if (uploading > 0) 'Uploading $uploading',
+    ];
+    return parts.isEmpty ? null : parts.join(' · ');
   }
 
   /// Files that still need attention.

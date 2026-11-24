@@ -325,6 +325,11 @@ class _FolderBackupScreenState extends State<FolderBackupScreen> {
         padding: const EdgeInsets.only(right: 8, bottom: 4),
         child: Text(line, style: Theme.of(context).textTheme.bodySmall),
       ),
+    if (numbers.stageLine case final line?)
+      Padding(
+        padding: const EdgeInsets.only(right: 8, bottom: 4),
+        child: Text(line, style: Theme.of(context).textTheme.labelMedium),
+      ),
     if (numbers.current case final name?)
       Padding(
         padding: const EdgeInsets.only(right: 8, bottom: 4),

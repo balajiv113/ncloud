@@ -161,6 +161,7 @@ class SyncRunner {
           check: _check,
           onChanged: onChanged,
           maxUploads: AdaptiveLimit.deviceMax,
+          prefetch: 3,
         ).run(session, pair);
         pair.lastRun = DateTime.now();
         await journal.completed(pair.id, pair.lastRun!);

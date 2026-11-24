@@ -9,18 +9,11 @@ import 'dart:math' as math;
 /// uploads add nothing, so it goes back and waits a while before trying again.
 /// A transient failure, which is often the server or the connection being
 /// overloaded, halves the number.
-///
-/// It also keeps the staged copies of the files in flight under a budget, so a
-/// few very large videos cannot fill the phone.
 class AdaptiveLimit {
-  AdaptiveLimit({
-    this.start = 3,
-    int? max,
-    this.byteBudget = 1024 * 1024 * 1024,
-    DateTime Function()? clock,
-  }) : max = _clampMax(max ?? deviceMax, start),
-       _clock = clock ?? DateTime.now,
-       _limit = start;
+  AdaptiveLimit({this.start = 3, int? max, DateTime Function()? clock})
+    : max = _clampMax(max ?? deviceMax, start),
+      _clock = clock ?? DateTime.now,
+      _limit = start;
 
   /// What this device allows: one upload per processor, never fewer than
   /// [start] and never more than eight.
@@ -37,12 +30,11 @@ class AdaptiveLimit {
 
   final int start;
   final int max;
-  final int byteBudget;
   final DateTime Function() _clock;
 
   int _limit;
+  int _struggles = 0;
   int _active = 0;
-  int _activeBytes = 0;
   final List<Completer<void>> _waiting = [];
 
   DateTime? _windowStart;
@@ -61,26 +53,20 @@ class AdaptiveLimit {
   /// How many are running now.
   int get active => _active;
 
-  /// Waits until another file of [bytes] may start, then counts it as running.
-  /// One file always runs, however large.
-  Future<void> acquire(int bytes) async {
-    while (!_fits(bytes)) {
+  /// Waits until another upload may start, then counts it as running.
+  Future<void> acquire() async {
+    while (_active >= _limit) {
       final turn = Completer<void>();
       _waiting.add(turn);
       await turn.future;
     }
     _active++;
-    _activeBytes += bytes;
     if (_active < _limit) _full = false;
   }
 
-  bool _fits(int bytes) =>
-      _active == 0 || (_active < _limit && _activeBytes + bytes <= byteBudget);
-
-  /// Gives back the place of a file of [bytes] that finished or failed.
-  void release(int bytes) {
+  /// Gives back the place of an upload that finished or failed.
+  void release() {
     _active--;
-    _activeBytes -= bytes;
     _wake();
   }
 
@@ -143,9 +129,64 @@ class AdaptiveLimit {
     final now = _clock();
     _trialFrom = null;
     _limit = math.max(1, _limit ~/ 2);
-    _holdUntil = now.add(_calmAfterFailure);
+    _struggles++;
+    // Each time it happens the wait is longer, so a server that cannot take
+    // the load stops being tried.
+    _holdUntil = now.add(_calmAfterFailure * _struggles * _struggles);
     _windowStart = null;
     _windowBytes = 0;
     _reference = 0;
+  }
+}
+
+/// A fixed number of places, taken in turn.
+class Gate {
+  Gate(this.size);
+
+  final int size;
+  int _used = 0;
+  final List<Completer<void>> _waiting = [];
+
+  Future<void> acquire() async {
+    while (_used >= size) {
+      final turn = Completer<void>();
+      _waiting.add(turn);
+      await turn.future;
+    }
+    _used++;
+  }
+
+  void release() {
+    _used--;
+    if (_waiting.isNotEmpty) _waiting.removeAt(0).complete();
+  }
+}
+
+/// How much of the phone's storage the staged copies may take. A file starts
+/// copying while the total is under the budget, so one very large video can go
+/// over it but never holds up the files behind it for long.
+class ByteBudget {
+  ByteBudget(this.size);
+
+  final int size;
+  int _used = 0;
+  final List<Completer<void>> _waiting = [];
+
+  Future<void> acquire(int bytes) async {
+    while (_used >= size) {
+      final turn = Completer<void>();
+      _waiting.add(turn);
+      await turn.future;
+    }
+    _used += bytes;
+  }
+
+  void release(int bytes) {
+    _used -= bytes;
+    final turns = List.of(_waiting);
+    _waiting.clear();
+    for (final turn in turns) {
+      turn.complete();
+    }
   }
 }
