@@ -34,6 +34,7 @@ class SyncProgress {
   /// Files in each step right now: waiting for a turn, being copied off the phone, being checked
   /// (checksummed), and being uploaded. A file is in one at a time.
   int get waiting => active.where((f) => f.step == ActiveFile.wait).length;
+  int get queued => active.where((f) => f.step == ActiveFile.queue).length;
   int get copying => active.where((f) => f.step == ActiveFile.copy).length;
   int get checking => active.where((f) => f.step == ActiveFile.check).length;
   int get uploading => active.where((f) => f.step == ActiveFile.upload).length;
@@ -181,6 +182,7 @@ class SyncProgress {
     'bytesDone': bytesDone,
     'fraction': fraction,
     'waiting': waiting,
+    'queued': queued,
     'copying': copying,
     'checking': checking,
     'uploading': uploading,
@@ -199,6 +201,7 @@ class ActiveFile {
 
   static const wait = 'Waiting';
   static const copy = 'Copying';
+  static const queue = 'Queued';
   static const check = 'Checking';
   static const upload = 'Uploading';
 

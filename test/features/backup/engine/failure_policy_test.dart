@@ -192,6 +192,7 @@ void main() {
       final c = p.start('c', 10)..step = ActiveFile.upload;
       p.start('d', 10).step = ActiveFile.upload;
       expect([p.waiting, p.copying, p.checking, p.uploading], [1, 1, 1, 2]);
+      expect(p.queued, 0);
       p.finish(c);
       expect([p.waiting, p.copying, p.checking, p.uploading], [1, 1, 1, 1]);
       p.finish(a);

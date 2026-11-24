@@ -177,6 +177,12 @@ void main() {
   ${pieces.entries.map((e) => '<d:response><d:href>/remote.php/dav/uploads/alice/x/${e.key}</d:href><d:propstat><d:prop><d:getcontentlength>${e.value}</d:getcontentlength></d:prop></d:propstat></d:response>').join()}
 </d:multistatus>''';
 
+    /// The check for a file that is already at the destination: there is none.
+    http.Response? noFile(http.Request request) =>
+        request.method == 'PROPFIND' && request.url.path.contains('/dav/files/')
+        ? http.Response('', 404)
+        : null;
+
     Stream<List<int>> Function(int, int) source(List<int> data) =>
         (start, end) => Stream.value(data.sublist(start, end));
 
@@ -187,6 +193,8 @@ void main() {
         final client = NextcloudClient(
           chunkBytes: 10,
           transport: MockClient((request) async {
+            final missing = noFile(request);
+            if (missing != null) return missing;
             seen.add(request);
             return switch (request.method) {
               'MKCOL' => http.Response('', 201),
@@ -251,6 +259,8 @@ void main() {
       final client = NextcloudClient(
         chunkBytes: 10,
         transport: MockClient((request) async {
+          final missing = noFile(request);
+          if (missing != null) return missing;
           switch (request.method) {
             case 'MKCOL':
               return http.Response('', 405);
@@ -285,6 +295,8 @@ void main() {
         final client = NextcloudClient(
           chunkBytes: 10,
           transport: MockClient((request) async {
+            final missing = noFile(request);
+            if (missing != null) return missing;
             methods.add(request.method);
             return switch (request.method) {
               'MKCOL' => http.Response('', 201),
@@ -316,6 +328,8 @@ void main() {
       final client = NextcloudClient(
         chunkBytes: 10,
         transport: MockClient((request) async {
+          final missing = noFile(request);
+          if (missing != null) return missing;
           if (request.method == 'PUT') throw http.ClientException('reset');
           return request.method == 'PROPFIND'
               ? http.Response(multistatus({}), 207)
@@ -342,6 +356,8 @@ void main() {
       final client = NextcloudClient(
         chunkBytes: 10,
         transport: MockClient((request) async {
+          final missing = noFile(request);
+          if (missing != null) return missing;
           if (request.method == 'MKCOL') folders.add(request.url.path);
           return request.method == 'PROPFIND'
               ? http.Response(multistatus({}), 207)
@@ -365,5 +381,113 @@ void main() {
       expect(folders[0], folders[1]);
       expect(folders[2], isNot(folders[0]));
     });
+
+    String statBody(int size, {String? sha}) =>
+        '''
+<d:multistatus xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns"><d:response>
+<d:href>/remote.php/dav/files/alice/a.mp4</d:href><d:propstat><d:prop>
+<d:resourcetype/><d:getcontentlength>$size</d:getcontentlength><d:getetag>"joined"</d:getetag>
+${sha == null ? '' : '<oc:checksums><oc:checksum>SHA1:$sha</oc:checksum></oc:checksums>'}
+</d:prop></d:propstat></d:response></d:multistatus>''';
+
+    test('a name that is taken is refused before anything is sent', () async {
+      final methods = <String>[];
+      final client = NextcloudClient(
+        chunkBytes: 10,
+        transport: MockClient((request) async {
+          methods.add(request.method);
+          return http.Response(statBody(5), 207);
+        }),
+      );
+      addTearDown(client.close);
+      await expectLater(
+        client.uploadResumable(
+          account,
+          ['a.mp4'],
+          source(List.filled(5, 1)),
+          5,
+          sha1: 'ab',
+        ),
+        throwsA(
+          isA<CloudException>().having((e) => e.statusCode, 'status', 412),
+        ),
+      );
+      expect(methods, ['PROPFIND']);
+    });
+
+    test(
+      'a gateway timeout while joining is not a failure if the file is there',
+      () async {
+        var moved = false;
+        final client = NextcloudClient(
+          chunkBytes: 10,
+          joinCheckEvery: Duration.zero,
+          transport: MockClient((request) async {
+            if (request.method == 'MOVE') {
+              moved = true;
+              return http.Response('', 504);
+            }
+            if (request.method == 'PROPFIND' &&
+                request.url.path.contains('/dav/files/')) {
+              // Not there at first; there once the join has had its time.
+              return moved
+                  ? http.Response(statBody(5, sha: 'ab'), 207)
+                  : http.Response('', 404);
+            }
+            return request.method == 'PROPFIND'
+                ? http.Response(multistatus({}), 207)
+                : http.Response('', 201);
+          }),
+        );
+        addTearDown(client.close);
+        final sent = <int>[];
+        final result = await client.uploadResumable(
+          account,
+          ['a.mp4'],
+          source(List.filled(5, 1)),
+          5,
+          sha1: 'ab',
+          onProgress: sent.add,
+        );
+        expect(result.etag, '"joined"');
+        expect(sent.last, 5);
+      },
+    );
+
+    test(
+      'a timeout while joining is a failure when the file never appears',
+      () async {
+        final client = NextcloudClient(
+          chunkBytes: 10,
+          joinCheckEvery: Duration.zero,
+          joinChecks: 3,
+          transport: MockClient((request) async {
+            final missing = noFile(request);
+            if (missing != null) return missing;
+            if (request.method == 'MOVE') return http.Response('', 504);
+            return request.method == 'PROPFIND'
+                ? http.Response(multistatus({}), 207)
+                : http.Response('', 201);
+          }),
+        );
+        addTearDown(client.close);
+        await expectLater(
+          client.uploadResumable(
+            account,
+            ['a.mp4'],
+            source(List.filled(5, 1)),
+            5,
+            sha1: 'ab',
+          ),
+          throwsA(
+            isA<CloudException>().having(
+              (e) => e.retryable,
+              'retryable',
+              isTrue,
+            ),
+          ),
+        );
+      },
+    );
   });
 }
