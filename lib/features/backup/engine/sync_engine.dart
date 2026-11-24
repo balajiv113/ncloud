@@ -6,6 +6,7 @@ import '../../../core/cloud/cloud_backend.dart';
 import '../../../models.dart';
 import '../platform/folder_access.dart';
 import '../state/sync_journal.dart';
+import 'adaptive_limit.dart';
 import 'backup_preview.dart';
 import 'conflict_name.dart';
 import 'failure_policy.dart';
@@ -96,6 +97,7 @@ class SyncEngine {
     required this.onChanged,
     DateTime Function()? clock,
     Future<void> Function(Duration)? pause,
+    this.maxUploads,
   }) : _clock = clock ?? DateTime.now,
        _pause = pause ?? Future<void>.delayed;
 
@@ -109,6 +111,11 @@ class SyncEngine {
   final void Function() onChanged;
   final DateTime Function() _clock;
   final Future<void> Function(Duration) _pause;
+
+  /// The most uploads at once. Without it, a backup keeps to the number its
+  /// settings start with; the app passes what the device allows.
+  final int? maxUploads;
+  late AdaptiveLimit _limit;
 
   DateTime _notified = DateTime.fromMillisecondsSinceEpoch(0);
   DateTime? _networkChecked;
@@ -337,9 +344,20 @@ class SyncEngine {
     List<_Item> todo,
   ) async {
     progress.begin(_clock());
-    final worker = _Uploader(this, session, pair);
+    _limit = AdaptiveLimit(
+      start: pair.uploadConcurrency,
+      max: maxUploads ?? pair.uploadConcurrency,
+      clock: _clock,
+    );
+    final worker = _Uploader(this, session, pair, _limit);
     try {
-      await runConcurrently(todo, pair.uploadConcurrency, worker.upload);
+      await runConcurrently(
+        todo,
+        _limit.max,
+        worker.upload,
+        limit: _limit,
+        sizeOf: (item) => item.entry.size,
+      );
     } finally {
       await worker.finish();
     }
@@ -348,11 +366,12 @@ class SyncEngine {
 
 /// One run's uploads: sends each file, with retries, and records the outcome.
 class _Uploader {
-  _Uploader(this.engine, this.session, this.pair);
+  _Uploader(this.engine, this.session, this.pair, this.limit);
 
   final SyncEngine engine;
   final Account session;
   final FolderPair pair;
+  final AdaptiveLimit limit;
   final FailureBreaker _breaker = FailureBreaker();
 
   /// Folders known to exist, so a folder is checked once however many files go
@@ -386,6 +405,7 @@ class _Uploader {
         final kind = classifyFailure(error);
         if (kind == FailureKind.fatal) rethrow;
         if (kind == FailureKind.transient) {
+          limit.struggled();
           final wait = retryDelay(attempt);
           if (wait != null) {
             await _wait(wait);
@@ -486,6 +506,7 @@ class _Uploader {
             }
             await _record(item, target, '$etag|$size', fingerprint, size);
             _progress.uploaded(size, engine._clock());
+            limit.sent(size);
             engine._tick();
             return;
           } on CloudException catch (error) {
@@ -511,7 +532,7 @@ class _Uploader {
                 fingerprint,
                 size,
               );
-              _progress.wasOnServer(size);
+              _progress.wasOnServer(size, engine._clock());
               engine._tick();
               return;
             }
@@ -556,7 +577,7 @@ class _Uploader {
         fingerprint,
         size,
       );
-      _progress.wasOnServer(size);
+      _progress.wasOnServer(size, engine._clock());
       engine._tick();
       return true;
     }
@@ -590,6 +611,7 @@ class _Uploader {
       }
       await _record(item, before.target, '$next|$size', fingerprint, size);
       _progress.uploaded(size, engine._clock());
+      limit.sent(size);
       engine._tick();
       return true;
     } on CloudException catch (error) {
@@ -630,7 +652,7 @@ class _Uploader {
         fingerprint,
         size,
       );
-      _progress.wasOnServer(size);
+      _progress.wasOnServer(size, engine._clock());
       engine._tick();
       return true;
     }
@@ -678,7 +700,7 @@ class _Uploader {
         size: size,
       ),
     );
-    _progress.wasMoved(size);
+    _progress.wasMoved(size, engine._clock());
     engine._tick();
     return true;
   }
@@ -787,23 +809,39 @@ class _Uploader {
 
 /// Runs [work] on every item, at most [concurrency] at a time. The first
 /// failure stops new work and is rethrown; a real failure outranks a stop.
+///
+/// With a [limit], the number running follows it and the size of the files
+/// being sent is kept in check; [concurrency] is then the most there can be.
 Future<void> runConcurrently<T>(
   List<T> items,
   int concurrency,
-  Future<void> Function(T item) work,
-) async {
+  Future<void> Function(T item) work, {
+  AdaptiveLimit? limit,
+  int Function(T item)? sizeOf,
+}) async {
   var next = 0;
   Object? failure;
   StackTrace? failureStack;
   Future<void> worker() async {
     while (failure == null && next < items.length) {
+      final item = items[next++];
+      final bytes = limit == null ? 0 : (sizeOf?.call(item) ?? 0);
       try {
-        await work(items[next++]);
+        await limit?.acquire(bytes);
+      } on Object catch (e, stack) {
+        failure ??= e;
+        failureStack ??= stack;
+        return;
+      }
+      try {
+        await work(item);
       } on Object catch (e, stack) {
         if (failure == null || failure is SyncStopped) {
           failure = e;
           failureStack = stack;
         }
+      } finally {
+        limit?.release(bytes);
       }
     }
   }

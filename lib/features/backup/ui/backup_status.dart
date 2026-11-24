@@ -53,6 +53,7 @@ class BackupNumbers {
     this.current,
     this.fraction,
     this.remaining,
+    this.bytesPerSecond,
   });
 
   final int found;
@@ -70,6 +71,9 @@ class BackupNumbers {
   final double? fraction;
   final Duration? remaining;
 
+  /// How fast bytes are going to the server right now, if known.
+  final double? bytesPerSecond;
+
   factory BackupNumbers.fromProgress(SyncProgress p) => BackupNumbers(
     found: p.found,
     toUpload: p.toUpload,
@@ -83,6 +87,7 @@ class BackupNumbers {
     current: p.current,
     fraction: p.fraction,
     remaining: p.estimatedRemaining,
+    bytesPerSecond: p.uploadSpeed,
   );
 
   factory BackupNumbers.fromState(Map<String, dynamic>? state) {
@@ -102,6 +107,15 @@ class BackupNumbers {
       bytesTotal: number('bytesTotal'),
       fraction: toUpload > 0 ? (settled / toUpload).clamp(0.0, 1.0) : null,
     );
+  }
+
+  /// What has gone and how fast, such as "4.1 GB of 18.2 GB · 0.9 MB/s", or
+  /// null before the total is known.
+  String? get sizeLine {
+    if (bytesTotal <= 0) return null;
+    final speed = bytesPerSecond;
+    return '${formatSize(bytesDone)} of ${formatSize(bytesTotal)}'
+        '${speed == null || speed < 1 ? '' : ' · ${formatSize(speed.round())}/s'}';
   }
 
   /// Files that still need attention.

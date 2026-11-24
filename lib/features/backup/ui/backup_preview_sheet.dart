@@ -168,8 +168,9 @@ class _Body extends StatelessWidget {
             style: theme.textTheme.headlineSmall,
           ),
           Text(
-            'will be uploaded. On a 20 Mbps connection that is about '
-            '${_BackupPreviewSheetState._estimate(p.bytes)}.',
+            'will be uploaded. At an assumed 20 Mbps that would take about '
+            '${_BackupPreviewSheetState._estimate(p.bytes)}; the card shows '
+            'the real speed and time left once it runs.',
             style: theme.textTheme.bodySmall,
           ),
         ],

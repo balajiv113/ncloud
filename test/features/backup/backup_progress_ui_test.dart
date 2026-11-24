@@ -226,6 +226,8 @@ void main() {
       await show(tester);
       expect(find.textContaining('3,206 of 12,460'), findsWidgets);
       expect(find.text('Uploading IMG_2031.jpg'), findsOneWidget);
+      // How much has gone, and no speed yet because nothing has been measured.
+      expect(find.text('244 KB of 977 KB'), findsOneWidget);
       expect(
         find.textContaining('2 files could not be backed up so far'),
         findsOneWidget,
@@ -235,6 +237,20 @@ void main() {
       );
       expect(bar.value, isNotNull);
       expect(find.text('Pause'), findsOneWidget);
+    });
+
+    testWidgets('shows the real upload speed once it is measured', (
+      tester,
+    ) async {
+      sync.activeId = 'p';
+      final start = DateTime(2025);
+      sync.progress
+        ..toUpload = 100
+        ..bytesTotal = 100 * 1024 * 1024
+        ..begin(start)
+        ..uploaded(10 * 1024 * 1024, start.add(const Duration(seconds: 10)));
+      await show(tester);
+      expect(find.text('10 MB of 100 MB · 1.0 MB/s'), findsOneWidget);
     });
 
     testWidgets('before the count is known the bar just moves', (tester) async {

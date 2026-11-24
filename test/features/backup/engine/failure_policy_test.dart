@@ -158,6 +158,50 @@ void main() {
       expect(p.estimatedRemaining, const Duration(seconds: 90));
     });
 
+    test('measures speed over the last minute, not from one file', () {
+      final p = SyncProgress()
+        ..toUpload = 100
+        ..bytesTotal = 1000000;
+      final start = DateTime(2025);
+      p.begin(start);
+      // A steady 1,000 bytes a second for two minutes...
+      for (var s = 5; s <= 120; s += 5) {
+        p.uploaded(5000, start.add(Duration(seconds: s)));
+      }
+      expect(p.uploadSpeed, closeTo(1000, 1));
+      // ...then one huge file lands at once. It moves the figure, but the
+      // minute behind it keeps it from jumping to what that one file implies.
+      p.uploaded(60000, start.add(const Duration(seconds: 125)));
+      expect(p.uploadSpeed!, lessThan(2100));
+      expect(p.uploadSpeed!, greaterThan(1000));
+    });
+
+    test('speed forgets a stall once a minute has passed', () {
+      final p = SyncProgress()
+        ..toUpload = 10
+        ..bytesTotal = 1000000;
+      final start = DateTime(2025);
+      p.begin(start);
+      p.uploaded(100000, start.add(const Duration(seconds: 10)));
+      expect(p.uploadSpeed, closeTo(10000, 1));
+      // Nothing for a long while, then a small file: the old burst is gone.
+      p.uploaded(1000, start.add(const Duration(seconds: 200)));
+      expect(p.uploadSpeed!, lessThan(2000));
+    });
+
+    test('files already on the server do not count as network speed', () {
+      final p = SyncProgress()
+        ..toUpload = 10
+        ..bytesTotal = 100000;
+      final start = DateTime(2025);
+      p.begin(start);
+      p.wasOnServer(50000, start.add(const Duration(seconds: 10)));
+      expect(p.uploadSpeed, 0);
+      expect(p.estimatedRemaining, const Duration(seconds: 10));
+      p.uploaded(10000, start.add(const Duration(seconds: 20)));
+      expect(p.uploadSpeed, closeTo(500, 1));
+    });
+
     test('never reports negative work left and resets cleanly', () {
       final p = SyncProgress()..toUpload = 1;
       p.uploaded(5, DateTime(2025));
