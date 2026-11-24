@@ -472,9 +472,10 @@ class NativeFolderAccess
       }
     });
     try {
-      final made = await _export(token, path, expected, into);
-      if (made.path != into.path) await discard(into);
-      return made;
+      // The phone may name the same file by another path (Android resolves
+      // /data/user/0 to /data/data), so the file it returns is the copy and is
+      // never compared with, or removed in place of, the one asked for.
+      return await _export(token, path, expected, into);
     } on Object {
       await discard(into);
       rethrow;
