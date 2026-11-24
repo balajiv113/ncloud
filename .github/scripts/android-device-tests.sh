@@ -22,6 +22,7 @@ for attempt in $(seq 1 45); do
 done
 curl -fsS http://127.0.0.1:8585/getVM >/dev/null
 start=$SECONDS
-VM_SERVICE_URL=http://127.0.0.1:8585 dart run test_driver/mobile_test.dart \
+# Errors go into the log too, so a failure says why.
+VM_SERVICE_URL=http://127.0.0.1:8585 dart run test_driver/mobile_test.dart 2>&1 \
   | tee android-device-contract.log
 echo "Shared mobile checks: $((SECONDS - start))s" >> "$GITHUB_STEP_SUMMARY"

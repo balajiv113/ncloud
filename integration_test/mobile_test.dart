@@ -65,7 +65,14 @@ Future<void> main() async {
       if (message == 'close') {
         controller.dispose();
         await cache.close();
-        await cacheRoot.delete(recursive: true);
+        // Tidying up is not what is being checked, and the database may still be
+        // letting go of a file, so a folder that cannot be removed now is left to
+        // be cleared with the app's temporary files.
+        try {
+          await cacheRoot.delete(recursive: true);
+        } on FileSystemException {
+          debugPrint('Could not remove ${cacheRoot.path} yet; leaving it.');
+        }
         return 'closed';
       }
       throw ArgumentError.value(
