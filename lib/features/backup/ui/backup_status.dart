@@ -85,6 +85,7 @@ class BackupNumbers {
     this.blocked = 0,
     this.bytesDone = 0,
     this.files = const [],
+    this.waiting = 0,
     this.copying = 0,
     this.checking = 0,
     this.uploading = 0,
@@ -103,6 +104,7 @@ class BackupNumbers {
   final int blocked;
   final int bytesDone;
   final List<FileRow> files;
+  final int waiting;
   final int copying;
   final int checking;
   final int uploading;
@@ -124,7 +126,11 @@ class BackupNumbers {
     failed: p.failed,
     blocked: p.blocked,
     bytesDone: p.bytesDone + p.sending,
-    files: [for (final f in p.active) FileRow.of(f)],
+    files: [
+      for (final f in p.active)
+        if (f.step != ActiveFile.wait) FileRow.of(f),
+    ],
+    waiting: p.waiting,
     copying: p.copying,
     checking: p.checking,
     uploading: p.uploading,
@@ -148,6 +154,7 @@ class BackupNumbers {
       failed: number('failed'),
       blocked: number('blocked'),
       bytesDone: number('bytesDone'),
+      waiting: number('waiting'),
       copying: number('copying'),
       checking: number('checking'),
       uploading: number('uploading'),
@@ -171,6 +178,7 @@ class BackupNumbers {
   /// Uploading 3", or null when none is.
   String? get stageLine {
     final parts = [
+      if (waiting > 0) 'Waiting $waiting',
       if (copying > 0) 'Copying $copying',
       if (checking > 0) 'Checking $checking',
       if (uploading > 0) 'Uploading $uploading',

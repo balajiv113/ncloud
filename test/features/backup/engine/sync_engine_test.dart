@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -668,6 +669,66 @@ void main() {
         expect(seen.every((s) => s.contains('.jpg:')), isTrue);
         expect(progress.active, isEmpty);
         expect(progress.fraction, 1);
+      },
+    );
+
+    test(
+      'a retry after a dropped connection reuses the copy already made',
+      () async {
+        device.add('big.mp4', bytes(1));
+        var tries = 0;
+        server.beforeUpload = (path, attempt) {
+          if (++tries <= 2) {
+            throw const CloudException('Upload timed out.', retryable: true);
+          }
+        };
+        await run(concurrency: 1);
+        expect(server.files, hasLength(1));
+        expect(tries, 3);
+        // Taken off the phone once, not once per try.
+        expect(device.exports, 1);
+        expect(progress.active, isEmpty);
+      },
+    );
+
+    test(
+      'a very large file does not stop the small ones from copying',
+      () async {
+        // A 600 MB file and several small ones. Its copy is held open, and the
+        // small files still go through meanwhile.
+        final hold = Completer<void>();
+        device.add('huge.mp4', [...bytes(100), ...bytes(101), ...bytes(102)]);
+        for (var i = 0; i < 4; i++) {
+          device.add('s$i.jpg', bytes(i));
+        }
+        var smallDone = 0;
+        device.beforeExport = (name) async {
+          if (name == 'huge.mp4') {
+            await Future.doWhile(() async {
+              await Future<void>.delayed(const Duration(milliseconds: 5));
+              return smallDone < 4;
+            });
+            hold.complete();
+          }
+        };
+        server.beforeUpload = (path, attempt) {
+          if (path.last.startsWith('s')) smallDone++;
+        };
+        await SyncEngine(
+              client: server,
+              access: device,
+              journal: journal,
+              progress: progress,
+              check: (_) {},
+              onChanged: () {},
+              maxUploads: 3,
+              prefetch: 3,
+              bigFile: 64,
+            )
+            .run(account, pair(concurrency: 3))
+            .timeout(const Duration(seconds: 20));
+        expect(hold.isCompleted, isTrue);
+        expect(smallDone, 4);
       },
     );
 
