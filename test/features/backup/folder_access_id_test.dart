@@ -143,4 +143,32 @@ void main() {
     );
     expect(calls, ['stage', 'export', 'discard']);
   });
+
+  test('a copy the phone names by another path is kept, not removed', () async {
+    final dir = await Directory.systemTemp.createTemp('copy-path');
+    addTearDown(() => dir.delete(recursive: true));
+    final into = File('${dir.path}/a.part')..writeAsBytesSync([]);
+    final canonical = File('${dir.path}/./a.part');
+    final calls = <String>[];
+    messenger.setMockMethodCallHandler(NativeFolderAccess.channel, (
+      call,
+    ) async {
+      calls.add(call.method);
+      if (call.method == 'stage') return into.path;
+      if (call.method == 'export') {
+        await into.writeAsBytes([1, 2, 3]);
+        return {'path': canonical.path};
+      }
+      return null;
+    });
+    final file = await NativeFolderAccess().exportTracked(
+      'tree',
+      ['a.jpg'],
+      const DeviceEntry('a.jpg', false, 3, 1),
+      (_) {},
+    );
+    expect(file.path, canonical.path);
+    expect(calls, ['stage', 'export']);
+    expect(await file.length(), 3);
+  });
 }
