@@ -25,7 +25,8 @@ import '../../../core/cloud/cloud_backend.dart';
       'Could not save sync progress (SQLite ${error.getResultCode() ?? 'unknown'}). '
           'Check device storage. Completed transfers may be copied again on retry.',
     FileSystemException() =>
-      'Could not access a temporary transfer file. Check free device space.',
+      'A temporary copy of the file could not be read. It will be tried again; '
+          'if it keeps happening, check free device space.',
     SocketException() =>
       'The connection was interrupted. Retry when connected.',
     TimeoutException() => 'The transfer timed out. Retry when connected.',

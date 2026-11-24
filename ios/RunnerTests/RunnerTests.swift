@@ -446,9 +446,21 @@ class RunnerTests: XCTestCase {
       for file in [oldPart, unrelated, nested, nestedPart] {
         try manager.setAttributes([.modificationDate: old], ofItemAtPath: file.path)
       }
+      // Photos stamps an exported file with the photo's own date. A file made a
+      // moment ago must survive that, and one made long ago must not be saved by
+      // a recent date.
+      let madeNow = "\(Int(Date().timeIntervalSince1970))-\(UUID().uuidString).part"
+      let madeLongAgo = "\(Int(Date().timeIntervalSince1970) - 48 * 3600)-\(UUID().uuidString).part"
+      let inUse = directory.appendingPathComponent(madeNow)
+      let forgotten = directory.appendingPathComponent(madeLongAgo)
+      for file in [inUse, forgotten] { try Data([3]).write(to: file) }
+      let years = Date().addingTimeInterval(-3 * 365 * 24 * 60 * 60)
+      try manager.setAttributes([.modificationDate: years], ofItemAtPath: inUse.path)
       let destination = try bridge.newStage(create: false)
       XCTAssertEqual(destination.pathExtension, "part")
       XCTAssertEqual(destination.deletingLastPathComponent(), directory)
+      XCTAssertTrue(manager.fileExists(atPath: inUse.path))
+      XCTAssertFalse(manager.fileExists(atPath: forgotten.path))
       XCTAssertFalse(manager.fileExists(atPath: destination.path))
       XCTAssertFalse(manager.fileExists(atPath: oldPart.path))
       for retained in [freshPart, unrelated, nested, nestedPart] {
