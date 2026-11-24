@@ -4,6 +4,7 @@ import '../../../core/cloud/cloud_backend.dart';
 import '../../../models.dart';
 import '../platform/folder_access.dart';
 import '../platform/sync_background.dart';
+import 'adaptive_limit.dart';
 import 'sync_engine.dart';
 import '../platform/device_library.dart';
 import 'backup_preview.dart';
@@ -159,6 +160,7 @@ class SyncRunner {
           progress: progress,
           check: _check,
           onChanged: onChanged,
+          maxUploads: AdaptiveLimit.deviceMax,
         ).run(session, pair);
         pair.lastRun = DateTime.now();
         await journal.completed(pair.id, pair.lastRun!);

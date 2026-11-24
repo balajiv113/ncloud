@@ -62,10 +62,10 @@ void validatePair({
   }
 }
 
-/// Uploads run one to three files at a time.
+/// Uploads start one to eight files at a time; the engine tunes it from there.
 void validateConcurrency(int concurrency) {
-  if (concurrency < 1 || concurrency > 3) {
-    throw const FormatException('Use 1 to 3 uploads.');
+  if (concurrency < 1 || concurrency > 8) {
+    throw const FormatException('Use 1 to 8 uploads.');
   }
 }
 

@@ -38,9 +38,18 @@ class SyncProgress {
   /// The file being uploaded now.
   String? current;
 
-  DateTime? _lastSample;
-  int _lastBytes = 0;
+  /// Progress at recent moments, to measure speed over the last minute rather
+  /// than from one file: a single large video would otherwise swing the figure
+  /// wildly. Each is (time, work done, bytes sent over the network).
+  final List<(DateTime, int, int)> _samples = [];
+  static const _window = Duration(seconds: 60);
+  int _bytesSent = 0;
   double? _bytesPerSecond;
+  double? _sendRate;
+
+  /// How fast bytes are going to the server, or null until there is enough to
+  /// say. Files found already on the server do not count.
+  double? get uploadSpeed => _sendRate;
 
   /// Files finished this run, whichever way.
   int get settled => transferred + recognised + moved + failed;
@@ -73,37 +82,46 @@ class SyncProgress {
 
   /// Starts timing a run's uploads.
   void begin(DateTime now) {
-    _lastSample = now;
-    _lastBytes = bytesDone;
+    _samples
+      ..clear()
+      ..add((now, bytesDone, _bytesSent));
     _bytesPerSecond = null;
+    _sendRate = null;
+  }
+
+  /// Notes the progress at [now] and works out the speed over the last minute.
+  void _measure(DateTime now) {
+    _samples.add((now, bytesDone, _bytesSent));
+    while (_samples.length > 2 && now.difference(_samples[1].$1) >= _window) {
+      _samples.removeAt(0);
+    }
+    final first = _samples.first;
+    final seconds = now.difference(first.$1).inMilliseconds / 1000;
+    if (seconds < 2) return;
+    _bytesPerSecond = (bytesDone - first.$2) / seconds;
+    _sendRate = (_bytesSent - first.$3) / seconds;
   }
 
   /// Records that a file of [bytes] was found on the server already.
-  void wasOnServer(int bytes) {
+  void wasOnServer(int bytes, [DateTime? now]) {
     recognised++;
     bytesDone += bytes;
+    if (now != null) _measure(now);
   }
 
   /// Records that a file of [bytes] was moved on the server.
-  void wasMoved(int bytes) {
+  void wasMoved(int bytes, [DateTime? now]) {
     moved++;
     bytesDone += bytes;
+    if (now != null) _measure(now);
   }
 
   /// Records that a file of [bytes] was uploaded, and updates the speed.
   void uploaded(int bytes, DateTime now) {
     transferred++;
     bytesDone += bytes;
-    final last = _lastSample ?? now;
-    final seconds = now.difference(last).inMilliseconds / 1000;
-    if (seconds < 2) return;
-    final sample = (bytesDone - _lastBytes) / seconds;
-    // Weighted towards recent speed so the estimate follows the connection.
-    _bytesPerSecond = _bytesPerSecond == null
-        ? sample
-        : _bytesPerSecond! * 0.7 + sample * 0.3;
-    _lastSample = now;
-    _lastBytes = bytesDone;
+    _bytesSent += bytes;
+    _measure(now);
   }
 
   void reset() {
@@ -111,9 +129,10 @@ class SyncProgress {
     found = toUpload = bytesTotal = transferred = bytesDone = 0;
     alreadyBackedUp = recognised = moved = failed = blocked = conflicts = 0;
     current = null;
-    _lastSample = null;
-    _lastBytes = 0;
+    _samples.clear();
+    _bytesSent = 0;
     _bytesPerSecond = null;
+    _sendRate = null;
   }
 
   Map<String, Object?> toJson() => {

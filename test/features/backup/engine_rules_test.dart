@@ -22,8 +22,8 @@ void main() {
       expect(message(const CloudException('Quota exceeded')), 'Quota exceeded');
       expect(message(StateError('Reconnect first.')), 'Reconnect first.');
       expect(
-        message(const FormatException('Use 1 to 3 uploads.')),
-        'Use 1 to 3 uploads.',
+        message(const FormatException('Use 1 to 8 uploads.')),
+        'Use 1 to 8 uploads.',
       );
     });
 
@@ -138,10 +138,10 @@ void main() {
 
     test('accepts an ordinary pair', validate);
 
-    test('limits uploads to one to three at a time', () {
+    test('limits uploads to one to eight at a time', () {
       expect(() => validate(concurrency: 0), throwsFormatException);
-      expect(() => validate(concurrency: 4), throwsFormatException);
-      validate(concurrency: 3);
+      expect(() => validate(concurrency: 9), throwsFormatException);
+      validate(concurrency: 8);
     });
 
     test('Photos albums and iOS background backups are iOS-only', () {
