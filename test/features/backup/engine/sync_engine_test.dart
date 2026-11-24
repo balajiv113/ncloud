@@ -595,6 +595,63 @@ void main() {
       expect(server.files, hasLength(9));
     });
 
+    test('identical files in flight together are stored once', () async {
+      server.beforeUpload = (path, attempt) =>
+          Future<void>.delayed(const Duration(milliseconds: 20));
+      for (var i = 0; i < 6; i++) {
+        device.add('same$i.jpg', bytes(7));
+      }
+      await run();
+      expect(server.uploads, 1);
+      expect(server.files, hasLength(1));
+      expect(progress.recognised, 5);
+      expect(
+        await journal.receiptsFor('p', [
+          for (var i = 0; i < 6; i++) ['same$i.jpg'],
+        ]),
+        hasLength(6),
+        reason: 'every file still has its own record',
+      );
+      final uploads = server.uploads;
+      await run();
+      expect(server.uploads, uploads);
+    });
+
+    test('identical files do not slow down different ones', () async {
+      var now = 0, most = 0;
+      server.beforeUpload = (path, attempt) async {
+        most = ++now > most ? now : most;
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        now--;
+      };
+      for (var i = 0; i < 3; i++) {
+        device.add('same$i.jpg', bytes(7));
+      }
+      for (var i = 0; i < 6; i++) {
+        device.add('other$i.jpg', bytes(20 + i));
+      }
+      await SyncEngine(
+        client: server,
+        access: device,
+        journal: journal,
+        progress: progress,
+        check: (_) {},
+        onChanged: () {},
+      ).run(
+        account,
+        FolderPair(
+          id: 'p',
+          account: 'a|b',
+          name: 'Camera',
+          folder: const DeviceFolder('t', 'Camera', 'camera'),
+          remote: const ['Backup'],
+          wifiOnly: false,
+        ),
+      );
+      expect(server.uploads, 7);
+      expect(most, 3);
+    });
+
     test('a saved backup that has the old default of one gets the new one', () {
       final json = pair().toJson()..['uploadConcurrency'] = 1;
       expect(FolderPair.fromJson(json).uploadConcurrency, 3);

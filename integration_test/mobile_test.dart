@@ -383,11 +383,19 @@ Future<String> _testRealAlbum() async {
     );
     final uploaded = cloud.uploads;
     _require(uploaded > 0, 'No album originals were uploaded.');
+    final firstFiles = cloud.files.keys.toList();
     await _stage('checking unchanged receipts', () => sync.run(pair));
-    _require(
-      sync.error == null && cloud.uploads == uploaded,
-      'An unchanged album was uploaded again instead of reusing receipts.',
-    );
+    if (sync.error != null || cloud.uploads != uploaded) {
+      final failures = await sync.failures(pair);
+      throw StateError(
+        'An unchanged album was uploaded again instead of reusing receipts. '
+        'First run: $uploaded uploads of ${firstFiles.length} files '
+        '$firstFiles. Second run: ${cloud.uploads - uploaded} more, '
+        'error: ${sync.error}, '
+        'files now: ${cloud.files.keys.toList()}, '
+        'failures: ${[for (final f in failures) '${f.path.join('/')}: ${f.message}']}.',
+      );
+    }
     _require(
       await journal.receipt(pair.id, 'local', [source.name]) != null,
       'The original upload has no persisted receipt.',

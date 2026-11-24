@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -358,6 +359,9 @@ class _Uploader {
   /// into it. A creation in progress is shared by the workers waiting on it.
   final Map<String, Future<void>> _folders = {};
 
+  /// Content being sent right now, by fingerprint.
+  final Map<String, Future<void>> _sending = {};
+
   final List<Receipt> _pending = [];
   DateTime _flushed = DateTime.fromMillisecondsSinceEpoch(0);
   DateTime _saved = DateTime.fromMillisecondsSinceEpoch(0);
@@ -446,67 +450,82 @@ class _Uploader {
       final fingerprint = await fingerprintOf(staged);
       engine.check(pair);
       if (await _sameFile(item, fingerprint, size, staged)) return;
-      // The same content may already be on the server under another path: a
-      // photo that moved on the device, or a copy of one. Recognise it.
-      if (await _reuseKnown(item, fingerprint, size)) return;
-      var target = path;
-      for (var renamed = 0; ; renamed++) {
-        await _ensureParents(target);
+      // Files with the same content are sent one at a time: while one is on its
+      // way, the others wait and then reuse it, so identical photos are stored
+      // once however many are in flight.
+      for (var running = _sending[fingerprint]; running != null;) {
+        await running;
         engine.check(pair);
-        await engine._requireNetwork(pair);
-        try {
-          final result = await _client.uploadNew(
-            session,
-            [...pair.cloudRoot, ...target],
-            staged.openRead(),
-            size,
-            sha1: fingerprint,
-            modified: DateTime.fromMillisecondsSinceEpoch(file.modified),
-          );
-          final etag = result.etag;
-          if (etag == null || etag.isEmpty) {
-            throw const FormatException(
-              'The server did not supply a file revision. Sync stopped safely.',
-            );
-          }
-          await _record(item, target, '$etag|$size', fingerprint, size);
-          _progress.uploaded(size, engine._clock());
-          engine._tick();
-          return;
-        } on CloudException catch (error) {
-          if (error.statusCode != 412) rethrow;
-          // Something is already there. The same file means an earlier run
-          // uploaded it and lost its receipt; anything else keeps both.
-          final existing = await _client.stat(session, [
-            ...pair.cloudRoot,
-            ...target,
-          ]);
-          if (existing != null &&
-              !existing.isDirectory &&
-              existing.size == size &&
-              existing.etag?.isNotEmpty == true &&
-              await _holds(existing, [
-                ...pair.cloudRoot,
-                ...target,
-              ], fingerprint)) {
-            await _record(
-              item,
-              target,
-              '${existing.etag}|${existing.size}',
-              fingerprint,
+        running = _sending[fingerprint];
+      }
+      final done = Completer<void>();
+      _sending[fingerprint] = done.future;
+      try {
+        // The same content may already be on the server under another path: a
+        // photo that moved on the device, or a copy of one. Recognise it.
+        if (await _reuseKnown(item, fingerprint, size)) return;
+        var target = path;
+        for (var renamed = 0; ; renamed++) {
+          await _ensureParents(target);
+          engine.check(pair);
+          await engine._requireNetwork(pair);
+          try {
+            final result = await _client.uploadNew(
+              session,
+              [...pair.cloudRoot, ...target],
+              staged.openRead(),
               size,
+              sha1: fingerprint,
+              modified: DateTime.fromMillisecondsSinceEpoch(file.modified),
             );
-            _progress.wasOnServer(size);
+            final etag = result.etag;
+            if (etag == null || etag.isEmpty) {
+              throw const FormatException(
+                'The server did not supply a file revision. Sync stopped safely.',
+              );
+            }
+            await _record(item, target, '$etag|$size', fingerprint, size);
+            _progress.uploaded(size, engine._clock());
             engine._tick();
             return;
+          } on CloudException catch (error) {
+            if (error.statusCode != 412) rethrow;
+            // Something is already there. The same file means an earlier run
+            // uploaded it and lost its receipt; anything else keeps both.
+            final existing = await _client.stat(session, [
+              ...pair.cloudRoot,
+              ...target,
+            ]);
+            if (existing != null &&
+                !existing.isDirectory &&
+                existing.size == size &&
+                existing.etag?.isNotEmpty == true &&
+                await _holds(existing, [
+                  ...pair.cloudRoot,
+                  ...target,
+                ], fingerprint)) {
+              await _record(
+                item,
+                target,
+                '${existing.etag}|${existing.size}',
+                fingerprint,
+                size,
+              );
+              _progress.wasOnServer(size);
+              engine._tick();
+              return;
+            }
+            if (renamed >= 3) {
+              throw CloudException(
+                'No free name was found for ${path.last} on the server.',
+              );
+            }
+            target = _conflict(target);
           }
-          if (renamed >= 3) {
-            throw CloudException(
-              'No free name was found for ${path.last} on the server.',
-            );
-          }
-          target = _conflict(target);
         }
+      } finally {
+        _sending.remove(fingerprint);
+        done.complete();
       }
     } finally {
       if (staged != null) await _access.discard(staged);
