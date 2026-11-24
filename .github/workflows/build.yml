@@ -244,7 +244,9 @@ jobs:
 
   publish:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-    needs: [checks, android, android-device, ios]
+    # The iOS checks run alongside and can fail without holding back the Android
+    # build, which is what gets published.
+    needs: [checks, android, android-device]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -264,7 +266,7 @@ jobs:
             --notes "ncloud 0.5.5 preview: Folder backup uses one compact setup for Android device folders and iOS Photos albums, with include/exclude glob patterns, manual or best-effort daily schedules, individual backup and Back up all/Pause all controls. Removing a backup only removes its settings and history. Manual pair storage is independent of background scheduling. No device or cloud originals are deleted or overwritten; per-file receipts preserve confirmed progress and interrupted originals restart in full. Source folders and subfolders are preserved. Updates reuse the cached development signer. This Android APK is not an iOS installer."
 
   ios:
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 30
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
@@ -397,7 +399,7 @@ jobs:
 
   ios-release:
     if: github.event_name == 'workflow_dispatch' && inputs.build_ios
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 20
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
