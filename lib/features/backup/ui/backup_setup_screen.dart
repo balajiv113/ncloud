@@ -10,6 +10,7 @@ import '../model/sync_rules.dart';
 import '../model/backup_schedule.dart';
 import '../platform/album_folders.dart';
 import '../platform/device_library.dart';
+import 'album_exclude_sheet.dart';
 import 'album_folders_sheet.dart';
 
 class BackupSetupScreen extends StatefulWidget {
@@ -78,9 +79,10 @@ class _BackupSetupScreenState extends State<BackupSetupScreen> {
     final source = _source;
     if (source == null) return;
     final chosen = albumsOf(source.token) ?? const <AlbumChoice>[];
+    final left = {for (final a in excludedOf(source.token)) a.token};
     final available = [
       for (final album in await sync.photoAlbums())
-        if (album.token != cameraRollToken)
+        if (album.token != cameraRollToken && !left.contains(album.token))
           AlbumChoice(album.token, album.name),
     ];
     if (!mounted) return;
@@ -91,7 +93,36 @@ class _BackupSetupScreenState extends State<BackupSetupScreen> {
       builder: (_) => AlbumFoldersSheet(available: available, chosen: chosen),
     );
     if (mounted && result != null) {
-      setState(() => _source = cameraRollWith(result));
+      setState(
+        () =>
+            _source = cameraRollWith(result, exclude: excludedOf(source.token)),
+      );
+    }
+  });
+
+  /// Chooses which albums are left out of the whole-library backup.
+  Future<void> _chooseExcluded() => _perform(() async {
+    final source = _source;
+    if (source == null) return;
+    final folders = albumsOf(source.token) ?? const <AlbumChoice>[];
+    final inFolders = {for (final a in folders) a.token};
+    final available = [
+      for (final album in await sync.photoAlbums())
+        if (album.token != cameraRollToken && !inFolders.contains(album.token))
+          AlbumChoice(album.token, album.name),
+    ];
+    if (!mounted) return;
+    final result = await showModalBottomSheet<List<AlbumChoice>>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (_) => AlbumExcludeSheet(
+        available: available,
+        chosen: excludedOf(source.token),
+      ),
+    );
+    if (mounted && result != null) {
+      setState(() => _source = cameraRollWith(folders, exclude: result));
     }
   });
 
@@ -236,6 +267,17 @@ class _BackupSetupScreenState extends State<BackupSetupScreen> {
             }),
             trailing: const Icon(Icons.chevron_right),
             onTap: _busy ? null : _chooseAlbums,
+          ),
+        if (sync.ios && _source != null && isCameraRoll(_source!.token))
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Leave out albums'),
+            subtitle: Text(switch (excludedOf(_source!.token)) {
+              [] => 'None',
+              final albums => albums.map((a) => a.name).join(', '),
+            }),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: _busy ? null : _chooseExcluded,
           ),
         if (_libraryPermission == LibraryPermission.partial)
           Padding(

@@ -15,10 +15,15 @@ class FolderPair {
     this.wifiOnly = true,
     this.lastRun,
     this.rules = const SyncRules.all(),
-    this.uploadConcurrency = 1,
+    this.uploadConcurrency = defaultUploadConcurrency,
     this.schedule,
     this.revision = '',
   });
+
+  /// Files sent at once. One at a time leaves the connection idle while the
+  /// next file is copied out of the library and checksummed.
+  static const defaultUploadConcurrency = 3;
+
   final String id;
   final String account;
   final String name;
@@ -79,7 +84,10 @@ class FolderPair {
     wifiOnly: value['wifiOnly'] as bool,
     lastRun: DateTime.tryParse(value['lastRun'] as String? ?? ''),
     rules: SyncRules.fromJson((value['rules'] as Map).cast<String, dynamic>()),
-    uploadConcurrency: value['uploadConcurrency'] as int,
+    // No screen ever set this, so a saved 1 is the old default, not a choice.
+    uploadConcurrency: (value['uploadConcurrency'] as int) == 1
+        ? defaultUploadConcurrency
+        : value['uploadConcurrency'] as int,
     schedule: value['schedule'] == null
         ? null
         : BackupSchedule.fromJson(

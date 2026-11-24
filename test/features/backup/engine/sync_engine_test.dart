@@ -559,6 +559,81 @@ void main() {
     );
   });
 
+  group('speed', () {
+    Future<int> mostAtOnce(FolderPair value) async {
+      var now = 0, most = 0;
+      server.beforeUpload = (path, attempt) async {
+        most = ++now > most ? now : most;
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        now--;
+      };
+      for (var i = 0; i < 9; i++) {
+        device.add('f$i.jpg', bytes(i));
+      }
+      await SyncEngine(
+        client: server,
+        access: device,
+        journal: journal,
+        progress: progress,
+        check: (_) {},
+        onChanged: () {},
+      ).run(account, value);
+      return most;
+    }
+
+    test('a new backup sends three files at once', () async {
+      final fresh = FolderPair(
+        id: 'p',
+        account: 'a|b',
+        name: 'Camera',
+        folder: const DeviceFolder('t', 'Camera', 'camera'),
+        remote: const ['Backup'],
+        wifiOnly: false,
+      );
+      expect(fresh.uploadConcurrency, 3);
+      expect(await mostAtOnce(fresh), 3);
+      expect(server.files, hasLength(9));
+    });
+
+    test('a saved backup that has the old default of one gets the new one', () {
+      final json = pair().toJson()..['uploadConcurrency'] = 1;
+      expect(FolderPair.fromJson(json).uploadConcurrency, 3);
+      json['uploadConcurrency'] = 2;
+      expect(FolderPair.fromJson(json).uploadConcurrency, 2);
+    });
+
+    test(
+      'folders and records stay correct when files go in parallel',
+      () async {
+        for (var i = 0; i < 40; i++) {
+          device.add('Trips/Rome/f$i.jpg', bytes(i));
+        }
+        await SyncEngine(
+          client: server,
+          access: device,
+          journal: journal,
+          progress: progress,
+          check: (_) {},
+          onChanged: () {},
+        ).run(
+          account,
+          FolderPair(
+            id: 'p',
+            account: 'a|b',
+            name: 'Camera',
+            folder: const DeviceFolder('t', 'Camera', 'camera'),
+            remote: const ['Backup'],
+            wifiOnly: false,
+          ),
+        );
+        expect(server.files, hasLength(40));
+        expect(server.folderRequests, 3, reason: 'each folder made once');
+        expect(progress.failed, 0);
+        expect(progress.conflicts, 0);
+      },
+    );
+  });
+
   group('backing up again', () {
     test('finds files an older version uploaded without a checksum', () async {
       server.dropFingerprints = true;

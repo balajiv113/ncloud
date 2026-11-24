@@ -173,7 +173,7 @@ class BackupController extends ChangeNotifier {
     List<String> remote, {
     bool wifiOnly = true,
     SyncRules rules = const SyncRules.all(),
-    int uploadConcurrency = 1,
+    int uploadConcurrency = FolderPair.defaultUploadConcurrency,
     FolderPair? replacing,
     BackupSchedule? schedule,
   }) async {

@@ -19,6 +19,7 @@ String albumToken(String id) => 'photos:${base64Encode(utf8.encode(id))}';
 class _Photos {
   final assets = <String, ({List<int> bytes, Set<String> albums})>{};
   final missingAlbums = <String>{};
+  final failingAlbums = <String>{};
   late Directory staging;
   var modified = 1700000000000;
 
@@ -55,6 +56,9 @@ class _Photos {
         final id = utf8.decode(base64Decode(token.substring(7)));
         if (missingAlbums.contains(id)) {
           throw PlatformException(code: 'photos_album', message: 'gone');
+        }
+        if (failingAlbums.contains(id)) {
+          throw PlatformException(code: 'photos_permission', message: 'no');
         }
         return [
           for (final MapEntry(key: name, value: asset) in assets.entries)
@@ -101,7 +105,44 @@ void main() {
       );
     });
 
+    test('albums to leave out are kept in the token, beside the folders', () {
+      final folder = cameraRollWith(
+        [AlbumChoice(albumToken('a'), 'W1')],
+        exclude: [
+          AlbumChoice(albumToken('b'), 'Hidden stuff'),
+          AlbumChoice(albumToken('c'), 'Memes'),
+        ],
+      );
+      expect([for (final a in albumsOf(folder.token)!) a.name], ['W1']);
+      expect(
+        [for (final a in excludedOf(folder.token)) a.name],
+        ['Hidden stuff', 'Memes'],
+      );
+      expect(folder.identity, cameraRollWith(const []).identity);
+    });
+
+    test('leaving albums out alone still makes a combined token', () {
+      final folder = cameraRollWith(
+        const [],
+        exclude: [AlbumChoice(albumToken('b'), 'Memes')],
+      );
+      expect(folder.token, isNot(cameraRollToken));
+      expect(isCameraRoll(folder.token), isTrue);
+      expect(albumsOf(folder.token), isEmpty);
+      expect(excludedOf(folder.token), hasLength(1));
+    });
+
+    test('a token from before albums could be left out still reads', () {
+      final old =
+          'photoset:${base64Url.encode(utf8.encode(jsonEncode([
+            [albumToken('a'), 'W1'],
+          ])))}';
+      expect([for (final a in albumsOf(old)!) a.name], ['W1']);
+      expect(excludedOf(old), isEmpty);
+    });
+
     test('no albums is the plain library; other tokens are not it', () {
+      expect(excludedOf(cameraRollToken), isEmpty);
       expect(cameraRollWith(const []).token, cameraRollToken);
       expect(albumsOf(cameraRollToken), isEmpty);
       expect(albumsOf(albumToken('a')), isNull);
@@ -141,6 +182,26 @@ void main() {
       );
       expect(tree.tokenFor(['B', 'z']), 't2');
       expect(tree.tokenFor(['w']), isNull);
+    });
+
+    test('photos in an excluded album are dropped everywhere', () {
+      final tree = AlbumFolderTree(
+        [AlbumChoice('t1', 'A')],
+        [
+          files(['x', 'y']),
+        ],
+        files(['x', 'y', 'z', 'w']),
+        excluded: [
+          files(['y', 'w']),
+        ],
+      );
+      expect([for (final e in tree.children(const [])) e.name], ['A', 'z']);
+      expect(
+        [
+          for (final e in tree.children(['A'])) e.name,
+        ],
+        ['x'],
+      );
     });
 
     test('an empty album makes no folder', () {
@@ -303,6 +364,104 @@ void main() {
       await run(pairWith([w1]));
       expect(server.files.keys, ['Backup/Camera Roll/a.heic']);
     });
+
+    test('photos in an excluded album are not uploaded', () async {
+      final memes = AlbumChoice(albumToken('memes'), 'Memes');
+      photos.add('a.heic', bytes(1), albums: {'memes'});
+      photos.add('b.heic', bytes(2), albums: {'w1'});
+      photos.add('c.heic', bytes(3));
+      photos.add('d.heic', bytes(4), albums: {'w1', 'memes'});
+      final progress = await run(
+        FolderPair(
+          id: 'cr',
+          account: syncAccount(fixtures.account),
+          name: 'Camera Roll',
+          folder: cameraRollWith([w1], exclude: [memes]),
+          remote: const ['Backup'],
+          wifiOnly: false,
+        ),
+      );
+      expect(server.files.keys.toSet(), {
+        'Backup/Camera Roll/W1/b.heic',
+        'Backup/Camera Roll/c.heic',
+      });
+      expect(progress.found, 2);
+    });
+
+    test(
+      'leaving an album out later does not touch what is on the server',
+      () async {
+        final memes = AlbumChoice(albumToken('memes'), 'Memes');
+        photos.add('a.heic', bytes(1), albums: {'memes'});
+        photos.add('c.heic', bytes(3));
+        await run(pairWith(const []));
+        expect(server.files, hasLength(2));
+        await run(
+          FolderPair(
+            id: 'cr',
+            account: syncAccount(fixtures.account),
+            name: 'Camera Roll',
+            folder: cameraRollWith(const [], exclude: [memes]),
+            remote: const ['Backup'],
+            wifiOnly: false,
+          ),
+        );
+        expect(server.files, hasLength(2));
+        expect(server.uploads, 2);
+      },
+    );
+
+    test(
+      'an excluded album that cannot be read stops the run, uploading nothing',
+      () async {
+        final memes = AlbumChoice(albumToken('memes'), 'Memes');
+        photos.add('a.heic', bytes(1), albums: {'memes'});
+        photos.failingAlbums.add('memes');
+        final progress = SyncProgress();
+        final runner = SyncRunner(
+          client: server,
+          access: access,
+          journal: journal,
+          runLock: InProcessSyncRunLock(),
+          foreground: () => true,
+          accountKey: () => syncAccount(fixtures.account),
+          onChanged: () {},
+          progress: progress,
+        );
+        final pair = FolderPair(
+          id: 'cr',
+          account: syncAccount(fixtures.account),
+          name: 'Camera Roll',
+          folder: cameraRollWith(const [], exclude: [memes]),
+          remote: const ['Backup'],
+          wifiOnly: false,
+        );
+        await journal.save(pair);
+        await runner.run(fixtures.account, pair);
+        expect(runner.error, isNotNull);
+        expect(server.uploads, 0);
+      },
+    );
+
+    test(
+      'an excluded album deleted on the phone does not stop the backup',
+      () async {
+        final memes = AlbumChoice(albumToken('memes'), 'Memes');
+        photos.add('a.heic', bytes(1));
+        photos.missingAlbums.add('memes');
+        await run(
+          FolderPair(
+            id: 'cr',
+            account: syncAccount(fixtures.account),
+            name: 'Camera Roll',
+            folder: cameraRollWith(const [], exclude: [memes]),
+            remote: const ['Backup'],
+            wifiOnly: false,
+          ),
+        );
+        expect(server.files.keys, ['Backup/Camera Roll/a.heic']);
+      },
+    );
 
     test('a photo in two albums is stored once, in the first', () async {
       final trips = AlbumChoice(albumToken('trips'), 'Trips');

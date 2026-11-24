@@ -469,8 +469,10 @@ void main() {
     'time budget stops subsequent files, persists reason and retains receipts',
     () async {
       final pair = await add();
-      await device.put('a.jpg', 'a');
-      await device.put('b.jpg', 'b');
+      // More files than can be in flight at once, so some never get started.
+      for (final name in ['a', 'b', 'c', 'd', 'e']) {
+        await device.put('$name.jpg', name);
+      }
       final entered = Completer<void>(), release = Completer<void>();
       cloud.holdUpload = () async {
         if (!entered.isCompleted) entered.complete();
@@ -483,7 +485,10 @@ void main() {
         },
       );
       await scheduled.run(pair.id, pair.revision);
-      expect(cloud.uploads, lessThanOrEqualTo(1));
+      expect(
+        cloud.uploads,
+        lessThanOrEqualTo(FolderPair.defaultUploadConcurrency),
+      );
       expect((await journal.state(pair.id))['error'], contains('time budget'));
       expect((await journal.state(pair.id))['slot'], isNull);
     },
