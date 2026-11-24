@@ -300,7 +300,7 @@ void main() {
     );
 
     test('the whole library is a source of its own, on Android only', () {
-      const library = DeviceFolder.library();
+      final library = DeviceFolder.library();
       expect(library.kind, DeviceSourceKind.library);
       void validate({required bool ios}) => validatePair(
         folder: library,
@@ -316,7 +316,7 @@ void main() {
     });
 
     test('folders already backed up by another backup are skipped', () {
-      final library = pair('lib', const DeviceFolder.library());
+      final library = pair('lib', DeviceFolder.library());
       final camera = pair(
         'a',
         const DeviceFolder(
@@ -359,7 +359,7 @@ void main() {
     });
 
     test('a backup of main storage root covers nothing it cannot name', () {
-      final library = pair('lib', const DeviceFolder.library());
+      final library = pair('lib', DeviceFolder.library());
       final root = pair(
         'a',
         const DeviceFolder('content://x/tree/primary%3A', 'Phone', 'x'),

@@ -23,6 +23,22 @@ abstract interface class LibraryAccess {
   /// Phone folders to leave out of the next listing, such as those another
   /// backup already covers.
   void skipFolders(List<List<String>> folders);
+
+  /// Every phone folder with photos or videos, whatever is left out, so the
+  /// user can choose which to leave out.
+  Future<List<LibraryFolder>> libraryFolders();
+}
+
+/// One folder of the phone's library, as the backup names it.
+class LibraryFolder {
+  const LibraryFolder(this.name, this.path, this.files);
+
+  /// The folder's name in the backup, such as `Screenshots`.
+  final String name;
+
+  /// Where it is on the phone, such as `Pictures/Screenshots`.
+  final List<String> path;
+  final int files;
 }
 
 /// One photo or video in the phone's library, as the platform reports it.
@@ -82,17 +98,24 @@ class LibraryTree {
     final groups = <String, List<LibraryItem>>{};
     for (final item in items) {
       final folder = _normal(item.folder.split('/'));
-      if (skipped.any((prefix) => _startsWith(folder, prefix))) continue;
       groups.putIfAbsent(folder.join('/'), () => []).add(item);
     }
     final used = <String>{};
-    // In order, so the same phone always names its folders the same way.
+    // In order, so the same phone always names its folders the same way. Every
+    // folder is named, including those left out, so leaving one out never
+    // changes the name of another.
     for (final path in groups.keys.toList()..sort()) {
-      final name = _albumName(path.isEmpty ? const [] : path.split('/'), used);
+      final parts = path.isEmpty ? const <String>[] : path.split('/');
+      final name = _albumName(parts, used);
       used.add(name);
+      folders.add(LibraryFolder(name, parts, groups[path]!.length));
+      if (skipped.any((prefix) => _startsWith(parts, prefix))) continue;
       _files[name] = _named(groups[path]!);
     }
   }
+
+  /// Every folder with its photos and videos, including those left out.
+  final List<LibraryFolder> folders = [];
 
   final Map<String, Map<String, LibraryItem>> _files = {};
 

@@ -10,10 +10,14 @@ class AlbumExcludeSheet extends StatefulWidget {
     super.key,
     required this.available,
     required this.chosen,
+    this.title = 'Leave out albums',
+    this.empty = 'There are no albums to choose from.',
   });
 
   final List<AlbumChoice> available;
   final List<AlbumChoice> chosen;
+  final String title;
+  final String empty;
 
   @override
   State<AlbumExcludeSheet> createState() => _AlbumExcludeSheetState();
@@ -36,17 +40,13 @@ class _AlbumExcludeSheetState extends State<AlbumExcludeSheet> {
           children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(24, 0, 24, 4),
-              child: Text(
-                'Leave out albums',
-                style: theme.textTheme.titleLarge,
-              ),
+              child: Text(widget.title, style: theme.textTheme.titleLarge),
             ),
             Padding(
               padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
               child: Text(
-                'Photos in these albums are not backed up, even if another '
-                'album holds them too. What was already backed up stays on '
-                'your server.',
+                'Photos and videos in these are not backed up. What was already '
+                'backed up stays on your server.',
                 style: theme.textTheme.bodySmall,
               ),
             ),
@@ -57,6 +57,9 @@ class _AlbumExcludeSheetState extends State<AlbumExcludeSheet> {
                   for (final album in widget.available)
                     CheckboxListTile(
                       title: Text(album.name),
+                      subtitle: album.subtitle == null
+                          ? null
+                          : Text(album.subtitle!),
                       value: _ticked.contains(album.token),
                       onChanged: (on) => setState(
                         () => on == true
@@ -65,9 +68,9 @@ class _AlbumExcludeSheetState extends State<AlbumExcludeSheet> {
                       ),
                     ),
                   if (widget.available.isEmpty)
-                    const Padding(
-                      padding: EdgeInsets.all(24),
-                      child: Text('There are no albums to choose from.'),
+                    Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Text(widget.empty),
                     ),
                 ],
               ),
