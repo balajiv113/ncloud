@@ -641,6 +641,27 @@ void main() {
       );
     });
 
+    test(
+      'a fingerprint taken while copying is used without reading again',
+      () async {
+        final known = _KnownChecksums(device);
+        for (var i = 0; i < 3; i++) {
+          device.add('f$i.jpg', bytes(i));
+        }
+        await SyncEngine(
+          client: server,
+          access: known,
+          journal: journal,
+          progress: progress,
+          check: (_) {},
+          onChanged: () {},
+        ).run(account, pair(concurrency: 3));
+        expect(known.asked, 3);
+        // The server checks each upload against the fingerprint it was given.
+        expect(server.files, hasLength(3));
+      },
+    );
+
     test('identical files in flight together are stored once', () async {
       server.beforeUpload = (path, attempt) =>
           Future<void>.delayed(const Duration(milliseconds: 20));
@@ -980,4 +1001,38 @@ class _Offline extends FakeServer {
   @override
   Future<RemoteStat?> stat(Account account, List<String> path) async =>
       throw const SocketException('unreachable');
+}
+
+/// A device that says it fingerprinted every copy itself, with the right value.
+class _KnownChecksums implements FolderAccess, StagedChecksums {
+  _KnownChecksums(this.inner);
+
+  final FakeDevice inner;
+  int asked = 0;
+
+  @override
+  Future<String?> checksumOf(File staged) async {
+    asked++;
+    return sha1Of(await staged.readAsBytes());
+  }
+
+  @override
+  Future<DeviceFolder?> pick() => inner.pick();
+  @override
+  Future<List<DeviceEntry>> list(String token, List<String> path) =>
+      inner.list(token, path);
+  @override
+  Future<File> export(String token, List<String> path, DeviceEntry expected) =>
+      inner.export(token, path, expected);
+  @override
+  Future<File> stage() => inner.stage();
+  @override
+  Future<DeviceEntry> import(String token, List<String> path, File staged) =>
+      inner.import(token, path, staged);
+  @override
+  Future<void> discard(File staged) => inner.discard(staged);
+  @override
+  Future<void> clearStaging() => inner.clearStaging();
+  @override
+  Future<SyncConditions> conditions() => inner.conditions();
 }

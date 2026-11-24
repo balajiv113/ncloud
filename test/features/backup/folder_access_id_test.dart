@@ -43,4 +43,42 @@ void main() {
       expect((calls.last.arguments as Map).containsKey('id'), isFalse);
     },
   );
+
+  group('the fingerprint taken while copying', () {
+    const sha = 'da39a3ee5e6b4b0d3255bfef95601890afd80709';
+    const entry = DeviceEntry('a.jpg', false, 1, 1);
+
+    void answer(Object? result) => messenger.setMockMethodCallHandler(
+      NativeFolderAccess.channel,
+      (call) async => call.method == 'discard' ? null : result,
+    );
+
+    test(
+      'is remembered with the copy and forgotten when it is discarded',
+      () async {
+        answer({'path': '/tmp/a.part', 'sha1': sha});
+        final access = NativeFolderAccess();
+        final file = await access.export('tree', ['a.jpg'], entry);
+        expect(file.path, '/tmp/a.part');
+        expect(await access.checksumOf(file), sha);
+        await access.discard(file);
+        expect(await access.checksumOf(file), isNull);
+      },
+    );
+
+    test('is ignored when it is not a SHA-1', () async {
+      answer({'path': '/tmp/b.part', 'sha1': 'not-a-checksum'});
+      final access = NativeFolderAccess();
+      final file = await access.export('tree', ['a.jpg'], entry);
+      expect(await access.checksumOf(file), isNull);
+    });
+
+    test('a plain path still works and has no fingerprint', () async {
+      answer('/tmp/c.part');
+      final access = NativeFolderAccess();
+      final file = await access.export('tree', ['a.jpg'], entry);
+      expect(file.path, '/tmp/c.part');
+      expect(await access.checksumOf(file), isNull);
+    });
+  });
 }

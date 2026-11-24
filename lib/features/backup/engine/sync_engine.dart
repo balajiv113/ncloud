@@ -515,7 +515,14 @@ class _Uploader {
       final fingerprint = await _stage('Checking', file.name, () async {
         await _checks.acquire();
         try {
-          return await fingerprintOf(copy);
+          // A device that fingerprinted the file while copying it already
+          // knows; reading it again is only the fallback.
+          final access = _access;
+          final known = switch (access) {
+            final StagedChecksums checks => await checks.checksumOf(copy),
+            _ => null,
+          };
+          return known ?? await fingerprintOf(copy);
         } finally {
           _checks.release();
         }
