@@ -642,6 +642,36 @@ void main() {
     });
 
     test(
+      'each file in hand is listed with its own step while it uploads',
+      () async {
+        final seen = <String>[];
+        server.beforeUpload = (path, attempt) async {
+          for (final f in progress.active) {
+            seen.add('${f.name}:${f.step}');
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+        };
+        for (var i = 0; i < 4; i++) {
+          device.add('f$i.jpg', bytes(i));
+        }
+        await SyncEngine(
+          client: server,
+          access: device,
+          journal: journal,
+          progress: progress,
+          check: (_) {},
+          onChanged: () {},
+          maxUploads: 3,
+          prefetch: 2,
+        ).run(account, pair(concurrency: 3));
+        expect(seen.where((s) => s.endsWith(':Uploading')), isNotEmpty);
+        expect(seen.every((s) => s.contains('.jpg:')), isTrue);
+        expect(progress.active, isEmpty);
+        expect(progress.fraction, 1);
+      },
+    );
+
+    test(
       'a fingerprint taken while copying is used without reading again',
       () async {
         final known = _KnownChecksums(device);

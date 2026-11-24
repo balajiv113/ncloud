@@ -1,3 +1,4 @@
+import '../engine/sync_progress.dart';
 import '../state/backup_controller.dart';
 
 /// 12431 as "12,431".
@@ -37,6 +38,40 @@ String formatSize(int bytes) {
       : '${value.toStringAsFixed(value < 10 ? 1 : 0)} ${units[unit]}';
 }
 
+/// One file in hand, as a row on the card: its name, its step and how far it
+/// has got.
+class FileRow {
+  const FileRow(this.name, this.step, this.fraction, this.detail);
+
+  factory FileRow.of(ActiveFile f) {
+    final known = f.size > 0;
+    final done = f.step == ActiveFile.copy
+        ? f.copied
+        : f.step == ActiveFile.upload
+        ? f.sent
+        : 0;
+    final share = !known || f.step == ActiveFile.check
+        ? null
+        : (done / f.size).clamp(0.0, 1.0);
+    final detail = switch (f.step) {
+      ActiveFile.check => 'Checking',
+      _ when known =>
+        '${f.step} ${(share! * 100).floor()}% · '
+            '${formatSize(done)} of ${formatSize(f.size)}',
+      _ when done > 0 => '${f.step} ${formatSize(done)}',
+      _ => f.step,
+    };
+    return FileRow(f.name, f.step, share, detail);
+  }
+
+  final String name;
+  final String step;
+
+  /// How far through this step the file is, or null when that is not known.
+  final double? fraction;
+  final String detail;
+}
+
 /// The numbers a card shows for one backup, from a run in this app or from what
 /// a background run saved, so both look the same.
 class BackupNumbers {
@@ -49,12 +84,11 @@ class BackupNumbers {
     this.failed = 0,
     this.blocked = 0,
     this.bytesDone = 0,
-    this.step = 'Uploading',
+    this.files = const [],
     this.copying = 0,
     this.checking = 0,
     this.uploading = 0,
     this.bytesTotal = 0,
-    this.current,
     this.fraction,
     this.remaining,
     this.bytesPerSecond,
@@ -68,14 +102,13 @@ class BackupNumbers {
   final int failed;
   final int blocked;
   final int bytesDone;
-  final String step;
+  final List<FileRow> files;
   final int copying;
   final int checking;
   final int uploading;
   final int bytesTotal;
 
   /// The file being uploaded now.
-  final String? current;
   final double? fraction;
   final Duration? remaining;
 
@@ -91,12 +124,11 @@ class BackupNumbers {
     failed: p.failed,
     blocked: p.blocked,
     bytesDone: p.bytesDone + p.sending,
-    step: p.step,
+    files: [for (final f in p.active) FileRow.of(f)],
     copying: p.copying,
     checking: p.checking,
     uploading: p.uploading,
     bytesTotal: p.bytesTotal,
-    current: p.current,
     fraction: p.fraction,
     remaining: p.estimatedRemaining,
     bytesPerSecond: p.uploadSpeed,
@@ -120,7 +152,9 @@ class BackupNumbers {
       checking: number('checking'),
       uploading: number('uploading'),
       bytesTotal: number('bytesTotal'),
-      fraction: toUpload > 0 ? (settled / toUpload).clamp(0.0, 1.0) : null,
+      fraction:
+          (state?['fraction'] as num?)?.toDouble() ??
+          (toUpload > 0 ? (settled / toUpload).clamp(0.0, 1.0) : null),
     );
   }
 

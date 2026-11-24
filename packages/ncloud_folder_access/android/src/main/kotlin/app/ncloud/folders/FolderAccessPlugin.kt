@@ -121,7 +121,8 @@ class FolderAccessPlugin : FlutterPlugin, ActivityAware, PluginRegistry.Activity
                             else -> mediaExport(
                                 call.argument<String>("id")!!,
                                 call.argument<Number>("size")!!.toLong(),
-                                call.argument<Number>("modified")!!.toLong())
+                                call.argument<Number>("modified")!!.toLong(),
+                                call.argument<String>("into"))
                         }
                         main.post { result.success(output) }
                     } catch (error: Exception) {
@@ -221,7 +222,7 @@ class FolderAccessPlugin : FlutterPlugin, ActivityAware, PluginRegistry.Activity
                                         check(before["directory"] == false && before["size"] == size && before["modified"] == modified) {
                                             "Source changed. Scan again."
                                         }
-                                        val temp = newStage()
+                                        val temp = call.argument<String>("into")?.let { staged(it) } ?: newStage()
                                         try {
                                             val sha1 = context.contentResolver.openInputStream(source).use { input ->
                                                 checkNotNull(input)
@@ -389,7 +390,7 @@ class FolderAccessPlugin : FlutterPlugin, ActivityAware, PluginRegistry.Activity
         return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
-    private fun mediaExport(id: String, size: Long, modified: Long): Map<String, String> {
+    private fun mediaExport(id: String, size: Long, modified: Long, into: String?): Map<String, String> {
         val parts = id.split(":")
         check(parts.size == 2) { "Unsupported photo id." }
         val base = if (parts[0] == "video") MediaStore.Video.Media.EXTERNAL_CONTENT_URI
@@ -400,7 +401,7 @@ class FolderAccessPlugin : FlutterPlugin, ActivityAware, PluginRegistry.Activity
             check(cursor != null && cursor.moveToFirst()) { "That photo is no longer in the library." }
             check(cursor.getLong(0) == size && cursor.getLong(1) * 1000 == modified) { "Source changed. Scan again." }
         }
-        val temp = newStage()
+        val temp = into?.let { staged(it) } ?: newStage()
         try {
             val sha1 = openMedia(uri).use { input -> copyHashed(input, temp) }
             check(temp.length() == size) { "Source changed during transfer." }

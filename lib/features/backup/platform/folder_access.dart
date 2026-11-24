@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -104,6 +105,18 @@ abstract interface class StagedChecksums {
   Future<String?> checksumOf(File staged);
 }
 
+/// A device that can say how many bytes of a copy are done while it runs.
+abstract interface class CopyProgress {
+  /// Like [FolderAccess.export], calling [onBytes] with the size of the copy so
+  /// far while it is being made.
+  Future<File> exportTracked(
+    String token,
+    List<String> path,
+    DeviceEntry expected,
+    void Function(int bytes) onBytes,
+  );
+}
+
 abstract interface class FolderAccess {
   Future<DeviceFolder?> pick();
   Future<List<DeviceEntry>> list(String token, List<String> path);
@@ -138,7 +151,8 @@ class NativeFolderAccess
         PhotoAlbumAccess,
         LibraryAccess,
         RemovableAccess,
-        StagedChecksums {
+        StagedChecksums,
+        CopyProgress {
   static const channel = MethodChannel('app.ncloud/folder_sync');
 
   /// The library as last listed, so the folders below the top are answered
@@ -221,7 +235,11 @@ class NativeFolderAccess
   Future<List<LibraryFolder>> libraryFolders() async =>
       LibraryTree(await _libraryItems()).folders;
 
-  Future<File> _exportLibrary(List<String> path, DeviceEntry expected) async {
+  Future<File> _exportLibrary(
+    List<String> path,
+    DeviceEntry expected, [
+    File? into,
+  ]) async {
     checkSyncPath(path);
     final id = expected.id ?? _tree?.file(path)?.id;
     if (id == null) {
@@ -232,6 +250,7 @@ class NativeFolderAccess
         'id': id,
         'size': expected.size,
         'modified': expected.modified,
+        if (into != null) 'into': into.path,
       }),
     );
   }
@@ -422,31 +441,78 @@ class NativeFolderAccess
   }
 
   @override
-  Future<File> export(
+  Future<File> export(String token, List<String> path, DeviceEntry expected) =>
+      _export(token, path, expected, null);
+
+  @override
+  Future<File> exportTracked(
     String token,
     List<String> path,
     DeviceEntry expected,
+    void Function(int bytes) onBytes,
+  ) async {
+    // The copy is made into a file whose name is known in advance, so its size
+    // can be read while the phone is still writing it.
+    final File into;
+    try {
+      into = await stage();
+    } on Object {
+      return _export(token, path, expected, null);
+    }
+    var reading = false;
+    final timer = Timer.periodic(const Duration(milliseconds: 300), (_) async {
+      if (reading) return;
+      reading = true;
+      try {
+        onBytes(await into.length());
+      } on Object {
+        // The file may not exist yet, or be gone.
+      } finally {
+        reading = false;
+      }
+    });
+    try {
+      final made = await _export(token, path, expected, into);
+      if (made.path != into.path) await discard(into);
+      return made;
+    } on Object {
+      await discard(into);
+      rethrow;
+    } finally {
+      timer.cancel();
+    }
+  }
+
+  Future<File> _export(
+    String token,
+    List<String> path,
+    DeviceEntry expected,
+    File? into,
   ) async {
     if (DeviceFolder.isLibraryToken(token)) {
-      return _exportLibrary(path, expected);
+      return _exportLibrary(path, expected, into);
     }
     if (token.startsWith('photoset:')) {
       final tree = _albumTree;
       if (tree == null || _albumTreeToken != token) {
         throw StateError('The photo library changed. Scan again.');
       }
-      return _exportNative(tree.tokenFor(path) ?? cameraRollToken, [
-        path.last,
-      ], expected);
+      return _exportNative(
+        tree.tokenFor(path) ?? cameraRollToken,
+        [path.last],
+        expected,
+        into,
+      );
     }
-    return _exportNative(token, path, expected);
+    return _exportNative(token, path, expected, into);
   }
 
   Future<File> _exportNative(
     String token,
     List<String> path,
-    DeviceEntry expected,
-  ) async {
+    DeviceEntry expected, [
+    File? into,
+  ]) async {
     checkSyncPath(path);
     return _staged(
       await channel.invokeMethod<Object>('export', {
@@ -456,6 +522,7 @@ class NativeFolderAccess
         'modified': expected.modified,
         'version': expected.version,
         if (expected.id != null) 'id': expected.id,
+        if (into != null) 'into': into.path,
       }),
     );
   }

@@ -330,14 +330,36 @@ class _FolderBackupScreenState extends State<FolderBackupScreen> {
         padding: const EdgeInsets.only(right: 8, bottom: 4),
         child: Text(line, style: Theme.of(context).textTheme.labelMedium),
       ),
-    if (numbers.current case final name?)
+    for (final row in numbers.files.take(4))
+      Padding(
+        padding: const EdgeInsets.only(right: 8, bottom: 6),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              row.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 2),
+            LinearProgressIndicator(value: row.fraction, minHeight: 3),
+            const SizedBox(height: 2),
+            Text(
+              row.detail,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.labelSmall,
+            ),
+          ],
+        ),
+      ),
+    if (numbers.files.length > 4)
       Padding(
         padding: const EdgeInsets.only(right: 8, bottom: 4),
         child: Text(
-          '${numbers.step} $name',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: Theme.of(context).textTheme.bodySmall,
+          '${numbers.files.length - 4} more in progress',
+          style: Theme.of(context).textTheme.labelSmall,
         ),
       ),
     if (numbers.problems > 0)

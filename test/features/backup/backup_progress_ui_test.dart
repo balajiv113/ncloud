@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ncloud/features/backup/engine/sync_progress.dart';
 import 'package:ncloud/app/app_controller.dart';
 import 'package:ncloud/features/backup/engine/backup_preview.dart';
 import 'package:ncloud/features/backup/engine/phone_removal.dart';
@@ -219,21 +220,26 @@ void main() {
         ..found = 12460
         ..toUpload = 12460
         ..bytesTotal = 1000000
-        ..current = 'IMG_2031.jpg'
         ..transferred = 3204
         ..bytesDone = 250000
         ..failed = 2;
+      sync.progress.start('IMG_2031.jpg', 100000)
+        ..step = ActiveFile.upload
+        ..sent = 40000;
       await show(tester);
       expect(find.textContaining('3,206 of 12,460'), findsWidgets);
-      expect(find.text('Uploading IMG_2031.jpg'), findsOneWidget);
+      // The file in hand has its own row, with how far it has got.
+      expect(find.text('IMG_2031.jpg'), findsOneWidget);
+      expect(find.text('Uploading 40% · 39 KB of 98 KB'), findsOneWidget);
+      expect(find.text('Uploading 1'), findsOneWidget);
       // How much has gone, and no speed yet because nothing has been measured.
-      expect(find.text('244 KB of 977 KB'), findsOneWidget);
+      expect(find.text('283 KB of 977 KB'), findsOneWidget);
       expect(
         find.textContaining('2 files could not be backed up so far'),
         findsOneWidget,
       );
       final bar = tester.widget<LinearProgressIndicator>(
-        find.byType(LinearProgressIndicator),
+        find.byType(LinearProgressIndicator).first,
       );
       expect(bar.value, isNotNull);
       expect(find.text('Pause'), findsOneWidget);
@@ -259,7 +265,7 @@ void main() {
       await show(tester);
       expect(find.text('Reading selected device folder'), findsOneWidget);
       final bar = tester.widget<LinearProgressIndicator>(
-        find.byType(LinearProgressIndicator),
+        find.byType(LinearProgressIndicator).first,
       );
       expect(bar.value, isNull);
     });

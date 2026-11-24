@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ncloud/features/backup/platform/folder_access.dart';
@@ -80,5 +82,65 @@ void main() {
       expect(file.path, '/tmp/c.part');
       expect(await access.checksumOf(file), isNull);
     });
+  });
+
+  test('a copy reports its size while the phone writes it', () async {
+    final dir = await Directory.systemTemp.createTemp('copy-progress');
+    addTearDown(() => dir.delete(recursive: true));
+    final into = File('${dir.path}/a.part')..writeAsBytesSync([]);
+    messenger.setMockMethodCallHandler(NativeFolderAccess.channel, (
+      call,
+    ) async {
+      switch (call.method) {
+        case 'stage':
+          return into.path;
+        case 'export':
+          expect((call.arguments as Map)['into'], into.path);
+          await into.writeAsBytes(List.filled(400, 1));
+          await Future<void>.delayed(const Duration(milliseconds: 700));
+          await into.writeAsBytes(List.filled(1000, 1));
+          return {
+            'path': into.path,
+            'sha1': 'da39a3ee5e6b4b0d3255bfef95601890afd80709',
+          };
+      }
+      return null;
+    });
+    final seen = <int>[];
+    final access = NativeFolderAccess();
+    final file = await access.exportTracked(
+      'tree',
+      ['a.jpg'],
+      const DeviceEntry('a.jpg', false, 1000, 1),
+      seen.add,
+    );
+    expect(file.path, into.path);
+    expect(seen, isNotEmpty);
+    expect(seen.first, 400);
+    expect(seen.every((n) => n <= 1000), isTrue);
+  });
+
+  test('a failed tracked copy removes the file it was made into', () async {
+    final calls = <String>[];
+    messenger.setMockMethodCallHandler(NativeFolderAccess.channel, (
+      call,
+    ) async {
+      calls.add(call.method);
+      if (call.method == 'stage') return '/tmp/x.part';
+      if (call.method == 'export') {
+        throw PlatformException(code: 'folder_io');
+      }
+      return null;
+    });
+    await expectLater(
+      NativeFolderAccess().exportTracked(
+        'tree',
+        ['a.jpg'],
+        const DeviceEntry('a.jpg', false, 1, 1),
+        (_) {},
+      ),
+      throwsA(isA<PlatformException>()),
+    );
+    expect(calls, ['stage', 'export', 'discard']);
   });
 }
