@@ -329,7 +329,7 @@ class _FolderBackupScreenState extends State<FolderBackupScreen> {
       Padding(
         padding: const EdgeInsets.only(right: 8, bottom: 4),
         child: Text(
-          'Uploading $name',
+          '${numbers.step} $name',
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: Theme.of(context).textTheme.bodySmall,

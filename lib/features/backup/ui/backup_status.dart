@@ -49,6 +49,7 @@ class BackupNumbers {
     this.failed = 0,
     this.blocked = 0,
     this.bytesDone = 0,
+    this.step = 'Uploading',
     this.bytesTotal = 0,
     this.current,
     this.fraction,
@@ -64,6 +65,7 @@ class BackupNumbers {
   final int failed;
   final int blocked;
   final int bytesDone;
+  final String step;
   final int bytesTotal;
 
   /// The file being uploaded now.
@@ -82,7 +84,8 @@ class BackupNumbers {
     moved: p.moved,
     failed: p.failed,
     blocked: p.blocked,
-    bytesDone: p.bytesDone,
+    bytesDone: p.bytesDone + p.sending,
+    step: p.step,
     bytesTotal: p.bytesTotal,
     current: p.current,
     fraction: p.fraction,

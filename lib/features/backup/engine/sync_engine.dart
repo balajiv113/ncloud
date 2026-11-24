@@ -458,9 +458,12 @@ class _Uploader {
     _progress.current = file.name;
     engine._tick();
     File? staged;
+    final meter = _Meter(_progress, engine._tick);
     try {
+      _progress.step = 'Copying';
       staged = await _access.export(pair.folder.token, path, file);
       engine.check(pair);
+      _progress.step = 'Uploading';
       final size = await staged.length();
       if (file.size >= 0 && size != file.size) {
         throw const FormatException(
@@ -469,7 +472,7 @@ class _Uploader {
       }
       final fingerprint = await fingerprintOf(staged);
       engine.check(pair);
-      if (await _sameFile(item, fingerprint, size, staged)) return;
+      if (await _sameFile(item, fingerprint, size, staged, meter)) return;
       // Files with the same content are sent one at a time: while one is on its
       // way, the others wait and then reuse it, so identical photos are stored
       // once however many are in flight.
@@ -493,7 +496,7 @@ class _Uploader {
             final result = await _client.uploadNew(
               session,
               [...pair.cloudRoot, ...target],
-              staged.openRead(),
+              meter.watch(staged.openRead()),
               size,
               sha1: fingerprint,
               modified: DateTime.fromMillisecondsSinceEpoch(file.modified),
@@ -549,6 +552,7 @@ class _Uploader {
         done.complete();
       }
     } finally {
+      meter.done();
       if (staged != null) await _access.discard(staged);
     }
   }
@@ -566,6 +570,7 @@ class _Uploader {
     String fingerprint,
     int size,
     File staged,
+    _Meter meter,
   ) async {
     final before = item.previous;
     if (before == null) return false;
@@ -597,7 +602,7 @@ class _Uploader {
       final result = await _client.uploadNew(
         session,
         at,
-        staged.openRead(),
+        meter.watch(staged.openRead()),
         size,
         sha1: fingerprint,
         modified: DateTime.fromMillisecondsSinceEpoch(item.entry.modified),
@@ -848,4 +853,30 @@ Future<void> runConcurrently<T>(
 
   await Future.wait(List.generate(concurrency, (_) => worker()));
   if (failure != null) Error.throwWithStackTrace(failure!, failureStack!);
+}
+
+/// Counts the bytes of one file as they are sent, for the progress bar, and
+/// takes them back when the file is finished or fails.
+class _Meter {
+  _Meter(this._progress, this._tick);
+
+  final SyncProgress _progress;
+  final void Function() _tick;
+  int _count = 0;
+
+  Stream<List<int>> watch(Stream<List<int>> bytes) {
+    _progress.sending -= _count;
+    _count = 0;
+    return bytes.map((chunk) {
+      _count += chunk.length;
+      _progress.sending += chunk.length;
+      _tick();
+      return chunk;
+    });
+  }
+
+  void done() {
+    _progress.sending -= _count;
+    _count = 0;
+  }
 }

@@ -158,6 +158,15 @@ void main() {
       expect(p.estimatedRemaining, const Duration(seconds: 90));
     });
 
+    test('bytes of a file still uploading move the bar', () {
+      final p = SyncProgress()
+        ..toUpload = 2
+        ..bytesTotal = 1000;
+      expect(p.fraction, 0);
+      p.sending = 400;
+      expect(p.fraction, closeTo(0.2, 0.001));
+    });
+
     test('measures speed over the last minute, not from one file', () {
       final p = SyncProgress()
         ..toUpload = 100
