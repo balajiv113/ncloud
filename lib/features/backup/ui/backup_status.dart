@@ -55,6 +55,7 @@ class FileRow {
         : (done / f.size).clamp(0.0, 1.0);
     final detail = switch (f.step) {
       ActiveFile.check => 'Checking',
+      ActiveFile.queue => 'Copied · waiting to upload',
       _ when known =>
         '${f.step} ${(share! * 100).floor()}% · '
             '${formatSize(done)} of ${formatSize(f.size)}',
@@ -72,6 +73,13 @@ class FileRow {
   final String detail;
 }
 
+int _rank(ActiveFile f) => switch (f.step) {
+  ActiveFile.upload => 0,
+  ActiveFile.copy => 1,
+  ActiveFile.check => 2,
+  _ => 3,
+};
+
 /// The numbers a card shows for one backup, from a run in this app or from what
 /// a background run saved, so both look the same.
 class BackupNumbers {
@@ -86,6 +94,7 @@ class BackupNumbers {
     this.bytesDone = 0,
     this.files = const [],
     this.waiting = 0,
+    this.queued = 0,
     this.copying = 0,
     this.checking = 0,
     this.uploading = 0,
@@ -105,6 +114,7 @@ class BackupNumbers {
   final int bytesDone;
   final List<FileRow> files;
   final int waiting;
+  final int queued;
   final int copying;
   final int checking;
   final int uploading;
@@ -126,11 +136,15 @@ class BackupNumbers {
     failed: p.failed,
     blocked: p.blocked,
     bytesDone: p.bytesDone + p.sending,
+    // What is moving comes first, then what is only waiting for a place.
     files: [
-      for (final f in p.active)
+      for (final f in [
+        ...p.active,
+      ]..sort((a, b) => _rank(a).compareTo(_rank(b))))
         if (f.step != ActiveFile.wait) FileRow.of(f),
     ],
     waiting: p.waiting,
+    queued: p.queued,
     copying: p.copying,
     checking: p.checking,
     uploading: p.uploading,
@@ -155,6 +169,7 @@ class BackupNumbers {
       blocked: number('blocked'),
       bytesDone: number('bytesDone'),
       waiting: number('waiting'),
+      queued: number('queued'),
       copying: number('copying'),
       checking: number('checking'),
       uploading: number('uploading'),
@@ -180,6 +195,7 @@ class BackupNumbers {
     final parts = [
       if (waiting > 0) 'Waiting $waiting',
       if (copying > 0) 'Copying $copying',
+      if (queued > 0) 'Queued $queued',
       if (checking > 0) 'Checking $checking',
       if (uploading > 0) 'Uploading $uploading',
     ];

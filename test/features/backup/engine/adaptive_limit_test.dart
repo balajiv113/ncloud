@@ -65,13 +65,16 @@ void main() {
       expect(limit.limit, before ~/ 2);
     });
 
-    test('never goes below one', () {
-      final limit = make();
-      for (var i = 0; i < 5; i++) {
-        limit.struggled();
-      }
-      expect(limit.limit, 1);
-    });
+    test(
+      'never goes below two, so one slow upload cannot hold up the rest',
+      () {
+        final limit = make();
+        for (var i = 0; i < 5; i++) {
+          limit.struggled();
+        }
+        expect(limit.limit, 2);
+      },
+    );
 
     test(
       'never starts above the number of uploads it is told to start with',

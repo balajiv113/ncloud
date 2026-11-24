@@ -68,6 +68,17 @@ class _Item {
   File? staged;
   String? fingerprint;
   int? reserved;
+  _Lane? lane;
+}
+
+/// The places one kind of file works through: copying, holding its copy, and
+/// uploading.
+class _Lane {
+  _Lane({required this.copies, required this.held, required this.uploads});
+
+  final Places copies;
+  final Reservation held;
+  final Places uploads;
 }
 
 /// The key the journal stores a path under.
@@ -109,6 +120,7 @@ class SyncEngine {
     this.prefetch = 0,
     this.bigFile = 512 * 1024 * 1024,
     this.resumableFrom = 64 * 1024 * 1024,
+    this.stagedBudget = 1024 * 1024 * 1024,
   }) : _clock = clock ?? DateTime.now,
        _pause = pause ?? Future<void>.delayed;
 
@@ -136,6 +148,9 @@ class SyncEngine {
 
   /// Files at least this large are uploaded in pieces where the server allows.
   final int resumableFrom;
+
+  /// How much temporary copy space the files in hand may take together.
+  final int stagedBudget;
   late AdaptiveLimit _limit;
 
   DateTime _notified = DateTime.fromMillisecondsSinceEpoch(0);
@@ -409,14 +424,30 @@ class _Uploader {
   SyncJournal get _journal => engine.journal;
   SyncProgress get _progress => engine.progress;
 
-  /// Copies are taken off the phone a few at a time, because the phone's
-  /// library serves them one after another anyway; checksums use the cores.
-  final Gate _copies = Gate(3);
-  final Gate _bigCopies = Gate(1);
+  /// Checksums use the device's cores.
   late final Gate _checks = Gate(AdaptiveLimit.deviceMax.clamp(2, 4));
 
-  /// Staged copies are kept under 1 GiB where they can be.
-  final ByteBudget _budget = ByteBudget(1024 * 1024 * 1024);
+  /// Small and large files compete for different things, so each kind has its
+  /// own copy places, room for held copies and upload places, and a large file
+  /// can never keep the small ones waiting.
+  ///
+  /// Small files: a few copies at a time, their copies together kept under the
+  /// budget, and uploads at the pace the connection allows.
+  late final _Lane _small = _Lane(
+    copies: Gate(3),
+    held: ByteBudget(engine.stagedBudget),
+    uploads: limit,
+  );
+
+  /// Large files: one copy and one upload at a time, and two copies held, so
+  /// the next can be copied while the last uploads.
+  final _Lane _large = _Lane(
+    copies: Gate(1),
+    held: HeldCount(2),
+    uploads: Gate(1),
+  );
+
+  _Lane _laneFor(int size) => size > engine.bigFile ? _large : _small;
 
   /// Runs one stage of a file's backup, which the file shows while it lasts.
   Future<T> _stage<T>(
@@ -434,13 +465,20 @@ class _Uploader {
   }
 
   /// Sends a file once one of the upload places is free.
-  Future<T> _sendFile<T>(ActiveFile file, Future<T> Function() send) async {
-    await limit.acquire();
+  Future<T> _sendFile<T>(
+    ActiveFile file,
+    _Lane lane,
+    Future<T> Function() send,
+  ) async {
+    // Copied and checked, and waiting for a place to upload.
+    file.step = ActiveFile.queue;
+    engine._tick();
+    await lane.uploads.acquire();
     try {
       engine.check(pair);
       return await _stage(file, ActiveFile.upload, send);
     } finally {
-      limit.release();
+      lane.uploads.release();
     }
   }
 
@@ -466,8 +504,10 @@ class _Uploader {
     try {
       if (copy != null) await _access.discard(copy);
     } finally {
-      if (item.reserved != null) _budget.release(item.reserved!);
-      item.reserved = null;
+      if (item.reserved != null) item.lane?.held.release(item.reserved!);
+      item
+        ..reserved = null
+        ..lane = null;
     }
   }
 
@@ -558,35 +598,28 @@ class _Uploader {
     await engine._requireNetwork(pair);
     final active = item.active ??= _progress.start(file.name, file.size);
     final meter = _Meter(active, _progress, engine);
+    final lane = item.lane ??= _laneFor(file.size);
     if (item.reserved == null) {
       final reserved = file.size > 0 ? file.size : 0;
-      await _budget.acquire(reserved);
+      await lane.held.acquire(reserved);
       item.reserved = reserved;
     }
     try {
-      // A very large file takes one of the copy places for a long time, so only
-      // one at a time may; the others keep copying the smaller files.
-      final big = file.size > engine.bigFile;
       // A retry after a dropped connection uses the copy already made, as long
       // as it is still there, instead of taking the file off the phone again.
       final kept = item.staged;
       final copy = kept != null && await kept.exists()
           ? kept
           : await () async {
-              if (big) await _bigCopies.acquire();
+              await lane.copies.acquire();
               try {
-                await _copies.acquire();
-                try {
-                  return await _stage(
-                    active,
-                    ActiveFile.copy,
-                    () => _copyOut(path, file, active),
-                  );
-                } finally {
-                  _copies.release();
-                }
+                return await _stage(
+                  active,
+                  ActiveFile.copy,
+                  () => _copyOut(path, file, active),
+                );
               } finally {
-                if (big) _bigCopies.release();
+                lane.copies.release();
               }
             }();
       if (!identical(copy, kept)) item.fingerprint = null;
@@ -617,6 +650,7 @@ class _Uploader {
             }
           });
       item.fingerprint = fingerprint;
+      active.step = ActiveFile.queue;
       engine.check(pair);
       if (await _sameFile(item, fingerprint, size, copy, meter)) return;
       // Files with the same content are sent one at a time: while one is on its
@@ -641,6 +675,7 @@ class _Uploader {
           try {
             final result = await _sendFile(
               active,
+              lane,
               () => switch (_client) {
                 // A large file goes in pieces, so a dropped connection costs
                 // the piece in flight and not the whole file.
@@ -768,6 +803,7 @@ class _Uploader {
     try {
       final result = await _sendFile(
         meter.file,
+        item.lane!,
         () => _client.uploadNew(
           session,
           at,

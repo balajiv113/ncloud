@@ -58,6 +58,8 @@ class NextcloudClient implements CloudBackend, ResumableUploads {
     http.Client? transport,
     Future<WebSocket> Function(Uri)? connectPush,
     this.chunkBytes = 32 * 1024 * 1024,
+    this.joinCheckEvery = const Duration(seconds: 15),
+    this.joinChecks = 40,
   }) : _transport = transport ?? http.Client(),
        _connectPush = connectPush;
 
@@ -66,6 +68,12 @@ class NextcloudClient implements CloudBackend, ResumableUploads {
   /// The size of each piece of a large upload. It stays under the request size
   /// limits that proxies and CDNs commonly set (often 100 MB).
   final int chunkBytes;
+
+  /// After the pieces are sent, the server joins them, which for a large file
+  /// can take longer than a proxy waits. If the answer is lost, the new file is
+  /// looked for this often, this many times, before the upload counts as failed.
+  final Duration joinCheckEvery;
+  final int joinChecks;
 
   @override
   NextcloudAccount restoreAccount(String value) {
@@ -2019,6 +2027,12 @@ class NextcloudClient implements CloudBackend, ResumableUploads {
     void Function(int sent)? onProgress,
   }) async {
     validateName(path.last);
+    // Something is already there: a name that is taken, or an earlier try whose
+    // join finished after its answer was lost. Either way nothing is sent, and
+    // the caller decides whether it is the same file or needs another name.
+    if (await stat(account, path) != null) {
+      throw const CloudException('exists', statusCode: 412);
+    }
     final folder = _uploadFolder(account, path, sha1, size);
     final destination = davUri(account, path).toString();
     final headers = {
@@ -2100,7 +2114,41 @@ class NextcloudClient implements CloudBackend, ResumableUploads {
           // The server clears abandoned uploads by itself.
         }
       }
+      // A timeout or a gateway error does not mean the join failed: the server
+      // often carries on after the proxy gave up. Look for the finished file.
+      if (error.retryable) {
+        for (var check = 0; check < joinChecks; check++) {
+          await Future<void>.delayed(joinCheckEvery);
+          final done = await _joined(account, path, size, sha1);
+          if (done != null) {
+            onProgress?.call(size);
+            return done;
+          }
+        }
+      }
       rethrow;
+    }
+  }
+
+  /// The file at [path] as an upload result, if it is there with this size and
+  /// fingerprint; otherwise null.
+  Future<UploadResult?> _joined(
+    Account account,
+    List<String> path,
+    int size,
+    String sha1,
+  ) async {
+    try {
+      final found = await stat(account, path);
+      if (found == null ||
+          found.isDirectory ||
+          found.size != size ||
+          (found.sha1 != null && found.sha1 != sha1)) {
+        return null;
+      }
+      return UploadResult(etag: found.etag);
+    } on CloudException {
+      return null;
     }
   }
 

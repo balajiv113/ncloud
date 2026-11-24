@@ -766,6 +766,73 @@ void main() {
       },
     );
 
+    test(
+      'a very large file being uploaded does not keep the others waiting',
+      () async {
+        // The large file is bigger than all the copy space. It must not hold the
+        // small files back while it uploads; here it only finishes once they have.
+        device.add('huge.mp4', [...bytes(100), ...bytes(101), ...bytes(102)]);
+        for (var i = 0; i < 4; i++) {
+          device.add('s$i.jpg', bytes(i));
+        }
+        var smallDone = 0;
+        server.beforeUpload = (path, attempt) async {
+          if (path.last == 'huge.mp4') {
+            await Future.doWhile(() async {
+              await Future<void>.delayed(const Duration(milliseconds: 5));
+              return smallDone < 4;
+            });
+          } else {
+            smallDone++;
+          }
+        };
+        await SyncEngine(
+              client: server,
+              access: device,
+              journal: journal,
+              progress: progress,
+              check: (_) {},
+              onChanged: () {},
+              maxUploads: 3,
+              prefetch: 3,
+              bigFile: 64,
+              stagedBudget: 40,
+            )
+            .run(account, pair(concurrency: 3))
+            .timeout(const Duration(seconds: 20));
+        expect(server.files, hasLength(5));
+      },
+    );
+
+    test(
+      'a file waiting for an upload place shows as queued, not checking',
+      () async {
+        for (var i = 0; i < 4; i++) {
+          device.add('f$i.jpg', bytes(i));
+        }
+        final steps = <String>[];
+        server.beforeUpload = (path, attempt) async {
+          // While this upload is held, the others have been copied and checked
+          // and are waiting for a place.
+          await Future<void>.delayed(const Duration(milliseconds: 40));
+          steps.addAll(progress.active.map((f) => f.step));
+        };
+        await SyncEngine(
+          client: server,
+          access: device,
+          journal: journal,
+          progress: progress,
+          check: (_) {},
+          onChanged: () {},
+          maxUploads: 1,
+          prefetch: 3,
+        ).run(account, pair(concurrency: 1));
+        expect(steps, contains(ActiveFile.queue));
+        expect(steps, isNot(contains(ActiveFile.check)));
+        expect(server.files, hasLength(4));
+      },
+    );
+
     test('a small file is not sent in pieces', () async {
       device.add('small.jpg', bytes(1));
       await SyncEngine(

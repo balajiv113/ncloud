@@ -9,7 +9,19 @@ import 'dart:math' as math;
 /// uploads add nothing, so it goes back and waits a while before trying again.
 /// A transient failure, which is often the server or the connection being
 /// overloaded, halves the number.
-class AdaptiveLimit {
+/// Places that are taken for a while and given back.
+abstract interface class Places {
+  Future<void> acquire();
+  void release();
+}
+
+/// Room for the temporary copies of files in hand.
+abstract interface class Reservation {
+  Future<void> acquire(int bytes);
+  void release(int bytes);
+}
+
+class AdaptiveLimit implements Places {
   AdaptiveLimit({this.start = 3, int? max, DateTime Function()? clock})
     : max = _clampMax(max ?? deviceMax, start),
       _clock = clock ?? DateTime.now,
@@ -54,6 +66,7 @@ class AdaptiveLimit {
   int get active => _active;
 
   /// Waits until another upload may start, then counts it as running.
+  @override
   Future<void> acquire() async {
     while (_active >= _limit) {
       final turn = Completer<void>();
@@ -65,6 +78,7 @@ class AdaptiveLimit {
   }
 
   /// Gives back the place of an upload that finished or failed.
+  @override
   void release() {
     _active--;
     _wake();
@@ -128,7 +142,9 @@ class AdaptiveLimit {
   void struggled() {
     final now = _clock();
     _trialFrom = null;
-    _limit = math.max(1, _limit ~/ 2);
+    // Never below two (or the start, if that is lower): one slow upload would
+    // otherwise take the only place and keep every other file waiting.
+    _limit = math.max(math.min(2, start), _limit ~/ 2);
     _struggles++;
     // Each time it happens the wait is longer, so a server that cannot take
     // the load stops being tried.
@@ -140,13 +156,14 @@ class AdaptiveLimit {
 }
 
 /// A fixed number of places, taken in turn.
-class Gate {
+class Gate implements Places {
   Gate(this.size);
 
   final int size;
   int _used = 0;
   final List<Completer<void>> _waiting = [];
 
+  @override
   Future<void> acquire() async {
     while (_used >= size) {
       final turn = Completer<void>();
@@ -156,6 +173,7 @@ class Gate {
     _used++;
   }
 
+  @override
   void release() {
     _used--;
     if (_waiting.isNotEmpty) _waiting.removeAt(0).complete();
@@ -165,13 +183,14 @@ class Gate {
 /// How much of the phone's storage the staged copies may take. A file starts
 /// copying while the total is under the budget, so one very large video can go
 /// over it but never holds up the files behind it for long.
-class ByteBudget {
+class ByteBudget implements Reservation {
   ByteBudget(this.size);
 
   final int size;
   int _used = 0;
   final List<Completer<void>> _waiting = [];
 
+  @override
   Future<void> acquire(int bytes) async {
     while (_used >= size) {
       final turn = Completer<void>();
@@ -181,6 +200,7 @@ class ByteBudget {
     _used += bytes;
   }
 
+  @override
   void release(int bytes) {
     _used -= bytes;
     final turns = List.of(_waiting);
@@ -189,4 +209,17 @@ class ByteBudget {
       turn.complete();
     }
   }
+}
+
+/// Room for a number of copies, whatever their size.
+class HeldCount implements Reservation {
+  HeldCount(int size) : _gate = Gate(size);
+
+  final Gate _gate;
+
+  @override
+  Future<void> acquire(int bytes) => _gate.acquire();
+
+  @override
+  void release(int bytes) => _gate.release();
 }
