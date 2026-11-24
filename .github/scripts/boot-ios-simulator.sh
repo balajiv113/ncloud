@@ -3,9 +3,10 @@ set -euo pipefail
 
 trap 'touch "$RUNNER_TEMP/ncloud-simulator-failed"' ERR
 start=$SECONDS
-device=$(xcrun simctl list devices available --json | jq -er \
-  '.devices["com.apple.CoreSimulator.SimRuntime.iOS-18-5"][]
-   | select(.name == "iPhone 16") | .udid' | head -n 1)
+# The simulator that goes with the Xcode this job pins (see DEVELOPER_DIR).
+runtime="com.apple.CoreSimulator.SimRuntime.iOS-26-2"
+device=$(xcrun simctl list devices available --json | jq -er --arg runtime "$runtime" \
+  '.devices[$runtime][] | select(.name == "iPhone 17") | .udid' | head -n 1)
 test -n "$device"
 printf '%s\n' "$device" > "$RUNNER_TEMP/ncloud-simulator-device"
 xcrun simctl boot "$device"
