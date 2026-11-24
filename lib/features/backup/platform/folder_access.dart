@@ -97,6 +97,13 @@ class SyncConditions {
   final bool charging;
 }
 
+/// A device that works out each file's SHA-1 while copying it, so the file does
+/// not have to be read again to be fingerprinted.
+abstract interface class StagedChecksums {
+  /// The fingerprint taken while [staged] was copied, or null if there is none.
+  Future<String?> checksumOf(File staged);
+}
+
 abstract interface class FolderAccess {
   Future<DeviceFolder?> pick();
   Future<List<DeviceEntry>> list(String token, List<String> path);
@@ -126,7 +133,12 @@ abstract interface class PhotoAlbumAccess {
 }
 
 class NativeFolderAccess
-    implements FolderAccess, PhotoAlbumAccess, LibraryAccess, RemovableAccess {
+    implements
+        FolderAccess,
+        PhotoAlbumAccess,
+        LibraryAccess,
+        RemovableAccess,
+        StagedChecksums {
   static const channel = MethodChannel('app.ncloud/folder_sync');
 
   /// The library as last listed, so the folders below the top are answered
@@ -215,14 +227,39 @@ class NativeFolderAccess
     if (id == null) {
       throw StateError('That photo is no longer in the library. Scan again.');
     }
-    final file = await channel.invokeMethod<String>('mediaExport', {
-      'id': id,
-      'size': expected.size,
-      'modified': expected.modified,
-    });
-    if (file == null) throw StateError('Could not prepare the source file.');
-    return File(file);
+    return _staged(
+      await channel.invokeMethod<Object>('mediaExport', {
+        'id': id,
+        'size': expected.size,
+        'modified': expected.modified,
+      }),
+    );
   }
+
+  /// Fingerprints taken while files were copied, by the path of the copy.
+  final Map<String, String> _checksums = {};
+
+  /// Reads what a native copy returned: the path, and the SHA-1 when it came
+  /// with one.
+  File _staged(Object? result) {
+    final String? path;
+    String? sha1;
+    if (result is Map) {
+      path = result['path'] as String?;
+      final value = result['sha1'];
+      if (value is String && RegExp(r'^[0-9a-f]{40}$').hasMatch(value)) {
+        sha1 = value;
+      }
+    } else {
+      path = result as String?;
+    }
+    if (path == null) throw StateError('Could not prepare the source file.');
+    if (sha1 != null) _checksums[path] = sha1;
+    return File(path);
+  }
+
+  @override
+  Future<String?> checksumOf(File staged) async => _checksums[staged.path];
 
   @override
   Future<List<List<String>>> moveToTrash(
@@ -411,16 +448,16 @@ class NativeFolderAccess
     DeviceEntry expected,
   ) async {
     checkSyncPath(path);
-    final file = await channel.invokeMethod<String>('export', {
-      'token': token,
-      'path': path,
-      'size': expected.size,
-      'modified': expected.modified,
-      'version': expected.version,
-      if (expected.id != null) 'id': expected.id,
-    });
-    if (file == null) throw StateError('Could not prepare the source file.');
-    return File(file);
+    return _staged(
+      await channel.invokeMethod<Object>('export', {
+        'token': token,
+        'path': path,
+        'size': expected.size,
+        'modified': expected.modified,
+        'version': expected.version,
+        if (expected.id != null) 'id': expected.id,
+      }),
+    );
   }
 
   @override
@@ -447,8 +484,10 @@ class NativeFolderAccess
   }
 
   @override
-  Future<void> discard(File staged) =>
-      channel.invokeMethod<void>('discard', {'staged': staged.path});
+  Future<void> discard(File staged) {
+    _checksums.remove(staged.path);
+    return channel.invokeMethod<void>('discard', {'staged': staged.path});
+  }
 
   @override
   Future<void> clearStaging() => channel.invokeMethod<void>('clearStaging');

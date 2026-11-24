@@ -223,12 +223,12 @@ class FolderAccessPlugin : FlutterPlugin, ActivityAware, PluginRegistry.Activity
                                         }
                                         val temp = newStage()
                                         try {
-                                            context.contentResolver.openInputStream(source).use { input ->
+                                            val sha1 = context.contentResolver.openInputStream(source).use { input ->
                                                 checkNotNull(input)
-                                                temp.outputStream().use { input.copyTo(it) }
+                                                copyHashed(input, temp)
                                             }
                                             check(metadata(source) == before && temp.length() == size) { "Source changed during transfer." }
-                                            temp.path
+                                            mapOf("path" to temp.path, "sha1" to sha1)
                                         } catch (error: Exception) {
                                             temp.delete()
                                             throw error
@@ -372,7 +372,24 @@ class FolderAccessPlugin : FlutterPlugin, ActivityAware, PluginRegistry.Activity
     }
 
     /** Copies one photo or video, as the original with its location when allowed, after checking it is unchanged. */
-    private fun mediaExport(id: String, size: Long, modified: Long): String {
+    /// Copies [input] into [temp] and returns the SHA-1 of what was copied, as
+    /// lower-case hex. The file is read once, in large pieces, so the fingerprint
+    /// costs nothing extra.
+    private fun copyHashed(input: java.io.InputStream, temp: File): String {
+        val digest = MessageDigest.getInstance("SHA-1")
+        val buffer = ByteArray(1 shl 20)
+        temp.outputStream().use { output ->
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                digest.update(buffer, 0, count)
+                output.write(buffer, 0, count)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    private fun mediaExport(id: String, size: Long, modified: Long): Map<String, String> {
         val parts = id.split(":")
         check(parts.size == 2) { "Unsupported photo id." }
         val base = if (parts[0] == "video") MediaStore.Video.Media.EXTERNAL_CONTENT_URI
@@ -385,11 +402,9 @@ class FolderAccessPlugin : FlutterPlugin, ActivityAware, PluginRegistry.Activity
         }
         val temp = newStage()
         try {
-            openMedia(uri).use { input ->
-                temp.outputStream().use { input.copyTo(it) }
-            }
+            val sha1 = openMedia(uri).use { input -> copyHashed(input, temp) }
             check(temp.length() == size) { "Source changed during transfer." }
-            return temp.path
+            return mapOf("path" to temp.path, "sha1" to sha1)
         } catch (error: Exception) {
             temp.delete()
             throw error

@@ -520,3 +520,21 @@ final class AccountSyncRunLock {
 
   deinit { releaseAll() }
 }
+
+/// The SHA-1 of a file as lower-case hex, read in large pieces.
+func sha1Hex(of url: URL) throws -> String {
+  guard let input = InputStream(url: url) else { throw CocoaError(.fileReadUnknown) }
+  input.open()
+  defer { input.close() }
+  let capacity = 1024 * 1024
+  let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: capacity)
+  defer { buffer.deallocate() }
+  var hasher = Insecure.SHA1()
+  while true {
+    let count = input.read(buffer, maxLength: capacity)
+    guard count >= 0 else { throw input.streamError ?? CocoaError(.fileReadUnknown) }
+    if count == 0 { break }
+    hasher.update(bufferPointer: UnsafeRawBufferPointer(start: buffer, count: count))
+  }
+  return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+}

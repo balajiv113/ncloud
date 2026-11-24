@@ -1,3 +1,4 @@
+import CryptoKit
 import Flutter
 import UIKit
 import UniformTypeIdentifiers
@@ -194,8 +195,16 @@ import workmanager_apple
               }
               // PhotoKit requires a nonexistent destination and owns only this unique partial.
               let destination = try self.newStage(create: false)
-              value = try self.albums.export(token: token, path: path, version: version,
-                                             destination: destination)
+              let exported = try self.albums.export(token: token, path: path, version: version,
+                                                    destination: destination)
+              // Photos writes the original itself, so the fingerprint is worked
+              // out right after, natively, while the file is still cached.
+              do {
+                value = ["path": exported, "sha1": try sha1Hex(of: URL(fileURLWithPath: exported))]
+              } catch {
+                try? self.manager.removeItem(at: destination)
+                throw error
+              }
             default:
               throw AlbumBackupError(code: "photos_read_only", message: "Photos albums are read-only backup sources.")
             }
@@ -234,11 +243,11 @@ import workmanager_apple
                         before["modified"] as? Int64 == modified.int64Value else { throw self.failure() }
                   let temp = try self.newStage()
                   do {
-                    try self.copyBytes(source, temp)
+                    let sha1 = try self.copyBytes(source, temp)
                     let after = try self.metadata(source)
                     guard after["size"] as? Int64 == size.int64Value,
                           after["modified"] as? Int64 == modified.int64Value else { throw self.failure() }
-                    output = temp.path
+                    output = ["path": temp.path, "sha1": sha1]
                   } catch {
                     try? self.manager.removeItem(at: temp)
                     throw error
@@ -365,7 +374,8 @@ import workmanager_apple
       return file
     }
 
-    private func copyBytes(_ source: URL, _ destination: URL) throws {
+    /// Copies a file and returns its SHA-1 as lower-case hex, reading it once.
+    private func copyBytes(_ source: URL, _ destination: URL) throws -> String {
       guard let input = InputStream(url: source),
             let output = OutputStream(url: destination, append: false) else { throw failure() }
       input.open()
@@ -374,10 +384,12 @@ import workmanager_apple
       let capacity = 1024 * 1024
       let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: capacity)
       defer { buffer.deallocate() }
+      var hasher = Insecure.SHA1()
       while true {
         let count = input.read(buffer, maxLength: capacity)
         guard count >= 0 else { throw input.streamError ?? failure() }
         if count == 0 { break }
+        hasher.update(bufferPointer: UnsafeRawBufferPointer(start: buffer, count: count))
         var offset = 0
         while offset < count {
           let written = output.write(buffer.advanced(by: offset), maxLength: count - offset)
@@ -386,6 +398,7 @@ import workmanager_apple
         }
       }
       if let error = input.streamError ?? output.streamError { throw error }
+      return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
 
     func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
