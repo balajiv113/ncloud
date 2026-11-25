@@ -638,3 +638,22 @@ enum PhonePhotoList {
     }
   }
 }
+
+/// Tells the app when the phone's photo library changes. It listens only once
+/// the app has been given access, since that is when Photos tells it anything.
+final class PhotoLibraryWatcher: NSObject, PHPhotoLibraryChangeObserver {
+  private let onChange: () -> Void
+  private var started = false
+
+  init(onChange: @escaping () -> Void) { self.onChange = onChange }
+
+  func start() {
+    guard !started, PhonePhotoList.status() != "denied" else { return }
+    started = true
+    PHPhotoLibrary.shared().register(self)
+  }
+
+  func photoLibraryDidChange(_ changeInstance: PHChange) { onChange() }
+
+  deinit { if started { PHPhotoLibrary.shared().unregisterChangeObserver(self) } }
+}

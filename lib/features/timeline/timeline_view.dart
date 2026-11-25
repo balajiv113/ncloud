@@ -6,6 +6,7 @@ import '../../app/shell/library_view.dart';
 import '../../models.dart';
 import '../../shared/ui/drive_list.dart';
 import '../../shared/ui/empty_library.dart';
+import '../phone/not_backed_up_banner.dart';
 import 'memory_strip.dart';
 import 'timeline_grid.dart';
 import 'timeline_sections.dart';
@@ -107,6 +108,8 @@ class _TimelineViewState extends State<TimelineView> {
     if (!hasGrid) widget.tracker.clear();
     return SliverMainAxisGroup(
       slivers: [
+        if (c.target is NotBackedUpTarget)
+          SliverToBoxAdapter(child: NotBackedUpBanner(controller: c)),
         if (derived.groups.isNotEmpty)
           SliverToBoxAdapter(
             child: MemoryStrip(

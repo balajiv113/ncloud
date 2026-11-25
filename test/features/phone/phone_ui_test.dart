@@ -13,7 +13,9 @@ import 'package:ncloud/features/backup/model/backup_state.dart';
 import 'package:ncloud/features/backup/model/folder_pair.dart';
 import 'package:ncloud/features/backup/platform/device_library.dart';
 import 'package:ncloud/features/backup/platform/folder_access.dart';
+import 'package:ncloud/features/phone/not_backed_up_banner.dart';
 import 'package:ncloud/features/phone/phone_badge.dart';
+import 'package:ncloud/features/phone/phone_choice.dart';
 import 'package:ncloud/features/phone/phone_library.dart';
 import 'package:ncloud/features/phone/phone_photo.dart';
 import 'package:ncloud/features/phone/phone_source.dart';
@@ -48,6 +50,8 @@ class _Source implements PhoneSource {
 
   @override
   Future<File> original(String id) async => throw UnimplementedError();
+  @override
+  Stream<void> get changes => const Stream.empty();
 }
 
 PhonePhoto photo(String id, int day) => PhonePhoto(
@@ -68,6 +72,7 @@ FolderPair get pair => FolderPair(
 
 PhoneTimeline overlay(PhoneSource source, Map<String, BackupState> states) =>
     PhoneTimeline(
+      choices: MemoryPhoneChoiceStore(),
       source: source,
       library: PhoneLibrary(
         source: source,
@@ -196,10 +201,37 @@ void main() {
       expect(notified, 1, reason: 'nothing changed');
     });
 
+    test('the Not backed up album shows the phone photos alone', () async {
+      await controller.refreshPhone();
+      await controller.openNotBackedUp();
+      expect(controller.destination, Destination.albums);
+      expect(controller.directory, ['Not backed up']);
+      expect(controller.timelineItems.map((f) => f.name), ['a.jpg']);
+      expect(controller.indexedDays, isEmpty);
+      expect(
+        controller.loading,
+        isFalse,
+        reason: 'nothing to load from the server',
+      );
+    });
+
     test('does not read the phone with nobody signed in', () async {
       controller.account = null;
       await controller.refreshPhone();
       expect(controller.timelineItems, isEmpty);
     });
+  });
+
+  test('the banner counts the photos in each state', () {
+    expect(
+      NotBackedUpBanner.summary({
+        BackupState.waiting: 12,
+        BackupState.leftOut: 3,
+        BackupState.failed: 1,
+      }),
+      '12 waiting to back up · 1 could not be backed up · 3 left out',
+    );
+    expect(NotBackedUpBanner.summary({BackupState.leftOut: 2}), '2 left out');
+    expect(NotBackedUpBanner.summary(const {}), '');
   });
 }

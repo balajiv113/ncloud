@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ncloud/features/backup/model/backup_state.dart';
 import 'package:ncloud/features/albums/album_entries.dart';
 import 'package:ncloud/app/shell/library_view.dart';
 import 'package:ncloud/models.dart';
@@ -139,5 +140,72 @@ void main() {
       sort: LibrarySort.name,
     );
     expect({for (final e in twins) e.key}, hasLength(3));
+  });
+
+  group('photos only on the phone', () {
+    final phonePhotos = [
+      CloudFile(
+        path: [CloudFile.phoneRoot, 'a'],
+        name: 'a.jpg',
+        isDirectory: false,
+        contentType: 'image/jpeg',
+        modified: DateTime(2025, 3),
+        onPhone: const OnPhone('a', BackupState.leftOut),
+      ),
+      CloudFile(
+        path: [CloudFile.phoneRoot, 'b'],
+        name: 'b.jpg',
+        isDirectory: false,
+        contentType: 'image/jpeg',
+        modified: DateTime(2025, 5),
+        onPhone: const OnPhone('b', BackupState.waiting),
+      ),
+    ];
+
+    List<AlbumEntry> withPhone({
+      List<CloudFile>? notBackedUp,
+      String query = '',
+      LibrarySort sort = LibrarySort.name,
+    }) => albumEntries(
+      smart: smart,
+      shared: shared,
+      server: server,
+      root: ['Photos'],
+      query: query,
+      sort: sort,
+      notBackedUp: notBackedUp ?? phonePhotos,
+    );
+
+    test('make an album that comes first, whatever the sort', () {
+      for (final sort in LibrarySort.values) {
+        final first = withPhone(sort: sort).first;
+        expect(first.kind, AlbumKind.phone);
+        expect(first.name, 'Not backed up');
+        expect(first.count, '2 photos');
+        expect(first.kindLabel, 'Only on this phone');
+        expect(first.cover!.onPhone, isNotNull);
+        expect(first.modified, DateTime(2025, 5));
+      }
+    });
+
+    test('are left out when there are none', () {
+      expect(
+        withPhone(notBackedUp: const []).any((e) => e.kind == AlbumKind.phone),
+        isFalse,
+      );
+    });
+
+    test('follow the search, and name one photo in the singular', () {
+      expect(withPhone(query: 'zzz'), isEmpty);
+      expect(withPhone(query: 'not back').single.kind, AlbumKind.phone);
+      expect(
+        withPhone(notBackedUp: [phonePhotos.first]).first.count,
+        '1 photo',
+      );
+    });
+
+    test('have a key of their own', () {
+      expect(withPhone().first.key, 'phone|');
+    });
   });
 }

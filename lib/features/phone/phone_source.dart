@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -20,14 +21,25 @@ abstract interface class PhoneSource {
 
   /// A copy of one as it is, in a temporary file the caller removes.
   Future<File> original(String id);
+
+  /// Tells when the phone's library changes: a photo taken, deleted or edited.
+  Stream<void> get changes;
 }
 
 /// Reads the phone's library through the native side, which answers the same
 /// way on Android and on iPhone.
 class NativePhoneSource implements PhoneSource {
-  NativePhoneSource(this._access);
+  NativePhoneSource(this._access) {
+    NativeFolderAccess.channel.setMethodCallHandler((call) async {
+      if (call.method == 'mediaChanged') _changes.add(null);
+    });
+  }
 
   final NativeFolderAccess _access;
+  final StreamController<void> _changes = StreamController<void>.broadcast();
+
+  @override
+  Stream<void> get changes => _changes.stream;
 
   @override
   Future<LibraryPermission> permission() => _access.libraryPermission();

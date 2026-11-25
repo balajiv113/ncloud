@@ -7,6 +7,7 @@ import 'package:ncloud/features/backup/model/backup_state.dart';
 import 'package:ncloud/features/backup/model/folder_pair.dart';
 import 'package:ncloud/features/backup/platform/device_library.dart';
 import 'package:ncloud/features/backup/platform/folder_access.dart';
+import 'package:ncloud/features/phone/phone_choice.dart';
 import 'package:ncloud/features/phone/phone_library.dart';
 import 'package:ncloud/features/phone/phone_photo.dart';
 import 'package:ncloud/features/phone/phone_source.dart';
@@ -32,6 +33,8 @@ class _Source implements PhoneSource {
   Future<Uint8List?> thumbnail(String id, int size) async => null;
   @override
   Future<File> original(String id) async => throw UnimplementedError();
+  @override
+  Stream<void> get changes => const Stream.empty();
 }
 
 FolderPair get pair => FolderPair(
@@ -44,6 +47,7 @@ FolderPair get pair => FolderPair(
 
 PhoneTimeline timeline(PhoneSource source, Map<String, BackupState> states) =>
     PhoneTimeline(
+      choices: MemoryPhoneChoiceStore(),
       source: source,
       library: PhoneLibrary(
         source: source,

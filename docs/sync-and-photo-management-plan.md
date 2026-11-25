@@ -400,6 +400,18 @@ Built in slices, each of which works on its own:
 4. The viewer for phone photos (`PhoneViewer`), without the actions that need the
    cloud: it swipes among the phone photos, and a video is copied to a temporary
    file (`mediaOriginal`) and played from that. *(Done.)*
-5. A **Not backed up** album that lists the photos that are waiting, failed or
-   left out, with a shortcut to the backup settings. It has no per-photo upload.
-6. Live refresh, the permission prompt and a switch to hide phone photos.
+5. A **Not backed up** album (`NotBackedUpTarget`), first in the Albums list,
+   that lists the photos that are waiting, failed or left out, with a count of
+   each and a shortcut to the backup settings. It has no per-photo upload; what
+   gets backed up is decided by the backups. *(Done.)*
+6. Live refresh and the choice. The first time the Timeline opens, the user is
+   asked for access to the phone's photos (`PhoneChoice.ask`); yes shows them and
+   no hides them, and **Settings → Photos on this phone** turns them on or off
+   later. Android's media observer and iPhone's photo-library change observer
+   tell the app (`mediaChanged`) when the library changes, and the Timeline
+   refreshes once the change has settled. A backup run ending also refreshes it.
+   *(Done.)*
+
+Not done yet: playing a phone video uses a temporary copy, which can take a while
+for a large one; and there are no filters by reason (waiting, failed, left out)
+inside the album beyond the mark on each photo.

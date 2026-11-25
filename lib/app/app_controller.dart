@@ -13,6 +13,7 @@ import 'status_sink.dart';
 import '../discovery_models.dart';
 import '../core/storage/file_store.dart';
 import '../features/backup/state/backup_controller.dart';
+import '../features/phone/phone_choice.dart';
 import '../features/phone/phone_library.dart';
 import '../features/phone/phone_source.dart';
 import '../features/phone/phone_timeline.dart';
@@ -84,6 +85,7 @@ class AppController extends ChangeNotifier implements StatusSink {
     if (!Platform.isAndroid && !Platform.isIOS) return _noPhone;
     final source = NativePhoneSource(NativeFolderAccess());
     return PhoneTimeline(
+      choices: FilePhoneChoiceStore(),
       source: source,
       library: PhoneLibrary(
         source: source,
@@ -93,7 +95,7 @@ class AppController extends ChangeNotifier implements StatusSink {
         },
         marks: backup.marksOf,
       ),
-    );
+    )..watch(refreshPhone);
   }
 
   /// Reads the phone again, and redraws if what it shows changed. The phone's
@@ -107,9 +109,12 @@ class AppController extends ChangeNotifier implements StatusSink {
     }
   }
 
-  /// The phone's overlay for the view on screen: only the Timeline has one.
-  PhoneTimeline get _overlay =>
-      destination == Destination.timeline ? phone : _noPhone;
+  /// The phone's overlay for the view on screen: the Timeline lays the phone's
+  /// photos in with the cloud's, and is the only view that does.
+  PhoneTimeline get _overlay => target is TimelineTarget ? phone : _noPhone;
+
+  /// Shows the photos only on the phone as an album.
+  Future<void> openNotBackedUp() => open(const NotBackedUpTarget());
 
   /// A backup put files on the server, so what Drive, the Timeline and the
   /// albums show is out of date.
@@ -162,7 +167,8 @@ class AppController extends ChangeNotifier implements StatusSink {
   List<CloudFile> get items => _browser.items;
 
   /// What the Timeline lists: the cloud's photos with the phone's laid in.
-  List<CloudFile> get timelineItems => _overlay.items(items);
+  List<CloudFile> get timelineItems =>
+      target is NotBackedUpTarget ? phone.files : _overlay.items(items);
   bool get loading => _browser.loading;
   bool get loadingMore => _browser.loadingMore;
   @visibleForTesting
@@ -863,6 +869,7 @@ class AppController extends ChangeNotifier implements StatusSink {
   @override
   void dispose() {
     _backup?.dispose();
+    _phone?.dispose();
     _disposed = true;
     _thumbnails.dispose();
     warmUp.cancel();

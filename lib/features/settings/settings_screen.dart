@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import '../../app/app_controller.dart';
 import '../../diagnostics.dart';
 import '../backup/ui/folder_backup_screen.dart';
+import '../phone/phone_photos_tile.dart';
 import '../../core/ui/messages.dart';
 
 class SettingsScreen extends StatelessWidget {
@@ -65,6 +66,8 @@ class SettingsScreen extends StatelessWidget {
                 ),
               ),
             ),
+          if (Platform.isAndroid || Platform.isIOS)
+            PhonePhotosTile(controller: controller),
           _CacheTile(controller: controller),
           const ListTile(
             leading: Icon(Icons.construction_outlined),

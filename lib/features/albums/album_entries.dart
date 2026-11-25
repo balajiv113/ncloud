@@ -5,7 +5,7 @@ import '../../app/shell/library_view.dart';
 
 /// Where an album comes from. Server albums are the ordinary case and carry
 /// no mark; Smart and Shared albums are told apart by an icon.
-enum AlbumKind { smart, shared, server }
+enum AlbumKind { smart, shared, server, phone }
 
 /// One album in the merged Albums list.
 class AlbumEntry {
@@ -45,6 +45,7 @@ class AlbumEntry {
     AlbumKind.smart => 'Smart album',
     AlbumKind.shared => 'Shared with you',
     AlbumKind.server => null,
+    AlbumKind.phone => 'Only on this phone',
   };
 }
 
@@ -66,6 +67,7 @@ List<AlbumEntry> albumEntries({
   required List<String> root,
   required String query,
   required LibrarySort sort,
+  List<CloudFile> notBackedUp = const [],
 }) {
   final needle = query.toLowerCase();
   bool matches(String text) =>
@@ -124,5 +126,19 @@ List<AlbumEntry> albumEntries({
     case LibrarySort.size:
       break;
   }
-  return entries;
+  // The photos that are only on the phone come first: they are the ones that
+  // still need something done.
+  return [
+    if (notBackedUp.isNotEmpty && matches('Not backed up'))
+      AlbumEntry(
+        kind: AlbumKind.phone,
+        name: 'Not backed up',
+        count: notBackedUp.length == 1
+            ? '1 photo'
+            : '${notBackedUp.length} photos',
+        cover: notBackedUp.first,
+        modified: _newest(notBackedUp),
+      ),
+    ...entries,
+  ];
 }

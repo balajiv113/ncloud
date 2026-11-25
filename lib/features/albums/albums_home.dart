@@ -4,6 +4,7 @@ import '../../app/app_controller.dart';
 import '../../core/ui/messages.dart';
 import '../../discovery_models.dart';
 import '../../shared/ui/media_tile.dart';
+import '../phone/phone_tile.dart';
 import '../people/people_bubble.dart';
 import 'album_entries.dart';
 import '../../app/browse_target.dart';
@@ -66,6 +67,7 @@ class AlbumHomeSlivers extends StatelessWidget {
         root: controller.photoRoot,
         query: query,
         sort: sort,
+        notBackedUp: controller.phone.files,
       ),
     ).home(showPeople: showPeople),
   );
@@ -92,6 +94,7 @@ class _AlbumSections {
     AlbumKind.smart => Icons.auto_awesome_outlined,
     AlbumKind.shared => Icons.folder_shared_outlined,
     AlbumKind.server => Icons.photo_album_outlined,
+    AlbumKind.phone => Icons.cloud_off_outlined,
   };
 
   List<Widget> _peopleSlivers({bool expanded = false}) {
@@ -273,7 +276,9 @@ class _AlbumSections {
           child: Center(child: Icon(_icon(album.kind), size: 38)),
         )
       : ExcludeSemantics(
-          child: MediaTile(file: album.cover!, controller: c),
+          child: album.cover!.onPhone == null
+              ? MediaTile(file: album.cover!, controller: c)
+              : PhoneTile(file: album.cover!, thumbnails: c.phone.thumbnails!),
         );
 
   /// Small icon on a cover that tells Smart and Shared albums apart; server
