@@ -3,6 +3,7 @@ import CryptoKit
 import Darwin
 import Foundation
 import Photos
+import UIKit
 import UniformTypeIdentifiers
 
 struct AlbumBackupError: LocalizedError {
@@ -558,6 +559,35 @@ enum PhonePhotoList {
 
   static func request(_ done: @escaping (String) -> Void) {
     PHPhotoLibrary.requestAuthorization(for: .readWrite) { _ in done(status()) }
+  }
+
+  /// Thumbnails are asked for in bursts as a grid scrolls. A few are made at a
+  /// time, off the main thread, and Photos keeps its own cache of them.
+  private static let thumbnailQueue = DispatchQueue(
+    label: "app.ncloud.thumbnails", qos: .userInitiated, attributes: .concurrent)
+  private static let thumbnailPlaces = DispatchSemaphore(value: 4)
+
+  /// A small JPEG of the photo, or nil if it is gone.
+  static func thumbnail(id: String, size: Int, done: @escaping (Data?) -> Void) {
+    thumbnailQueue.async {
+      thumbnailPlaces.wait()
+      defer { thumbnailPlaces.signal() }
+      guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [id], options: nil).firstObject else {
+        done(nil)
+        return
+      }
+      let options = PHImageRequestOptions()
+      options.isSynchronous = true
+      options.deliveryMode = .highQualityFormat
+      options.resizeMode = .fast
+      var data: Data?
+      PHImageManager.default().requestImage(
+        for: asset, targetSize: CGSize(width: size, height: size),
+        contentMode: .aspectFill, options: options) { image, _ in
+        data = image?.jpegData(compressionQuality: 0.85)
+      }
+      done(data)
+    }
   }
 
   static func page(offset: Int, limit: Int) -> [[String: Any]] {

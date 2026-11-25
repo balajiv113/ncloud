@@ -20,6 +20,7 @@ class FolderRouteTest {
         for (method in listOf("mediaList", "mediaExport")) {
             assertEquals("mediaTransfer", folderRoute(method, false))
         }
+        assertEquals("mediaThumbnail", folderRoute("mediaThumbnail", false))
         assertEquals("unsupported", folderRoute("unknown", false))
     }
 

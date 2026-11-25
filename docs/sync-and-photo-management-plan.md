@@ -387,7 +387,10 @@ Built in slices, each of which works on its own:
 
 1. **Phone index and state** (`lib/features/phone`): the phone listing with taken
    dates and the states above. *(Done.)*
-2. Native thumbnails for phone photos, with a memory and disk cache.
+2. Native thumbnails for phone photos (`mediaThumbnail`: Android's
+   `loadThumbnail`, Photos' `requestImage`), with a small in-memory cache that
+   shares one request between tiles. The phone's own thumbnail cache does the
+   rest. *(Done.)*
 3. The merge into the Timeline, by taken date, with a marker for each state.
 4. The viewer for phone photos, without the actions that need the cloud.
 5. A **Not backed up** album that lists the photos that are waiting, failed or

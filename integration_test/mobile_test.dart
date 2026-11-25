@@ -17,6 +17,8 @@ import 'package:ncloud/providers/nextcloud/nextcloud_client.dart';
 import 'package:ncloud/features/backup/platform/sync_run_lock.dart';
 import 'package:ncloud/features/backup/model/backup_schedule.dart';
 import 'package:ncloud/features/backup/background/android_backup.dart';
+import 'package:ncloud/features/backup/platform/device_library.dart';
+import 'package:ncloud/features/phone/phone_source.dart';
 
 import '../test/app_test.dart' show MemoryStore;
 import '../test/features/backup/backup_controller_test.dart' show CloudFolders;
@@ -406,6 +408,29 @@ Future<String> _testRealAlbum() async {
     _require(
       await journal.receipt(pair.id, 'local', [source.name]) != null,
       'The original upload has no persisted receipt.',
+    );
+    // The same photo, read as the phone's own library: listed with its taken
+    // date, and with a thumbnail that is a real picture.
+    final phone = NativePhoneSource(access);
+    _require(
+      await phone.permission() == LibraryPermission.granted,
+      'The phone library must report Full Access.',
+    );
+    final probe = (await phone.photos()).where(
+      (photo) => photo.name.startsWith('ncloud-probe'),
+    );
+    _require(probe.isNotEmpty, 'The seeded photo is not in the phone listing.');
+    _require(
+      probe.first.taken.year > 2000,
+      'The seeded photo has no taken date.',
+    );
+    final thumbnail = await phone.thumbnail(probe.first.id, 200);
+    _require(
+      thumbnail != null &&
+          thumbnail.length > 2 &&
+          thumbnail[0] == 0xFF &&
+          thumbnail[1] == 0xD8,
+      'The seeded photo has no JPEG thumbnail.',
     );
     return 'Real PhotoKit original bytes and repeated-upload receipts verified.';
   } finally {

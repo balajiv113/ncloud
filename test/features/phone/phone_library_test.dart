@@ -1,3 +1,5 @@
+import 'package:flutter/services.dart';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ncloud/features/backup/engine/file_mark.dart';
 import 'package:ncloud/features/backup/model/backup_state.dart';
@@ -48,6 +50,8 @@ class _Source implements PhoneSource {
   Future<LibraryPermission> request() async => LibraryPermission.granted;
   @override
   Future<List<PhonePhoto>> photos() async => all;
+  @override
+  Future<Uint8List?> thumbnail(String id, int size) async => null;
 }
 
 void main() {
@@ -198,5 +202,34 @@ void main() {
       expect(photos[1].taken.millisecondsSinceEpoch, 5000);
       expect(photos[1].isVideo, isTrue);
     });
+  });
+
+  group('thumbnails', () {
+    test(
+      'the native source asks the phone for a picture of one photo',
+      () async {
+        final messenger =
+            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+        addTearDown(
+          () => messenger.setMockMethodCallHandler(
+            NativeFolderAccess.channel,
+            null,
+          ),
+        );
+        final asked = <Object?>[];
+        messenger.setMockMethodCallHandler(NativeFolderAccess.channel, (
+          call,
+        ) async {
+          asked.add(call.arguments);
+          return call.arguments['id'] == 'gone'
+              ? throw PlatformException(code: 'media_thumbnail')
+              : Uint8List.fromList([0xFF, 0xD8, 1]);
+        });
+        final source = NativePhoneSource(NativeFolderAccess());
+        expect(await source.thumbnail('image:1', 200), [0xFF, 0xD8, 1]);
+        expect(asked.single, {'id': 'image:1', 'size': 200});
+        expect(await source.thumbnail('gone', 200), isNull);
+      },
+    );
   });
 }
