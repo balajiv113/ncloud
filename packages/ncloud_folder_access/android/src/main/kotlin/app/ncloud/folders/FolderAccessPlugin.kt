@@ -46,6 +46,9 @@ class FolderAccessPlugin : FlutterPlugin, ActivityAware, PluginRegistry.Activity
     // one very large video does not hold up the small files behind it, nor the
     // calls that make and remove their temporary files.
     private val copiers = Executors.newFixedThreadPool(3)
+    // Thumbnails are asked for in bursts as a grid scrolls, and must not wait
+    // behind a large copy.
+    private val thumbnails = Executors.newFixedThreadPool(4)
     private val main = Handler(Looper.getMainLooper())
     private var activity: Activity? = null
     private var binding: ActivityPluginBinding? = null
@@ -114,6 +117,15 @@ class FolderAccessPlugin : FlutterPlugin, ActivityAware, PluginRegistry.Activity
                             trashIds = emptyList()
                             result.error("media_trash", "Could not ask to remove the photos.", null)
                         }
+                    }
+                }
+                "mediaThumbnail" -> thumbnails.execute {
+                    try {
+                        val bytes = mediaThumbnail(
+                            call.argument<String>("id")!!, call.argument<Number>("size")!!.toInt())
+                        main.post { result.success(bytes) }
+                    } catch (error: Exception) {
+                        main.post { result.error("media_thumbnail", "The photo has no thumbnail.", null) }
                     }
                 }
                 "mediaTransfer" -> (if (call.method == "mediaExport") copiers else worker).execute {
@@ -421,6 +433,26 @@ class FolderAccessPlugin : FlutterPlugin, ActivityAware, PluginRegistry.Activity
         }
     }
 
+    /** A small JPEG of a photo or video, from the system's own thumbnail cache. */
+    private fun mediaThumbnail(id: String, size: Int): ByteArray {
+        require(size in 16..1024)
+        val uri = mediaUri(id)
+        val resolver = context.contentResolver
+        val bitmap = if (Build.VERSION.SDK_INT >= 29) {
+            resolver.loadThumbnail(uri, android.util.Size(size, size), null)
+        } else {
+            val number = ContentUris.parseId(uri)
+            val kind = if (size > 96) MediaStore.Images.Thumbnails.MINI_KIND else MediaStore.Images.Thumbnails.MICRO_KIND
+            checkNotNull(
+                if (id.startsWith("video:")) MediaStore.Video.Thumbnails.getThumbnail(resolver, number, kind, null)
+                else MediaStore.Images.Thumbnails.getThumbnail(resolver, number, kind, null)
+            ) { "No thumbnail." }
+        }
+        return java.io.ByteArrayOutputStream().also {
+            bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, it)
+        }.toByteArray()
+    }
+
     private fun mediaUri(id: String): Uri {
         val parts = id.split(":")
         check(parts.size == 2) { "Unsupported photo id." }
@@ -581,5 +613,6 @@ class FolderAccessPlugin : FlutterPlugin, ActivityAware, PluginRegistry.Activity
         }
         worker.shutdown()
         copiers.shutdown()
+        thumbnails.shutdown()
     }
 }

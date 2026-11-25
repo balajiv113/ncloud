@@ -215,6 +215,20 @@ class NativeFolderAccess
     return byId.values.toList();
   }
 
+  /// A small picture of a photo or video on the phone, as JPEG bytes, or null if
+  /// the phone has none for it.
+  Future<Uint8List?> mediaThumbnail(String id, int size) async {
+    try {
+      return await channel.invokeMethod<Uint8List>('mediaThumbnail', {
+        'id': id,
+        'size': size,
+      });
+    } on PlatformException catch (error) {
+      if (error.code == 'media_thumbnail') return null;
+      rethrow;
+    }
+  }
+
   Future<List<DeviceEntry>> _listLibrary(
     String token,
     List<String> path,

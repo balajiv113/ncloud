@@ -103,6 +103,16 @@ import workmanager_apple
           DispatchQueue.main.async { result(["status": status]) }
         }
         return
+      case "mediaThumbnail":
+        let id = arguments["id"] as? String ?? ""
+        let size = (arguments["size"] as? NSNumber)?.intValue ?? 256
+        PhonePhotoList.thumbnail(id: id, size: size) { data in
+          DispatchQueue.main.async {
+            result(data.map { FlutterStandardTypedData(bytes: $0) } ??
+              FlutterError(code: "media_thumbnail", message: "The photo has no thumbnail.", details: nil))
+          }
+        }
+        return
       case "mediaList":
         let offset = (arguments["offset"] as? NSNumber)?.intValue ?? 0
         let limit = (arguments["limit"] as? NSNumber)?.intValue ?? 2000
