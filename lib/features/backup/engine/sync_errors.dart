@@ -62,12 +62,19 @@ String _platform(PlatformException error) => switch (error.code) {
     'Android could not check Wi-Fi/charging conditions. '
         'Update ncloud and retry; folder permission is unchanged.',
   'background_permission' =>
-    'Allow ncloud notifications in device Settings and retry.',
+    'ncloud\'s notifications are turned off, and Android needs one to run a '
+        'backup in the background. Turn notifications on in Settings > Apps > '
+        'ncloud > Notifications, then retry.',
+  'background_channel' =>
+    'The "Scheduled folder backups" notifications are turned off for ncloud, '
+        'and Android needs one to run a backup in the background. Turn them on in '
+        'Settings > Apps > ncloud > Notifications, then retry.',
   'background_start' =>
     'Android could not start the upload service. Open ncloud and retry.',
   'scheduled_background' =>
-    'Android could not show the scheduled backup notification. '
-        'Allow Scheduled folder backups notifications and background activity in device Settings.',
+    'Android was slow to show the scheduled backup notification, so this run '
+        'did not start. It will try again at the next scheduled run. If it keeps '
+        'happening, allow background activity for ncloud in device Settings.',
   _ =>
     'The device folder operation failed (${error.code}). '
         'Existing files were not overwritten. Check the selected folder provider.',

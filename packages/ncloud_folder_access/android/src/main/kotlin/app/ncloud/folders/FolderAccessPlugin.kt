@@ -175,8 +175,15 @@ class FolderAccessPlugin : FlutterPlugin, ActivityAware, PluginRegistry.Activity
                     val channelEnabled = Build.VERSION.SDK_INT < 26 ||
                         manager.getNotificationChannel("ncloud_scheduled_backup")?.importance != NotificationManager.IMPORTANCE_NONE
                     val id = call.argument<Number>("id")!!.toInt()
-                    result.success(permitted && enabled && channelEnabled &&
-                        manager.activeNotifications.any { it.id == id })
+                    // Why the notification is missing matters: three of the reasons are
+                    // settings the user has to change, and one is only a matter of time.
+                    result.success(when {
+                        !permitted -> "permission"
+                        !enabled -> "disabled"
+                        !channelEnabled -> "channel"
+                        manager.activeNotifications.any { it.id == id } -> "shown"
+                        else -> "waiting"
+                    })
                 }
                 "conditions" -> try {
                     val connectivity = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
