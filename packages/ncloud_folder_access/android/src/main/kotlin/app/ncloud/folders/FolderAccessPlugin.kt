@@ -333,7 +333,10 @@ class FolderAccessPlugin : FlutterPlugin, ActivityAware, PluginRegistry.Activity
             MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DISPLAY_NAME, MediaStore.MediaColumns.SIZE,
             MediaStore.MediaColumns.MIME_TYPE, MediaStore.MediaColumns.DATE_MODIFIED,
             MediaStore.Files.FileColumns.MEDIA_TYPE,
-            if (relative) MediaStore.MediaColumns.RELATIVE_PATH else MediaStore.MediaColumns.DATA)
+            if (relative) MediaStore.MediaColumns.RELATIVE_PATH else MediaStore.MediaColumns.DATA,
+            // The day it was taken is only recorded from Android 10; before that the
+            // modified date stands in, which is what the next line falls back to too.
+            if (relative) MediaStore.MediaColumns.DATE_TAKEN else MediaStore.MediaColumns.DATE_MODIFIED)
         val selection = "${MediaStore.Files.FileColumns.MEDIA_TYPE} IN (?, ?)"
         val arguments = arrayOf(
             MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE.toString(),
@@ -367,10 +370,12 @@ class FolderAccessPlugin : FlutterPlugin, ActivityAware, PluginRegistry.Activity
                     val parent = java.io.File(place).parent ?: ""
                     (if (parent.startsWith(root)) parent.removePrefix(root) else parent).trim('/')
                 }
+                val modified = it.getLong(4) * 1000
+                val taken = if (relative) it.getLong(7) else 0L
                 items.add(mapOf(
                     "id" to "$kind:${it.getLong(0)}", "name" to name, "size" to size,
-                    "modified" to it.getLong(4) * 1000, "contentType" to (it.getString(3) ?: ""),
-                    "folder" to folder))
+                    "modified" to modified, "taken" to (if (taken > 0) taken else modified),
+                    "contentType" to (it.getString(3) ?: ""), "folder" to folder))
             }
         }
         return items

@@ -17,6 +17,7 @@ LibraryItem item(
   name: name,
   size: size,
   modified: modified,
+  taken: modified,
   contentType: kind == 'image' ? 'image/jpeg' : 'video/mp4',
   folder: folder,
 );

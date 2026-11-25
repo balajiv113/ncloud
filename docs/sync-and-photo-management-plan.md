@@ -358,3 +358,38 @@ device are their first check, so each is kept small and lands on its own.
    match?" preview and waits for your tap. (Settled.)
 
 All questions are settled.
+
+## Phone photos in the Timeline
+
+The Timeline shows the cloud's photos together with the photos on the phone that
+are not backed up. A backed-up photo is shown once, as the cloud copy.
+
+**Where a phone photo stands** is one of four states, best to worst: *backed up*,
+*waiting* (the next run will upload it), *failed* (tried and could not be
+uploaded), and *left out* (no backup covers it). A photo that two backups cover
+takes the best of its states.
+
+**How it is worked out.** The state is not recorded anywhere new. The engine
+already reads the phone and the saved receipts to plan a run, so
+`SyncEngine.marks` returns that plan as a list: each file the backup covers, with
+its phone id, name and size, and whether it is backed up, waiting or failed. A
+phone photo no backup lists is left out. Photos are matched by the phone's own id
+and, for a source that has none (a chosen folder), by name and size, never by a
+name alone. Receipts are untouched.
+
+**Both platforms answer the same way.** Android's media listing and a new iPhone
+one (`mediaAccess`, `mediaRequest`, `mediaList`) return one entry per photo with
+its id, name, size, modified date, **taken date** and type, so the rest of the app
+has one code path. iPhone reports no size, which is why names alone are never
+matched.
+
+Built in slices, each of which works on its own:
+
+1. **Phone index and state** (`lib/features/phone`): the phone listing with taken
+   dates and the states above. *(Done.)*
+2. Native thumbnails for phone photos, with a memory and disk cache.
+3. The merge into the Timeline, by taken date, with a marker for each state.
+4. The viewer for phone photos, without the actions that need the cloud.
+5. A **Not backed up** album that lists the photos that are waiting, failed or
+   left out, with a shortcut to the backup settings. It has no per-photo upload.
+6. Live refresh, the permission prompt and a switch to hide phone photos.

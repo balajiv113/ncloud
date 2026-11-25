@@ -1,0 +1,202 @@
+import 'package:flutter_test/flutter_test.dart';
+import 'package:ncloud/features/backup/engine/file_mark.dart';
+import 'package:ncloud/features/backup/model/backup_state.dart';
+import 'package:ncloud/features/backup/model/folder_pair.dart';
+import 'package:ncloud/features/backup/platform/device_library.dart';
+import 'package:ncloud/features/backup/platform/folder_access.dart';
+import 'package:ncloud/features/phone/phone_library.dart';
+import 'package:ncloud/features/phone/phone_photo.dart';
+import 'package:ncloud/features/phone/phone_source.dart';
+import 'package:ncloud/features/phone/phone_states.dart';
+
+PhonePhoto photo(
+  String id, {
+  String? name,
+  int size = 10,
+  int day = 1,
+  bool video = false,
+}) => PhonePhoto(
+  id: id,
+  name: name ?? '$id.jpg',
+  size: size,
+  taken: DateTime(2025, 1, day),
+  isVideo: video,
+);
+
+FileMark mark(
+  String? id,
+  BackupState state, {
+  String name = 'x.jpg',
+  int size = 10,
+}) => FileMark(id: id, name: name, size: size, state: state);
+
+FolderPair pair(String id) => FolderPair(
+  id: id,
+  account: 'a|b',
+  name: id,
+  folder: const DeviceFolder('t', 'Camera', 'camera'),
+  remote: const ['Backup'],
+);
+
+class _Source implements PhoneSource {
+  _Source(this.all);
+  final List<PhonePhoto> all;
+
+  @override
+  Future<LibraryPermission> permission() async => LibraryPermission.granted;
+  @override
+  Future<LibraryPermission> request() async => LibraryPermission.granted;
+  @override
+  Future<List<PhonePhoto>> photos() async => all;
+}
+
+void main() {
+  group('PhoneStates', () {
+    test('a photo no backup knows is left out', () {
+      expect(PhoneStates(const []).of(photo('a')), BackupState.leftOut);
+    });
+
+    test('finds a photo by the phone id', () {
+      final states = PhoneStates([mark('a', BackupState.backedUp)]);
+      expect(states.of(photo('a')), BackupState.backedUp);
+      expect(states.of(photo('b')), BackupState.leftOut);
+    });
+
+    test('falls back to the name and size when the source has no ids', () {
+      final states = PhoneStates([
+        mark(null, BackupState.backedUp, name: 'IMG_1.jpg', size: 500),
+      ]);
+      expect(
+        states.of(photo('image:9', name: 'IMG_1.jpg', size: 500)),
+        BackupState.backedUp,
+      );
+      expect(
+        states.of(photo('image:9', name: 'IMG_1.jpg', size: 501)),
+        BackupState.leftOut,
+      );
+    });
+
+    test('never matches on a name alone when the size is not known', () {
+      final states = PhoneStates([
+        mark(null, BackupState.backedUp, name: 'IMG_1.jpg', size: -1),
+      ]);
+      expect(
+        states.of(photo('x', name: 'IMG_1.jpg', size: -1)),
+        BackupState.leftOut,
+      );
+    });
+
+    test('the furthest along of several backups counts', () {
+      final states = PhoneStates([
+        mark('a', BackupState.failed),
+        mark('a', BackupState.backedUp),
+        mark('a', BackupState.waiting),
+        mark('b', BackupState.failed),
+        mark('b', BackupState.waiting),
+      ]);
+      expect(states.of(photo('a')), BackupState.backedUp);
+      expect(states.of(photo('b')), BackupState.waiting);
+    });
+  });
+
+  group('PhoneLibrary', () {
+    test('gives every photo its state, newest first', () async {
+      final library = PhoneLibrary(
+        source: _Source([
+          photo('old', day: 1),
+          photo('new', day: 20),
+          photo('mid', day: 10),
+          photo('lonely', day: 5),
+        ]),
+        pairs: () async => [pair('one'), pair('two')],
+        marks: (pair) async => switch (pair.id) {
+          'one' => [
+            mark('old', BackupState.backedUp),
+            mark('mid', BackupState.waiting),
+          ],
+          _ => [
+            mark('new', BackupState.failed),
+            mark('mid', BackupState.failed),
+          ],
+        },
+      );
+      final entries = await library.entries();
+      expect(
+        [for (final e in entries) e.photo.id],
+        ['new', 'mid', 'lonely', 'old'],
+      );
+      expect(
+        [for (final e in entries) e.state],
+        [
+          BackupState.failed,
+          BackupState.waiting,
+          BackupState.leftOut,
+          BackupState.backedUp,
+        ],
+      );
+    });
+
+    test('with no backups every photo is left out', () async {
+      final library = PhoneLibrary(
+        source: _Source([photo('a'), photo('b')]),
+        pairs: () async => const [],
+        marks: (_) async => throw StateError('no backup to ask'),
+      );
+      expect(
+        [for (final e in await library.entries()) e.state],
+        [BackupState.leftOut, BackupState.leftOut],
+      );
+    });
+  });
+
+  group('NativePhoneSource', () {
+    TestWidgetsFlutterBinding.ensureInitialized();
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    tearDown(
+      () =>
+          messenger.setMockMethodCallHandler(NativeFolderAccess.channel, null),
+    );
+
+    test('reads photos with their taken date and type', () async {
+      messenger.setMockMethodCallHandler(NativeFolderAccess.channel, (
+        call,
+      ) async {
+        switch (call.method) {
+          case 'mediaAccess':
+            return {'status': 'granted'};
+          case 'mediaList':
+            return [
+              {
+                'id': 'image:1',
+                'name': 'a.jpg',
+                'size': 100,
+                'modified': 2000,
+                'taken': 1000,
+                'contentType': 'image/jpeg',
+                'folder': 'DCIM/Camera',
+              },
+              {
+                'id': 'video:2',
+                'name': 'b.mp4',
+                'size': 900,
+                'modified': 5000,
+                'contentType': 'video/mp4',
+                'folder': '',
+              },
+            ];
+        }
+        return null;
+      });
+      final source = NativePhoneSource(NativeFolderAccess());
+      expect(await source.permission(), LibraryPermission.granted);
+      final photos = await source.photos();
+      expect(photos.map((p) => p.id), ['image:1', 'video:2']);
+      expect(photos[0].taken.millisecondsSinceEpoch, 1000);
+      expect(photos[0].isVideo, isFalse);
+      // No taken date from the phone: the modified date stands in.
+      expect(photos[1].taken.millisecondsSinceEpoch, 5000);
+      expect(photos[1].isVideo, isTrue);
+    });
+  });
+}
