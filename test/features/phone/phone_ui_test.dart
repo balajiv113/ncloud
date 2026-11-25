@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -48,14 +47,19 @@ class _Source implements PhoneSource {
     return _png;
   }
 
-  File? originalFile;
-  int originals = 0;
+  /// What the phone gives for the photo itself, and how often it is asked.
+  ImageProvider? full;
+  int images = 0;
 
   @override
-  Future<File> original(String id) async {
-    originals++;
-    return originalFile ?? (throw UnimplementedError());
+  Future<ImageProvider?> image(String id) async {
+    images++;
+    return full;
   }
+
+  @override
+  Future<PhoneVideo> video(String id, {bool copy = false}) async =>
+      throw UnimplementedError();
 
   @override
   Stream<void> get changes => const Stream.empty();
@@ -185,63 +189,116 @@ void main() {
     List<Image> images(WidgetTester tester) =>
         tester.widgetList<Image>(find.byType(Image)).toList();
 
-    testWidgets('the thumbnail first, then the original over it', (
+    testWidgets('the thumbnail first, then the photo itself over it', (
       tester,
     ) async {
-      final dir = Directory.systemTemp.createTempSync('viewer-original');
-      addTearDown(() => dir.deleteSync(recursive: true));
-      final file = File('${dir.path}/a.part')..writeAsBytesSync(_png);
-      final source = _Source([photo('a', 1)])..originalFile = file;
+      final photoItself = MemoryImage(_png);
+      final source = _Source([photo('a', 1)])..full = photoItself;
       await opened(tester, source);
       expect(images(tester).map((i) => i.image.runtimeType), [MemoryImage]);
       expect(
-        source.originals,
+        source.images,
         0,
-        reason: 'not copied for a photo only flicked past',
+        reason: 'not asked for a photo only flicked past',
       );
       await tester.pump(const Duration(milliseconds: 300));
       await tester.pump();
-      expect(images(tester).map((i) => i.image.runtimeType), [
-        MemoryImage,
-        FileImage,
-      ]);
+      final shown = images(tester);
+      expect(shown.map((i) => i.image.runtimeType), [MemoryImage, ResizeImage]);
+      // Drawn from the photo itself, at a size that is sharp however far it is
+      // zoomed, and never larger than the phone can hold.
+      final resize = shown.last.image as ResizeImage;
+      expect(resize.imageProvider, same(photoItself));
+      expect(resize.width, 4096);
+      expect(resize.height, 4096);
       expect(source.asked, ['a|2048']);
     });
 
-    testWidgets('the thumbnail stays when the original cannot be had', (
+    testWidgets('the thumbnail stays when the phone cannot give the photo', (
       tester,
     ) async {
       final source = _Source([photo('a', 1)]);
       await opened(tester, source);
       await tester.pump(const Duration(milliseconds: 300));
       await tester.pump();
-      expect(source.originals, 1);
+      expect(source.images, 1);
       expect(images(tester).map((i) => i.image.runtimeType), [MemoryImage]);
     });
 
-    testWidgets('leaving before the copy is made makes no copy', (
+    testWidgets('leaving before the photo is asked for makes no request', (
       tester,
     ) async {
       final source = _Source([photo('a', 1)]);
       await opened(tester, source);
       await tester.pumpWidget(const MaterialApp(home: SizedBox()));
       await tester.pump(const Duration(milliseconds: 300));
-      expect(source.originals, 0);
+      expect(source.images, 0);
     });
 
-    testWidgets('the copy is removed when the photo is left', (tester) async {
-      final dir = Directory.systemTemp.createTempSync('viewer-original');
-      addTearDown(() => dir.deleteSync(recursive: true));
-      final file = File('${dir.path}/a.part')..writeAsBytesSync(_png);
-      final source = _Source([photo('a', 1)])..originalFile = file;
+    testWidgets('double-tapping zooms in and back out', (tester) async {
+      final source = _Source([photo('a', 1)]);
       await opened(tester, source);
-      await tester.pump(const Duration(milliseconds: 300));
-      await tester.pump();
-      await tester.pumpWidget(const MaterialApp(home: SizedBox()));
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 100)),
+      double scale() => tester
+          .widget<InteractiveViewer>(find.byType(InteractiveViewer))
+          .transformationController!
+          .value
+          .getMaxScaleOnAxis();
+      expect(scale(), 1);
+      final center = tester.getCenter(find.byType(InteractiveViewer));
+      await tester.tapAt(center);
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.tapAt(center);
+      await tester.pumpAndSettle();
+      expect(scale(), greaterThan(2));
+      await tester.tapAt(center);
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.tapAt(center);
+      await tester.pumpAndSettle();
+      expect(scale(), closeTo(1, 0.01));
+    });
+
+    testWidgets('pinching zooms', (tester) async {
+      final source = _Source([photo('a', 1)]);
+      await opened(tester, source);
+      final center = tester.getCenter(find.byType(InteractiveViewer));
+      final one = await tester.startGesture(
+        center - const Offset(30, 0),
+        pointer: 1,
       );
-      expect(file.existsSync(), isFalse);
+      final two = await tester.startGesture(
+        center + const Offset(30, 0),
+        pointer: 2,
+      );
+      await tester.pump();
+      await one.moveBy(const Offset(-60, 0));
+      await two.moveBy(const Offset(60, 0));
+      await tester.pump();
+      await one.up();
+      await two.up();
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(
+        tester
+            .widget<InteractiveViewer>(find.byType(InteractiveViewer))
+            .transformationController!
+            .value
+            .getMaxScaleOnAxis(),
+        greaterThan(1.2),
+      );
+    });
+
+    testWidgets('a tap hides the header and another brings it back', (
+      tester,
+    ) async {
+      final source = _Source([photo('a', 1)]);
+      await opened(tester, source);
+      expect(find.text('a.jpg'), findsOneWidget);
+      await tester.tap(find.byType(InteractiveViewer));
+      await tester.pumpAndSettle(const Duration(milliseconds: 400));
+      expect(find.text('a.jpg'), findsNothing);
+      await tester.tap(find.byType(InteractiveViewer));
+      await tester.pumpAndSettle(const Duration(milliseconds: 400));
+      expect(find.text('a.jpg'), findsOneWidget);
     });
   });
 

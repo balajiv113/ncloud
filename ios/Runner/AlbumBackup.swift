@@ -2,6 +2,7 @@ import BackgroundTasks
 import CryptoKit
 import Darwin
 import Foundation
+import AVFoundation
 import Photos
 import UIKit
 import UniformTypeIdentifiers
@@ -592,6 +593,37 @@ enum PhonePhotoList {
         data = image?.jpegData(compressionQuality: 0.85)
       }
       done(data)
+    }
+  }
+
+  /// The photo as image data, to draw in full clarity without a copy in a file.
+  static func imageData(id: String, done: @escaping (Data?) -> Void) {
+    guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [id], options: nil).firstObject else {
+      done(nil)
+      return
+    }
+    let options = PHImageRequestOptions()
+    options.isNetworkAccessAllowed = true
+    options.version = .current
+    options.deliveryMode = .highQualityFormat
+    PHImageManager.default().requestImageDataAndOrientation(for: asset, options: options) { data, _, _, _ in
+      done(data)
+    }
+  }
+
+  /// Where the video's own file is, if it is on the phone and can be played from
+  /// there; nil for one in iCloud or made up of edits, which need a copy.
+  static func playablePath(id: String, done: @escaping (String?) -> Void) {
+    guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [id], options: nil).firstObject,
+          asset.mediaType == .video else {
+      done(nil)
+      return
+    }
+    let options = PHVideoRequestOptions()
+    options.isNetworkAccessAllowed = false
+    options.version = .current
+    PHImageManager.default().requestAVAsset(forVideo: asset, options: options) { avAsset, _, _ in
+      done((avAsset as? AVURLAsset)?.url.path)
     }
   }
 

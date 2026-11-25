@@ -1,7 +1,6 @@
 import 'dart:async';
-import 'dart:io';
-
 import 'package:flutter/foundation.dart';
+import 'package:flutter/painting.dart';
 
 import '../../models.dart';
 import '../backup/platform/device_library.dart';
@@ -43,9 +42,12 @@ class PhoneTimeline {
   /// Thumbnails of the phone's photos, or null with no phone to read.
   final PhoneThumbnails? thumbnails;
 
-  /// A copy of the photo with the phone's id [id] as it is, in a temporary file
-  /// the caller removes.
-  Future<File> original(String id) => _source!.original(id);
+  /// The photo with the phone's id [id] itself, or null if it cannot be had.
+  Future<ImageProvider?> image(String id) => _source!.image(id);
+
+  /// The video with the phone's id [id], ready to play.
+  Future<PhoneVideo> video(String id, {bool copy = false}) =>
+      _source!.video(id, copy: copy);
 
   PhoneView _all = PhoneView.none();
   Map<String, PhoneView> _albums = const {};

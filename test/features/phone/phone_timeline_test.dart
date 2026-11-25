@@ -1,4 +1,4 @@
-import 'dart:io';
+import 'package:flutter/painting.dart';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -43,7 +43,10 @@ class _Source implements PhoneSource {
   @override
   Future<Uint8List?> thumbnail(String id, int size) async => null;
   @override
-  Future<File> original(String id) async => throw UnimplementedError();
+  Future<ImageProvider?> image(String id) async => null;
+  @override
+  Future<PhoneVideo> video(String id, {bool copy = false}) async =>
+      throw UnimplementedError();
   @override
   Stream<void> get changes => const Stream.empty();
 }

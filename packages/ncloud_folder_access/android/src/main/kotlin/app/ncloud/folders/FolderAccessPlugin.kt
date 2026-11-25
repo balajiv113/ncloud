@@ -148,6 +148,8 @@ class FolderAccessPlugin : FlutterPlugin, ActivityAware, PluginRegistry.Activity
                                 call.argument<Number>("offset")!!.toInt(),
                                 call.argument<Number>("limit")!!.toInt())
                             "mediaOriginal" -> mediaOriginal(call.argument<String>("id")!!)
+                            "mediaImage" -> mediaPath(call.argument<String>("id")!!)?.let { mapOf("path" to it) }
+                            "mediaPlayable" -> mediaPath(call.argument<String>("id")!!)
                             else -> mediaExport(
                                 call.argument<String>("id")!!,
                                 call.argument<Number>("size")!!.toLong(),
@@ -465,6 +467,18 @@ class FolderAccessPlugin : FlutterPlugin, ActivityAware, PluginRegistry.Activity
         return java.io.ByteArrayOutputStream().also {
             bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, it)
         }.toByteArray()
+    }
+
+    /**
+     * Where a photo or video is on the phone's storage, when the app may read it
+     * there, so it can be shown or played without a copy; null when it may not.
+     */
+    private fun mediaPath(id: String): String? {
+        context.contentResolver.query(mediaUri(id), arrayOf(MediaStore.MediaColumns.DATA), null, null, null).use { cursor ->
+            if (cursor == null || !cursor.moveToFirst()) return null
+            val path = cursor.getString(0) ?: return null
+            return if (File(path).canRead()) path else null
+        }
     }
 
     /** Copies one photo or video as it is, to look at or play it, without the checks a backup makes. */

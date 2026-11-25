@@ -6,7 +6,7 @@ internal fun folderRoute(method: String, hasActivity: Boolean): String = when (m
     "workerNotification" -> "workerNotification"
     "mediaAccess" -> "mediaAccess"
     "mediaRequest" -> if (hasActivity) "mediaRequest" else "headless_picker"
-    "mediaList", "mediaExport", "mediaOriginal" -> "mediaTransfer"
+    "mediaList", "mediaExport", "mediaOriginal", "mediaImage", "mediaPlayable" -> "mediaTransfer"
     "mediaThumbnail" -> "mediaThumbnail"
     "mediaTrash" -> if (hasActivity) "mediaTrash" else "headless_picker"
     "acquire", "release" -> "lock"

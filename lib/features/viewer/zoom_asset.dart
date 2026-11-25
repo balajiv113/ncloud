@@ -4,11 +4,8 @@ import '../../app/app_controller.dart';
 import '../../models.dart';
 import '../../shared/ui/media_tile.dart';
 
-/// A photo that can be pinched, panned and double-tapped to zoom.
-///
-/// [onZoomChanged] reports when the photo leaves or returns to its fitted
-/// size, so the page view around it can stop swiping while it is zoomed.
-class ZoomAsset extends StatefulWidget {
+/// A photo from the cloud that can be pinched, panned and double-tapped to zoom.
+class ZoomAsset extends StatelessWidget {
   const ZoomAsset({
     super.key,
     required this.file,
@@ -22,14 +19,49 @@ class ZoomAsset extends StatefulWidget {
   final VoidCallback onTap;
   final ValueChanged<bool>? onZoomChanged;
 
+  static const maxScale = ZoomView.maxScale;
+  static const doubleTapScale = ZoomView.doubleTapScale;
+
+  @override
+  Widget build(BuildContext context) => ZoomView(
+    onTap: onTap,
+    onZoomChanged: onZoomChanged,
+    child: SizedBox.expand(
+      child: MediaTile(
+        file: file,
+        controller: controller,
+        fit: BoxFit.contain,
+        previewSize: 1280,
+      ),
+    ),
+  );
+}
+
+/// Anything that can be pinched, panned and double-tapped to zoom: the cloud's
+/// photos and the phone's use the same one, so they behave the same.
+///
+/// [onZoomChanged] reports when the content leaves or returns to its fitted
+/// size, so the page view around it can stop swiping while it is zoomed.
+class ZoomView extends StatefulWidget {
+  const ZoomView({
+    super.key,
+    required this.child,
+    required this.onTap,
+    this.onZoomChanged,
+  });
+
+  final Widget child;
+  final VoidCallback onTap;
+  final ValueChanged<bool>? onZoomChanged;
+
   static const maxScale = 6.0;
   static const doubleTapScale = 2.5;
 
   @override
-  State<ZoomAsset> createState() => _ZoomAssetState();
+  State<ZoomView> createState() => _ZoomViewState();
 }
 
-class _ZoomAssetState extends State<ZoomAsset>
+class _ZoomViewState extends State<ZoomView>
     with SingleTickerProviderStateMixin {
   final _transform = TransformationController();
   late final AnimationController _animation;
@@ -67,12 +99,12 @@ class _ZoomAssetState extends State<ZoomAsset>
     final to = _zoomed
         ? Matrix4.identity()
         : (Matrix4.translationValues(
-            -_tap.dx * (ZoomAsset.doubleTapScale - 1),
-            -_tap.dy * (ZoomAsset.doubleTapScale - 1),
+            -_tap.dx * (ZoomView.doubleTapScale - 1),
+            -_tap.dy * (ZoomView.doubleTapScale - 1),
             0,
           )..scaleByDouble(
-            ZoomAsset.doubleTapScale,
-            ZoomAsset.doubleTapScale,
+            ZoomView.doubleTapScale,
+            ZoomView.doubleTapScale,
             1,
             1,
           ));
@@ -91,15 +123,8 @@ class _ZoomAssetState extends State<ZoomAsset>
     onDoubleTap: _toggleZoom,
     child: InteractiveViewer(
       transformationController: _transform,
-      maxScale: ZoomAsset.maxScale,
-      child: SizedBox.expand(
-        child: MediaTile(
-          file: widget.file,
-          controller: widget.controller,
-          fit: BoxFit.contain,
-          previewSize: 1280,
-        ),
-      ),
+      maxScale: ZoomView.maxScale,
+      child: widget.child,
     ),
   );
 }

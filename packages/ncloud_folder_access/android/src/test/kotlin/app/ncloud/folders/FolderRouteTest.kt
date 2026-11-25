@@ -17,7 +17,7 @@ class FolderRouteTest {
             assertEquals("lock", folderRoute(method, false))
         }
         assertEquals("mediaAccess", folderRoute("mediaAccess", false))
-        for (method in listOf("mediaList", "mediaExport", "mediaOriginal")) {
+        for (method in listOf("mediaList", "mediaExport", "mediaOriginal", "mediaImage", "mediaPlayable")) {
             assertEquals("mediaTransfer", folderRoute(method, false))
         }
         assertEquals("mediaThumbnail", folderRoute("mediaThumbnail", false))
