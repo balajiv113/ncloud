@@ -48,8 +48,15 @@ class _Source implements PhoneSource {
     return _png;
   }
 
+  File? originalFile;
+  int originals = 0;
+
   @override
-  Future<File> original(String id) async => throw UnimplementedError();
+  Future<File> original(String id) async {
+    originals++;
+    return originalFile ?? (throw UnimplementedError());
+  }
+
   @override
   Stream<void> get changes => const Stream.empty();
 }
@@ -160,6 +167,82 @@ void main() {
       expect(find.textContaining('Not backed up'), findsWidgets);
     },
   );
+
+  group('the viewer shows a photo in full clarity', () {
+    Future<PhoneTimeline> opened(WidgetTester tester, _Source source) async {
+      final phone = overlay(source, {});
+      await phone.load();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PhoneViewer(files: phone.files, initialIndex: 0, phone: phone),
+        ),
+      );
+      await tester.pump();
+      return phone;
+    }
+
+    List<Image> images(WidgetTester tester) =>
+        tester.widgetList<Image>(find.byType(Image)).toList();
+
+    testWidgets('the thumbnail first, then the original over it', (
+      tester,
+    ) async {
+      final dir = Directory.systemTemp.createTempSync('viewer-original');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final file = File('${dir.path}/a.part')..writeAsBytesSync(_png);
+      final source = _Source([photo('a', 1)])..originalFile = file;
+      await opened(tester, source);
+      expect(images(tester).map((i) => i.image.runtimeType), [MemoryImage]);
+      expect(
+        source.originals,
+        0,
+        reason: 'not copied for a photo only flicked past',
+      );
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pump();
+      expect(images(tester).map((i) => i.image.runtimeType), [
+        MemoryImage,
+        FileImage,
+      ]);
+      expect(source.asked, ['a|2048']);
+    });
+
+    testWidgets('the thumbnail stays when the original cannot be had', (
+      tester,
+    ) async {
+      final source = _Source([photo('a', 1)]);
+      await opened(tester, source);
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pump();
+      expect(source.originals, 1);
+      expect(images(tester).map((i) => i.image.runtimeType), [MemoryImage]);
+    });
+
+    testWidgets('leaving before the copy is made makes no copy', (
+      tester,
+    ) async {
+      final source = _Source([photo('a', 1)]);
+      await opened(tester, source);
+      await tester.pumpWidget(const MaterialApp(home: SizedBox()));
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(source.originals, 0);
+    });
+
+    testWidgets('the copy is removed when the photo is left', (tester) async {
+      final dir = Directory.systemTemp.createTempSync('viewer-original');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final file = File('${dir.path}/a.part')..writeAsBytesSync(_png);
+      final source = _Source([photo('a', 1)])..originalFile = file;
+      await opened(tester, source);
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pump();
+      await tester.pumpWidget(const MaterialApp(home: SizedBox()));
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 100)),
+      );
+      expect(file.existsSync(), isFalse);
+    });
+  });
 
   group('the controller', () {
     late AppController controller;

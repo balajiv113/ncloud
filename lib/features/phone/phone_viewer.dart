@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -145,16 +146,45 @@ class _PhonePage extends StatefulWidget {
 class _PhonePageState extends State<_PhonePage> {
   late final Future<Uint8List?> _picture = widget.phone.thumbnails!.of(
     widget.file.onPhone!.id,
-    1600,
+    2048,
   );
   final TransformationController _zoom = TransformationController();
   VideoPlayerController? _player;
   File? _copy;
+
+  /// The photo as it is on the phone, once it has been copied, to show in full
+  /// clarity instead of the thumbnail.
+  File? _original;
   bool _preparing = false;
+  bool _gone = false;
   String? _error;
 
   @override
+  void initState() {
+    super.initState();
+    if (!widget.file.isVideo) unawaited(_loadOriginal());
+  }
+
+  /// Copies the original off the phone. A photo only flicked past is not worth
+  /// a copy, so it waits a moment and gives up if the page has gone.
+  Future<void> _loadOriginal() async {
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+    if (_gone) return;
+    try {
+      final copy = await widget.phone.original(widget.file.onPhone!.id);
+      if (_gone) {
+        unawaited(copy.delete().then((_) {}, onError: (Object _) {}));
+        return;
+      }
+      setState(() => _original = _copy = copy);
+    } on Object {
+      // The thumbnail stays: it is the most the phone could give.
+    }
+  }
+
+  @override
   void dispose() {
+    _gone = true;
     _zoom.dispose();
     _player?.dispose();
     _copy?.delete().ignore();
@@ -187,6 +217,23 @@ class _PhonePageState extends State<_PhonePage> {
       });
     }
   }
+
+  /// The thumbnail, with the original over it once that has loaded. If the
+  /// original cannot be drawn (a format Flutter cannot decode), the thumbnail
+  /// shows through.
+  Widget _clear(Uint8List thumbnail, File? original) => Stack(
+    fit: StackFit.expand,
+    children: [
+      Image.memory(thumbnail, fit: BoxFit.contain, gaplessPlayback: true),
+      if (original != null)
+        Image.file(
+          original,
+          fit: BoxFit.contain,
+          gaplessPlayback: true,
+          errorBuilder: (_, _, _) => const SizedBox.shrink(),
+        ),
+    ],
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -225,9 +272,7 @@ class _PhonePageState extends State<_PhonePage> {
               maxScale: 5,
               onInteractionEnd: (_) =>
                   widget.onZoomChanged(_zoom.value.getMaxScaleOnAxis() > 1.01),
-              child: SizedBox.expand(
-                child: Image.memory(bytes, fit: BoxFit.contain),
-              ),
+              child: SizedBox.expand(child: _clear(bytes, _original)),
             );
           },
         ),
