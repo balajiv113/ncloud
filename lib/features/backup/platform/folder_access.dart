@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/painting.dart';
 import 'package:flutter/services.dart';
 
 import 'album_folders.dart';
@@ -213,6 +214,28 @@ class NativeFolderAccess
       if (values.length < page) break;
     }
     return byId.values.toList();
+  }
+
+  /// The photo to draw, read where it is on the phone where that is allowed
+  /// (Android) and as image data otherwise (iPhone), or null if the phone cannot
+  /// give it. Nothing is copied to a file.
+  Future<ImageProvider?> mediaImage(String id) async {
+    final found = await channel.invokeMapMethod<String, dynamic>('mediaImage', {
+      'id': id,
+    });
+    return switch (found) {
+      {'path': final String path} => FileImage(File(path)),
+      {'bytes': final Uint8List bytes} => MemoryImage(bytes),
+      _ => null,
+    };
+  }
+
+  /// Where a video is on the phone, if the app may play it from there, or null.
+  Future<File?> mediaPlayable(String id) async {
+    final path = await channel.invokeMethod<String>('mediaPlayable', {
+      'id': id,
+    });
+    return path == null ? null : File(path);
   }
 
   /// A copy of a photo or video on the phone as it is, in a temporary file the

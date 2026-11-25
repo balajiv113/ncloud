@@ -398,8 +398,12 @@ Built in slices, each of which works on its own:
    field, which makes it read-only, so selecting and cloud actions do not apply.
    *(Done.)*
 4. The viewer for phone photos (`PhoneViewer`), without the actions that need the
-   cloud: it swipes among the phone photos, and a video is copied to a temporary
-   file (`mediaOriginal`) and played from that. *(Done.)*
+   cloud: it swipes among the phone photos and zooms with the same `ZoomView` as
+   the cloud's viewer. It shows the 2048-pixel thumbnail, then the photo itself
+   (`mediaImage`: a file path on Android, image data on iPhone) with nothing
+   copied. A video is played where it is (`mediaPlayable`: the media store path
+   on Android, the `AVURLAsset` file on iPhone) and only copied to a temporary
+   file (`mediaOriginal`) when the player cannot read it there. *(Done.)*
 5. **Albums.** Each photo carries the album the phone keeps it in (Android's
    folder, Photos' album, or *Camera Roll*). In the Albums list, a phone album
    with photos not backed up is highlighted: the Smart album the backup made from
@@ -417,7 +421,6 @@ Built in slices, each of which works on its own:
    refreshes once the change has settled. A backup run ending also refreshes it.
    *(Done.)*
 
-Not done yet: playing a phone video uses a temporary copy, which can take a while
-for a large one; and there are no filters by reason (waiting, failed, left out)
+Not done yet: there are no filters by reason (waiting, failed, left out)
 inside an album beyond the mark on each photo. A phone album is matched to a
 cloud album by name only, so two phone folders with one name share a mark.

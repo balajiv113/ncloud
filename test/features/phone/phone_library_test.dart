@@ -1,3 +1,4 @@
+import 'package:flutter/painting.dart';
 import 'dart:io';
 import 'package:flutter/services.dart';
 
@@ -55,7 +56,10 @@ class _Source implements PhoneSource {
   @override
   Future<Uint8List?> thumbnail(String id, int size) async => null;
   @override
-  Future<File> original(String id) async => throw UnimplementedError();
+  Future<ImageProvider?> image(String id) async => null;
+  @override
+  Future<PhoneVideo> video(String id, {bool copy = false}) async =>
+      throw UnimplementedError();
   @override
   Stream<void> get changes => const Stream.empty();
 }
@@ -239,35 +243,121 @@ void main() {
     );
   });
 
-  test(
-    'the native source copies a photo as it is to a temporary file',
-    () async {
-      final messenger =
-          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
-      addTearDown(
-        () => messenger.setMockMethodCallHandler(
-          NativeFolderAccess.channel,
-          null,
-        ),
-      );
+  group('showing and playing without a copy', () {
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    tearDown(
+      () =>
+          messenger.setMockMethodCallHandler(NativeFolderAccess.channel, null),
+    );
+
+    List<Object?> answer(Object? Function(MethodCall call) reply) {
       final asked = <Object?>[];
       messenger.setMockMethodCallHandler(NativeFolderAccess.channel, (
         call,
       ) async {
         asked.add([call.method, call.arguments]);
-        return {
-          'path': '/tmp/original.part',
-          'sha1': 'da39a3ee5e6b4b0d3255bfef95601890afd80709',
-        };
+        return reply(call);
       });
-      final file = await NativePhoneSource(
-        NativeFolderAccess(),
-      ).original('video:7');
-      expect(file.path, '/tmp/original.part');
-      expect(asked.single, [
-        'mediaOriginal',
-        {'id': 'video:7'},
-      ]);
-    },
-  );
+      return asked;
+    }
+
+    test(
+      'a photo read where it is on the phone is drawn from that file',
+      () async {
+        answer((_) => {'path': '/storage/emulated/0/DCIM/Camera/a.jpg'});
+        final image = await NativePhoneSource(
+          NativeFolderAccess(),
+        ).image('image:1');
+        expect(image, isA<FileImage>());
+        expect(
+          (image! as FileImage).file.path,
+          '/storage/emulated/0/DCIM/Camera/a.jpg',
+        );
+      },
+    );
+
+    test('a photo given as image data is drawn from memory', () async {
+      answer(
+        (_) => {
+          'bytes': Uint8List.fromList([1, 2, 3]),
+        },
+      );
+      final image = await NativePhoneSource(NativeFolderAccess()).image('A1');
+      expect(image, isA<MemoryImage>());
+      expect((image! as MemoryImage).bytes, [1, 2, 3]);
+    });
+
+    test('a photo the phone cannot give is none', () async {
+      answer((_) => null);
+      expect(await NativePhoneSource(NativeFolderAccess()).image('x'), isNull);
+    });
+
+    test(
+      'a video is played where it is when the phone allows, with nothing to remove',
+      () async {
+        final asked = answer((_) => '/storage/emulated/0/DCIM/Camera/v.mp4');
+        final video = await NativePhoneSource(
+          NativeFolderAccess(),
+        ).video('video:2');
+        expect(video.file.path, '/storage/emulated/0/DCIM/Camera/v.mp4');
+        expect(video.temporary, isFalse);
+        expect(asked.single, [
+          'mediaPlayable',
+          {'id': 'video:2'},
+        ]);
+        await video.release(); // the phone's own file is left alone
+      },
+    );
+
+    test(
+      'a video the phone will not let be played in place is copied',
+      () async {
+        final asked = answer(
+          (call) => call.method == 'mediaPlayable'
+              ? null
+              : {'path': '/cache/original.part'},
+        );
+        final video = await NativePhoneSource(
+          NativeFolderAccess(),
+        ).video('video:2');
+        expect(video.file.path, '/cache/original.part');
+        expect(video.temporary, isTrue);
+        expect(asked.map((a) => (a! as List).first), [
+          'mediaPlayable',
+          'mediaOriginal',
+        ]);
+      },
+    );
+
+    test(
+      'a copy is asked for straight away when playing in place failed',
+      () async {
+        final asked = answer((_) => {'path': '/cache/original.part'});
+        final video = await NativePhoneSource(
+          NativeFolderAccess(),
+        ).video('video:2', copy: true);
+        expect(video.temporary, isTrue);
+        expect(asked.map((a) => (a! as List).first), ['mediaOriginal']);
+      },
+    );
+
+    test(
+      'a copy is removed when released, and the phone\'s own file never is',
+      () async {
+        final dir = Directory.systemTemp.createTempSync('video');
+        addTearDown(() => dir.deleteSync(recursive: true));
+        final copy = File('${dir.path}/copy.part')..writeAsStringSync('x');
+        final own = File('${dir.path}/own.mp4')..writeAsStringSync('x');
+        await PhoneVideo(copy, temporary: true).release();
+        await PhoneVideo(own, temporary: false).release();
+        expect(copy.existsSync(), isFalse);
+        expect(own.existsSync(), isTrue);
+        await PhoneVideo(
+          copy,
+          temporary: true,
+        ).release(); // already gone: no error
+      },
+    );
+  });
 }

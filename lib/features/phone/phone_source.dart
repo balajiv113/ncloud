@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:flutter/painting.dart';
+
 import '../backup/platform/device_library.dart';
 import '../backup/platform/folder_access.dart';
 import 'phone_photo.dart';
@@ -19,11 +21,35 @@ abstract interface class PhoneSource {
   /// A small picture of one, as JPEG bytes, or null if there is none.
   Future<Uint8List?> thumbnail(String id, int size);
 
-  /// A copy of one as it is, in a temporary file the caller removes.
-  Future<File> original(String id);
+  /// The photo itself, to draw in full clarity, or null when the phone cannot
+  /// give it. It is read where it is, not copied to a file.
+  Future<ImageProvider?> image(String id);
+
+  /// A video to play. It is the video where it is on the phone when the phone
+  /// lets it be read there, and a temporary copy otherwise or when [copy] asks.
+  Future<PhoneVideo> video(String id, {bool copy = false});
 
   /// Tells when the phone's library changes: a photo taken, deleted or edited.
   Stream<void> get changes;
+}
+
+/// A video ready to play. It is a file on the phone to play where it is, or a
+/// temporary copy that [release] removes.
+class PhoneVideo {
+  PhoneVideo(this.file, {required this.temporary});
+
+  final File file;
+  final bool temporary;
+
+  /// Done with the video: a copy is removed, the phone's own file is left alone.
+  Future<void> release() async {
+    if (!temporary) return;
+    try {
+      await file.delete();
+    } on Object {
+      // Nothing left to remove.
+    }
+  }
 }
 
 /// Reads the phone's library through the native side, which answers the same
@@ -52,7 +78,15 @@ class NativePhoneSource implements PhoneSource {
       _access.mediaThumbnail(id, size);
 
   @override
-  Future<File> original(String id) => _access.mediaOriginal(id);
+  Future<ImageProvider?> image(String id) => _access.mediaImage(id);
+
+  @override
+  Future<PhoneVideo> video(String id, {bool copy = false}) async {
+    final where = copy ? null : await _access.mediaPlayable(id);
+    return where != null
+        ? PhoneVideo(where, temporary: false)
+        : PhoneVideo(await _access.mediaOriginal(id), temporary: true);
+  }
 
   @override
   Future<List<PhonePhoto>> photos() async => [

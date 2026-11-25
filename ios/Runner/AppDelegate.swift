@@ -120,6 +120,24 @@ import workmanager_apple
           }
         }
         return
+      case "mediaImage":
+        let id = arguments["id"] as? String ?? ""
+        DispatchQueue.global(qos: .userInitiated).async {
+          PhonePhotoList.imageData(id: id) { data in
+            DispatchQueue.main.async {
+              result(data.map { ["bytes": FlutterStandardTypedData(bytes: $0)] })
+            }
+          }
+        }
+        return
+      case "mediaPlayable":
+        let id = arguments["id"] as? String ?? ""
+        DispatchQueue.global(qos: .userInitiated).async {
+          PhonePhotoList.playablePath(id: id) { path in
+            DispatchQueue.main.async { result(path) }
+          }
+        }
+        return
       case "mediaOriginal":
         let id = arguments["id"] as? String ?? ""
         copyQueue.async {
