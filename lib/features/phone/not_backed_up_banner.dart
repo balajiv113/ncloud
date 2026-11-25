@@ -4,8 +4,8 @@ import '../../app/app_controller.dart';
 import '../backup/model/backup_state.dart';
 import '../backup/ui/folder_backup_screen.dart';
 
-/// The top of the "Not backed up" album: how many photos are in each state, and
-/// the way to the settings that decide what gets backed up.
+/// The top of an album that has photos only on the phone: how many are in each
+/// state, and the way to the settings that decide what gets backed up.
 class NotBackedUpBanner extends StatelessWidget {
   const NotBackedUpBanner({super.key, required this.controller});
 
@@ -42,9 +42,9 @@ class NotBackedUpBanner extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Text('Only on this phone'),
+                    const Text('Not backed up'),
                     Text(
-                      summary(controller.phone.counts),
+                      summary(controller.phoneView.counts),
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
                   ],

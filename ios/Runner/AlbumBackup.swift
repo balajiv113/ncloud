@@ -547,6 +547,11 @@ enum PhonePhotoList {
   /// The listing being read a page at a time, so every page comes from the same
   /// snapshot and no photo is missed or repeated between pages.
   private static var snapshot: PHFetchResult<PHAsset>?
+
+  /// The album each photo is in, by the photo's id, taken with the snapshot. A
+  /// photo in several albums is named for the first; one in none is in the
+  /// Camera Roll, which is every photo.
+  private static var albumOf: [String: String] = [:]
   private static let lock = NSLock()
 
   static func status() -> String {
@@ -617,6 +622,14 @@ enum PhonePhotoList {
                                       PHAssetMediaType.image.rawValue, PHAssetMediaType.video.rawValue)
       options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: true)]
       snapshot = PHAsset.fetchAssets(with: options)
+      albumOf = [:]
+      PHAssetCollection.fetchAssetCollections(with: .album, subtype: .any, options: nil)
+        .enumerateObjects { album, _, _ in
+          let title = (album.localizedTitle ?? "Album").replacingOccurrences(of: "/", with: "_")
+          PHAsset.fetchAssets(in: album, options: nil).enumerateObjects { asset, _, _ in
+            if albumOf[asset.localIdentifier] == nil { albumOf[asset.localIdentifier] = title }
+          }
+        }
     }
     guard let assets = snapshot, offset < assets.count else { return [] }
     let end = min(assets.count, offset + limit)
@@ -633,7 +646,7 @@ enum PhonePhotoList {
         "modified": modified,
         "taken": max(Int64(1), taken),
         "contentType": resource.flatMap { UTType($0.uniformTypeIdentifier)?.preferredMIMEType } ?? fallback,
-        "folder": "",
+        "folder": albumOf[asset.localIdentifier] ?? "Camera Roll",
       ]
     }
   }

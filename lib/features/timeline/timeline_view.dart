@@ -108,7 +108,7 @@ class _TimelineViewState extends State<TimelineView> {
     if (!hasGrid) widget.tracker.clear();
     return SliverMainAxisGroup(
       slivers: [
-        if (c.target is NotBackedUpTarget)
+        if (c.target is! TimelineTarget && c.phoneView.files.isNotEmpty)
           SliverToBoxAdapter(child: NotBackedUpBanner(controller: c)),
         if (derived.groups.isNotEmpty)
           SliverToBoxAdapter(

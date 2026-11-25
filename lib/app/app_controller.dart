@@ -17,6 +17,7 @@ import '../features/phone/phone_choice.dart';
 import '../features/phone/phone_library.dart';
 import '../features/phone/phone_source.dart';
 import '../features/phone/phone_timeline.dart';
+import '../features/phone/phone_view.dart';
 import '../core/storage/local_cache.dart';
 import '../models.dart';
 import '../features/files/library_operations.dart';
@@ -127,12 +128,17 @@ class AppController extends ChangeNotifier implements StatusSink {
     }
   }
 
-  /// The phone's overlay for the view on screen: the Timeline lays the phone's
-  /// photos in with the cloud's, and is the only view that does.
-  PhoneTimeline get _overlay => target is TimelineTarget ? phone : _noPhone;
+  /// The phone's photos that belong in the view on screen: all of them in the
+  /// Timeline, an album's own in that album, and none anywhere else.
+  PhoneView get phoneView => switch (target) {
+    TimelineTarget() => phone.all,
+    SmartAlbumTarget(:final path) => phone.album(path.isEmpty ? '' : path.last),
+    PhoneAlbumTarget(:final name) => phone.album(name),
+    _ => _noPhone.all,
+  };
 
-  /// Shows the photos only on the phone as an album.
-  Future<void> openNotBackedUp() => open(const NotBackedUpTarget());
+  /// Shows an album that is only on the phone.
+  Future<void> openPhoneAlbum(String name) => open(PhoneAlbumTarget(name));
 
   /// A backup put files on the server, so what Drive, the Timeline and the
   /// albums show is out of date.
@@ -187,7 +193,7 @@ class AppController extends ChangeNotifier implements StatusSink {
 
   /// What the Timeline lists: the cloud's photos with the phone's laid in.
   List<CloudFile> get timelineItems =>
-      target is NotBackedUpTarget ? phone.files : _overlay.items(items);
+      target is PhoneAlbumTarget ? phoneView.files : phoneView.items(items);
   bool get loading => _browser.loading;
   bool get loadingMore => _browser.loadingMore;
   @visibleForTesting
@@ -216,7 +222,11 @@ class AppController extends ChangeNotifier implements StatusSink {
   bool get loadingPeople => _people.loading;
   bool? get peopleAvailable => _people.available;
   String? get peopleError => _people.error;
-  List<TimelineDay> get indexedDays => _overlay.days(_browser.indexedDays);
+  List<TimelineDay> get indexedDays => phoneView.days(
+    // An album only on the phone has no days on the server, and what the last
+    // view loaded is not its own.
+    target is PhoneAlbumTarget ? const [] : _browser.indexedDays,
+  );
   List<CloudAlbum> get nativeAlbums => _albums.server;
   String? get nativeAlbumError => _albums.serverError;
   String? get catalogueError => _albums.error;
@@ -585,7 +595,7 @@ class AppController extends ChangeNotifier implements StatusSink {
   }) => _browser.checkForChanges(changedFileIds: changedFileIds, force: force);
   void applyChanges() => _browser.applyChanges();
   void ensureDays(Iterable<int> days) => _browser.ensureDays(days);
-  bool dayLoaded(int day) => _overlay.dayLoaded(day, _browser.dayLoaded);
+  bool dayLoaded(int day) => phoneView.dayLoaded(day, _browser.dayLoaded);
   bool dayNeedsRefresh(int day) => _browser.dayNeedsRefresh(day);
   ({int loaded, int stale}) get dayLoadState => _browser.dayLoadState;
 

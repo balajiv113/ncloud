@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ncloud/features/backup/model/backup_state.dart';
+import 'package:ncloud/features/phone/phone_view.dart';
 import 'package:ncloud/features/albums/album_entries.dart';
 import 'package:ncloud/app/shell/library_view.dart';
 import 'package:ncloud/models.dart';
@@ -143,27 +144,29 @@ void main() {
   });
 
   group('photos only on the phone', () {
-    final phonePhotos = [
-      CloudFile(
-        path: [CloudFile.phoneRoot, 'a'],
-        name: 'a.jpg',
-        isDirectory: false,
-        contentType: 'image/jpeg',
-        modified: DateTime(2025, 3),
-        onPhone: const OnPhone('a', BackupState.leftOut),
-      ),
-      CloudFile(
-        path: [CloudFile.phoneRoot, 'b'],
-        name: 'b.jpg',
-        isDirectory: false,
-        contentType: 'image/jpeg',
-        modified: DateTime(2025, 5),
-        onPhone: const OnPhone('b', BackupState.waiting),
-      ),
-    ];
+    CloudFile onPhone(String id, String album, DateTime when) => CloudFile(
+      path: [CloudFile.phoneRoot, id],
+      name: '$id.jpg',
+      isDirectory: false,
+      contentType: 'image/jpeg',
+      modified: when,
+      taken: when,
+      captureDay: 1,
+      onPhone: OnPhone(id, BackupState.waiting, album),
+    );
 
-    List<AlbumEntry> withPhone({
-      List<CloudFile>? notBackedUp,
+    Map<String, PhoneView> phoneAlbums(Map<String, List<CloudFile>> byName) => {
+      for (final e in byName.entries) e.key: PhoneView(e.value),
+    };
+
+    final camera = [
+      onPhone('a', 'Camera', DateTime(2025, 3)),
+      onPhone('b', 'Camera', DateTime(2025, 5)),
+    ];
+    final whatsapp = [onPhone('w', 'WhatsApp Images', DateTime(2025, 4))];
+
+    List<AlbumEntry> withPhone(
+      Map<String, List<CloudFile>> byName, {
       String query = '',
       LibrarySort sort = LibrarySort.name,
     }) => albumEntries(
@@ -173,39 +176,72 @@ void main() {
       root: ['Photos'],
       query: query,
       sort: sort,
-      notBackedUp: notBackedUp ?? phonePhotos,
+      phoneAlbums: phoneAlbums(byName),
     );
 
-    test('make an album that comes first, whatever the sort', () {
-      for (final sort in LibrarySort.values) {
-        final first = withPhone(sort: sort).first;
-        expect(first.kind, AlbumKind.phone);
-        expect(first.name, 'Not backed up');
-        expect(first.count, '2 photos');
-        expect(first.kindLabel, 'Only on this phone');
-        expect(first.cover!.onPhone, isNotNull);
-        expect(first.modified, DateTime(2025, 5));
-      }
-    });
-
-    test('are left out when there are none', () {
+    test('mark the album the backup made from the same phone album', () {
+      // "Beach" is one of the Smart albums above.
+      final entries = withPhone({
+        'Beach': [onPhone('a', 'Beach', DateTime(2025, 3))],
+      });
+      final beach = entries.singleWhere((e) => e.name == 'Beach');
+      expect(beach.kind, AlbumKind.smart, reason: 'it is the same album');
+      expect(beach.notBackedUp, 1);
+      expect(beach.notBackedUpLabel, '1 not backed up');
+      expect(entries.where((e) => e.kind == AlbumKind.phone), isEmpty);
       expect(
-        withPhone(notBackedUp: const []).any((e) => e.kind == AlbumKind.phone),
-        isFalse,
+        entries
+            .where((e) => e.name != 'Beach')
+            .every((e) => e.notBackedUp == 0),
+        isTrue,
       );
     });
 
-    test('follow the search, and name one photo in the singular', () {
-      expect(withPhone(query: 'zzz'), isEmpty);
-      expect(withPhone(query: 'not back').single.kind, AlbumKind.phone);
-      expect(
-        withPhone(notBackedUp: [phonePhotos.first]).first.count,
-        '1 photo',
-      );
+    test('match the name whatever its case', () {
+      final entries = withPhone({
+        'beach': [onPhone('a', 'beach', DateTime(2025, 3))],
+      });
+      expect(entries.singleWhere((e) => e.name == 'Beach').notBackedUp, 1);
+      expect(entries.where((e) => e.kind == AlbumKind.phone), isEmpty);
     });
 
-    test('have a key of their own', () {
-      expect(withPhone().first.key, 'phone|');
+    test('make an album of their own when the cloud has none', () {
+      final entries = withPhone({'WhatsApp Images': whatsapp});
+      final phone = entries.singleWhere((e) => e.kind == AlbumKind.phone);
+      expect(phone.name, 'WhatsApp Images');
+      expect(phone.count, '1 photo');
+      expect(phone.notBackedUp, 1);
+      expect(phone.kindLabel, 'Only on this phone');
+      expect(phone.cover!.onPhone, isNotNull);
+      expect(phone.key, 'phone|WhatsApp Images');
+    });
+
+    test('count the photos in an album that is only on the phone', () {
+      final phone = withPhone({
+        'Camera': camera,
+      }).singleWhere((e) => e.kind == AlbumKind.phone);
+      expect(phone.count, '2 photos');
+      expect(phone.notBackedUpLabel, '2 not backed up');
+      expect(phone.modified, DateTime(2025, 5));
+    });
+
+    test('leave the other albums unmarked, and add nothing without any', () {
+      final plain = withPhone(const {});
+      expect(
+        plain.every((e) => e.notBackedUp == 0 && e.notBackedUpLabel == null),
+        isTrue,
+      );
+      expect(names(plain), names(list(sort: LibrarySort.name)));
+    });
+
+    test('follow the search and the sort like any album', () {
+      expect(
+        withPhone({'WhatsApp Images': whatsapp}, query: 'whats').single.kind,
+        AlbumKind.phone,
+      );
+      expect(withPhone({'WhatsApp Images': whatsapp}, query: 'zzz'), isEmpty);
+      final sorted = withPhone({'Aaa Phone': whatsapp}, sort: LibrarySort.name);
+      expect(sorted.first.name, 'Aaa');
     });
   });
 }

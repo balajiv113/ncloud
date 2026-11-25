@@ -67,7 +67,7 @@ class AlbumHomeSlivers extends StatelessWidget {
         root: controller.photoRoot,
         query: query,
         sort: sort,
-        notBackedUp: controller.phone.files,
+        phoneAlbums: controller.phone.albums,
       ),
     ).home(showPeople: showPeople),
   );
@@ -94,7 +94,7 @@ class _AlbumSections {
     AlbumKind.smart => Icons.auto_awesome_outlined,
     AlbumKind.shared => Icons.folder_shared_outlined,
     AlbumKind.server => Icons.photo_album_outlined,
-    AlbumKind.phone => Icons.cloud_off_outlined,
+    AlbumKind.phone => Icons.smartphone_outlined,
   };
 
   List<Widget> _peopleSlivers({bool expanded = false}) {
@@ -281,6 +281,47 @@ class _AlbumSections {
               : PhoneTile(file: album.cover!, thumbnails: c.phone.thumbnails!),
         );
 
+  /// A mark on a cover when some of the album's photos are only on the phone, in
+  /// the colour that means "not backed up" everywhere else.
+  Widget _notBackedUpBadge(AlbumEntry album) {
+    if (album.notBackedUp == 0) return const SizedBox.shrink();
+    final colors = Theme.of(context).colorScheme;
+    return Positioned(
+      right: 8,
+      top: 8,
+      child: ExcludeSemantics(
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: colors.tertiaryContainer,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.cloud_off_outlined,
+                  size: 13,
+                  color: colors.onTertiaryContainer,
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  '${album.notBackedUp}',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: colors.onTertiaryContainer,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   /// Small icon on a cover that tells Smart and Shared albums apart; server
   /// albums are the ordinary case and carry none.
   Widget _albumBadge(AlbumEntry album) {
@@ -317,7 +358,11 @@ class _AlbumSections {
             width: 144,
             child: Semantics(
               button: true,
-              label: [album.name, album.kindLabel].nonNulls.join(', '),
+              label: [
+                album.name,
+                album.kindLabel,
+                album.notBackedUpLabel,
+              ].nonNulls.join(', '),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(20),
                 child: Stack(
@@ -351,6 +396,7 @@ class _AlbumSections {
                       ),
                     ),
                     _albumBadge(album),
+                    _notBackedUpBadge(album),
                     Material(
                       color: Colors.transparent,
                       child: InkWell(onTap: () => actions.openAlbum(album)),
@@ -389,6 +435,7 @@ class _AlbumSections {
                 album.name,
                 album.kindLabel,
                 album.count,
+                album.notBackedUpLabel,
               ].nonNulls.where((part) => part.isNotEmpty).join(', '),
               child: InkWell(
                 borderRadius: BorderRadius.circular(14),
@@ -403,7 +450,11 @@ class _AlbumSections {
                         borderRadius: BorderRadius.circular(14),
                         child: Stack(
                           fit: StackFit.expand,
-                          children: [_albumArtwork(album), _albumBadge(album)],
+                          children: [
+                            _albumArtwork(album),
+                            _albumBadge(album),
+                            _notBackedUpBadge(album),
+                          ],
                         ),
                       ),
                     ),
@@ -430,6 +481,15 @@ class _AlbumSections {
                       ),
                     if (album.count.isNotEmpty)
                       Text(album.count, style: const TextStyle(fontSize: 11)),
+                    if (album.notBackedUpLabel case final label?)
+                      Text(
+                        label,
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: Theme.of(context).colorScheme.tertiary,
+                        ),
+                      ),
                   ],
                 ),
               ),

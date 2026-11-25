@@ -15,8 +15,19 @@ import 'package:ncloud/features/phone/phone_timeline.dart';
 import 'package:ncloud/features/timeline/timeline_sections.dart';
 import 'package:ncloud/models.dart';
 
-PhonePhoto photo(String id, DateTime taken, {bool video = false}) =>
-    PhonePhoto(id: id, name: '$id.jpg', size: 10, taken: taken, isVideo: video);
+PhonePhoto photo(
+  String id,
+  DateTime taken, {
+  bool video = false,
+  String album = 'Camera',
+}) => PhonePhoto(
+  id: id,
+  name: '$id.jpg',
+  size: 10,
+  taken: taken,
+  isVideo: video,
+  album: album,
+);
 
 class _Source implements PhoneSource {
   _Source(this.all);
@@ -87,6 +98,46 @@ void main() {
     ]);
   });
 
+  test('groups the photos by the album the phone keeps them in', () async {
+    final phone = timeline(
+      _Source([
+        photo('a', may1),
+        photo('b', may3, album: 'Screenshots'),
+        photo('c', may3, album: 'camera'),
+        photo('done', may1, album: 'Screenshots'),
+      ]),
+      {'done': BackupState.backedUp},
+    );
+    await phone.load();
+    // One album, named as its newest photo has it.
+    expect(phone.albums.keys.toSet(), {'camera', 'Screenshots'});
+    expect(phone.album('Camera').files.map((f) => f.onPhone!.id), ['c', 'a']);
+    expect(
+      phone.album('CAMERA').files,
+      hasLength(2),
+      reason: 'whatever the case',
+    );
+    expect(phone.album('Screenshots').files.single.onPhone!.id, 'b');
+    expect(phone.album('Nothing').files, isEmpty);
+    expect(phone.album('Screenshots').counts, {BackupState.leftOut: 1});
+  });
+
+  test('an album view lays in only its own photos and days', () async {
+    final phone = timeline(
+      _Source([photo('a', may1), photo('b', may3, album: 'Screenshots')]),
+      {},
+    );
+    await phone.load();
+    final cameraDays = phone.album('Camera').days([]);
+    expect(cameraDays.map((d) => d.id), [dayOf(2025, 5, 1)]);
+    final all = phone.all.days([]);
+    expect(all.map((d) => d.id), [dayOf(2025, 5, 3), dayOf(2025, 5, 1)]);
+    expect(phone.album('Camera').items([cloud('c', 1)]).map((f) => f.name), [
+      'c',
+      'a.jpg',
+    ]);
+  });
+
   test('a phone photo is a media file with no place in the cloud', () async {
     final phone = timeline(_Source([photo('a', may3, video: true)]), {});
     await phone.load();
@@ -124,9 +175,9 @@ void main() {
     final files = [cloud('a', 5)];
     final days = [const TimelineDay(5, 1)];
     expect(await phone.load(), isFalse);
-    expect(identical(phone.items(files), files), isTrue);
-    expect(identical(phone.days(days), days), isTrue);
-    expect(phone.dayLoaded(9, (_) => false), isFalse);
+    expect(identical(phone.all.items(files), files), isTrue);
+    expect(identical(phone.all.days(days), days), isTrue);
+    expect(phone.all.dayLoaded(9, (_) => false), isFalse);
     expect(phone.thumbnails, isNull);
   });
 
@@ -142,10 +193,10 @@ void main() {
 
     test('lists both, and keeps the same list while nothing changes', () {
       final files = [cloud('c', dayOf(2025, 5, 1))];
-      final merged = phone.items(files);
+      final merged = phone.all.items(files);
       expect(merged.map((f) => f.name), ['c', 'p3.jpg', 'p1.jpg', 'p2.jpg']);
-      expect(identical(phone.items(files), merged), isTrue);
-      expect(identical(phone.items([...files]), merged), isFalse);
+      expect(identical(phone.all.items(files), merged), isTrue);
+      expect(identical(phone.all.items([...files]), merged), isFalse);
     });
 
     test('adds the phone to each day and gives a phone-only day its own', () {
@@ -154,7 +205,7 @@ void main() {
         TimelineDay(dayOf(2025, 4, 28), 2),
       ];
       // May 1 has no cloud photos; May 3 has four.
-      final merged = phone.days(cloudDays);
+      final merged = phone.all.days(cloudDays);
       expect(
         [for (final d in merged) (d.id, d.count)],
         [
@@ -163,16 +214,16 @@ void main() {
           (dayOf(2025, 4, 28), 2),
         ],
       );
-      expect(identical(phone.days(cloudDays), merged), isTrue);
+      expect(identical(phone.all.days(cloudDays), merged), isTrue);
     });
 
     test(
       'a day only the phone has is whole, a cloud day is up to the cloud',
       () {
-        phone.days([TimelineDay(dayOf(2025, 5, 3), 4)]);
-        expect(phone.dayLoaded(dayOf(2025, 5, 1), (_) => false), isTrue);
-        expect(phone.dayLoaded(dayOf(2025, 5, 3), (_) => false), isFalse);
-        expect(phone.dayLoaded(dayOf(2025, 5, 3), (_) => true), isTrue);
+        phone.all.days([TimelineDay(dayOf(2025, 5, 3), 4)]);
+        expect(phone.all.dayLoaded(dayOf(2025, 5, 1), (_) => false), isTrue);
+        expect(phone.all.dayLoaded(dayOf(2025, 5, 3), (_) => false), isFalse);
+        expect(phone.all.dayLoaded(dayOf(2025, 5, 3), (_) => true), isTrue);
       },
     );
 
@@ -186,9 +237,9 @@ void main() {
         cloud('c2', dayOf(2025, 4, 28)),
       ];
       final sections = buildTimelineSections(
-        media: phone.items(files),
-        indexedDays: phone.days(cloudDays),
-        dayLoaded: (day) => phone.dayLoaded(day, (_) => true),
+        media: phone.all.items(files),
+        indexedDays: phone.all.days(cloudDays),
+        dayLoaded: (day) => phone.all.dayLoaded(day, (_) => true),
         dayNeedsRefresh: (_) => false,
         labelFor: (date) => '${date!.month}/${date.day}',
       );

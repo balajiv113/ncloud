@@ -61,12 +61,13 @@ class _Source implements PhoneSource {
   Stream<void> get changes => const Stream.empty();
 }
 
-PhonePhoto photo(String id, int day) => PhonePhoto(
+PhonePhoto photo(String id, int day, {String album = 'Camera'}) => PhonePhoto(
   id: id,
   name: '$id.jpg',
   size: 10,
   taken: DateTime(2025, 5, day, 12),
   isVideo: false,
+  album: album,
 );
 
 FolderPair get pair => FolderPair(
@@ -284,19 +285,37 @@ void main() {
       expect(notified, 1, reason: 'nothing changed');
     });
 
-    test('the Not backed up album shows the phone photos alone', () async {
+    test('an album only on the phone shows its photos alone', () async {
       await controller.refreshPhone();
-      await controller.openNotBackedUp();
+      await controller.openPhoneAlbum('Camera');
       expect(controller.destination, Destination.albums);
-      expect(controller.directory, ['Not backed up']);
+      expect(controller.directory, ['Camera']);
       expect(controller.timelineItems.map((f) => f.name), ['a.jpg']);
-      expect(controller.indexedDays, isEmpty);
+      // Its own days, not whatever the last view loaded.
+      expect(controller.indexedDays.map((d) => d.count), [1]);
       expect(
         controller.loading,
         isFalse,
         reason: 'nothing to load from the server',
       );
     });
+
+    test(
+      'a Smart album gets the phone photos of the same album laid in',
+      () async {
+        await controller.refreshPhone();
+        controller.target = SmartAlbumTarget(const ['Photos', 'Camera']);
+        expect(controller.timelineItems.map((f) => f.name), ['a.jpg']);
+        controller.target = SmartAlbumTarget(const ['Photos', 'camera']);
+        expect(
+          controller.timelineItems.map((f) => f.name),
+          ['a.jpg'],
+          reason: 'the name matches whatever its case',
+        );
+        controller.target = SmartAlbumTarget(const ['Photos', 'Trips']);
+        expect(controller.timelineItems, isEmpty);
+      },
+    );
 
     test('does not read the phone with nobody signed in', () async {
       controller.account = null;

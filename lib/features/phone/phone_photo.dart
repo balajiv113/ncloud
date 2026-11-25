@@ -9,6 +9,7 @@ class PhonePhoto {
     required this.size,
     required this.taken,
     required this.isVideo,
+    required this.album,
   });
 
   factory PhonePhoto.fromLibrary(LibraryItem item) => PhonePhoto(
@@ -17,7 +18,14 @@ class PhonePhoto {
     size: item.size,
     taken: DateTime.fromMillisecondsSinceEpoch(item.taken),
     isVideo: item.contentType.startsWith('video/'),
+    album: albumOf(item.folder),
   );
+
+  /// The name of the album a phone folder stands for: `DCIM/Camera` is `Camera`.
+  /// Photos in no folder at all are in `Phone`.
+  static String albumOf(String folder) => folder
+      .split('/')
+      .lastWhere((part) => part.isNotEmpty, orElse: () => 'Phone');
 
   /// The phone's own id for it.
   final String id;
@@ -27,6 +35,9 @@ class PhonePhoto {
   final int size;
   final DateTime taken;
   final bool isVideo;
+
+  /// The album the phone keeps it in, such as `Camera` or `Screenshots`.
+  final String album;
 
   /// What a backup that has no phone ids recognises it by, or null when the size
   /// is not known and a name alone would match the wrong photo.
