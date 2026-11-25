@@ -63,6 +63,19 @@ class FolderAccessPlugin : FlutterPlugin, ActivityAware, PluginRegistry.Activity
         context = binding.applicationContext
         channel = MethodChannel(binding.binaryMessenger, "app.ncloud/folder_sync")
         channel.setMethodCallHandler(this)
+        for (uri in listOf(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, MediaStore.Video.Media.EXTERNAL_CONTENT_URI)) {
+            context.contentResolver.registerContentObserver(uri, true, libraryObserver)
+        }
+    }
+
+    // A burst of changes, such as a backup restoring or a camera roll sync, is
+    // told once, a moment after it settles.
+    private val libraryChanged = Runnable { channel.invokeMethod("mediaChanged", null) }
+    private val libraryObserver = object : android.database.ContentObserver(Handler(Looper.getMainLooper())) {
+        override fun onChange(selfChange: Boolean) {
+            main.removeCallbacks(libraryChanged)
+            main.postDelayed(libraryChanged, 1000)
+        }
     }
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
@@ -616,6 +629,8 @@ class FolderAccessPlugin : FlutterPlugin, ActivityAware, PluginRegistry.Activity
     override fun onDetachedFromActivityForConfigChanges() = onDetachedFromActivity()
     override fun onReattachedToActivityForConfigChanges(binding: ActivityPluginBinding) = onAttachedToActivity(binding)
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
+        context.contentResolver.unregisterContentObserver(libraryObserver)
+        main.removeCallbacks(libraryChanged)
         channel.setMethodCallHandler(null)
         // Retain locks until any in-flight SAF write has finished, even after engine teardown.
         worker.execute {

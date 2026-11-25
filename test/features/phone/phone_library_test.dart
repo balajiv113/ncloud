@@ -55,6 +55,8 @@ class _Source implements PhoneSource {
   Future<Uint8List?> thumbnail(String id, int size) async => null;
   @override
   Future<File> original(String id) async => throw UnimplementedError();
+  @override
+  Stream<void> get changes => const Stream.empty();
 }
 
 void main() {

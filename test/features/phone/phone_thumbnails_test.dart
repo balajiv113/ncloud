@@ -29,6 +29,8 @@ class _Source implements PhoneSource {
 
   @override
   Future<File> original(String id) async => throw UnimplementedError();
+  @override
+  Stream<void> get changes => const Stream.empty();
 }
 
 void main() {

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -5,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import '../../models.dart';
 import '../backup/platform/device_library.dart';
 import '../backup/model/backup_state.dart';
+import 'phone_choice.dart';
 import 'phone_library.dart';
 import 'phone_photo.dart';
 import 'phone_source.dart';
@@ -17,16 +19,27 @@ import 'phone_thumbnails.dart';
 /// own lists, and the cache behind them, untouched. With no phone to read it
 /// passes the cloud's lists straight through.
 class PhoneTimeline {
-  PhoneTimeline({required PhoneLibrary library, required PhoneSource source})
-    : _library = library,
-      thumbnails = PhoneThumbnails(source),
-      _source = source;
+  PhoneTimeline({
+    required PhoneLibrary library,
+    required PhoneSource source,
+    required PhoneChoiceStore choices,
+  }) : _library = library,
+       thumbnails = PhoneThumbnails(source),
+       _source = source,
+       _choices = choices;
 
   /// Shows nothing and reads nothing, for a platform with no phone library.
-  PhoneTimeline.none() : _library = null, _source = null, thumbnails = null;
+  PhoneTimeline.none()
+    : _library = null,
+      _source = null,
+      _choices = null,
+      thumbnails = null;
 
   final PhoneLibrary? _library;
   final PhoneSource? _source;
+  final PhoneChoiceStore? _choices;
+  StreamSubscription<void>? _watching;
+  Timer? _debounce;
 
   /// Thumbnails of the phone's photos, or null with no phone to read.
   final PhoneThumbnails? thumbnails;
@@ -49,13 +62,20 @@ class PhoneTimeline {
   /// The photos on the phone that are not backed up, newest first.
   List<CloudFile> get files => _files;
 
+  /// How many of the photos shown are in each state.
+  Map<BackupState, int> get counts {
+    final counts = <BackupState, int>{};
+    for (final file in _files) {
+      counts.update(file.onPhone!.state, (n) => n + 1, ifAbsent: () => 1);
+    }
+    return counts;
+  }
+
   /// Reads the phone again. Returns whether anything shown changed.
   Future<bool> load() async {
     final library = _library;
     if (library == null) return false;
-    if (await _source!.permission() == LibraryPermission.denied) {
-      return _replace(const []);
-    }
+    if (!await _allowed()) return _replace(const []);
     final entries = await library.entries();
     return _replace([
       for (final entry in entries)
@@ -68,6 +88,46 @@ class PhoneTimeline {
     for (final file in files)
       '${file.onPhone!.id}|${file.onPhone!.state.index}',
   ];
+
+  /// Whether the phone's photos may be read now: the user has not turned them
+  /// off, and the phone allows it. The first time, the user is asked.
+  Future<bool> _allowed() async {
+    switch (await _choices!.read()) {
+      case PhoneChoice.hide:
+        return false;
+      case PhoneChoice.ask:
+        return setShown(true);
+      case PhoneChoice.show:
+        return await _source!.permission() != LibraryPermission.denied;
+    }
+  }
+
+  /// Turns the phone's photos on or off. Turning them on asks the phone for
+  /// access when it has not been given. Returns whether they are now on.
+  Future<bool> setShown(bool shown) async {
+    final choices = _choices;
+    if (choices == null) return false;
+    final on = shown && await _source!.request() != LibraryPermission.denied;
+    await choices.write(on ? PhoneChoice.show : PhoneChoice.hide);
+    return on;
+  }
+
+  /// Whether the phone's photos are turned on.
+  Future<bool> isShown() async => await _choices?.read() == PhoneChoice.show;
+
+  /// Calls [onChange] when the phone's library has changed and settled, so a new
+  /// photo appears and a backed-up one goes without a refresh.
+  void watch(VoidCallback onChange) {
+    _watching ??= _source?.changes.listen((_) {
+      _debounce?.cancel();
+      _debounce = Timer(const Duration(seconds: 2), onChange);
+    });
+  }
+
+  void dispose() {
+    _debounce?.cancel();
+    unawaited(_watching?.cancel());
+  }
 
   bool _replace(List<PhoneEntry> entries) {
     final files = [for (final entry in entries) _file(entry)];

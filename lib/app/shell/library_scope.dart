@@ -48,6 +48,8 @@ class LibraryScope {
         ? 'Your loaded items are kept. Pull to refresh and retry.'
         : c.hasMore
         ? 'More dates are available. Scroll to continue browsing.'
+        : c.target is NotBackedUpTarget
+        ? 'Everything on this phone is backed up.'
         : c.destination == Destination.offline
         ? 'Save originals from a file menu or video player to access them offline.'
         : c.destination == Destination.sharedFolder

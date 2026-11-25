@@ -90,6 +90,23 @@ final class DriveTarget extends BrowseTarget {
   BrowseTarget inFolder(List<String> folder) => DriveTarget(folder);
 }
 
+/// The photos on the phone that no backup has taken to the cloud. It is shown
+/// as an album of this name, and has nothing to load from the server.
+final class NotBackedUpTarget extends BrowseTarget {
+  const NotBackedUpTarget();
+
+  static const title = 'Not backed up';
+
+  @override
+  List<String> get path => const [title];
+
+  @override
+  Destination get destination => Destination.albums;
+
+  @override
+  String get cacheKey => 'not-backed-up';
+}
+
 /// An album built from a folder of your files.
 final class SmartAlbumTarget extends BrowseTarget {
   SmartAlbumTarget(List<String> path) : path = List.unmodifiable(path);

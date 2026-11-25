@@ -230,6 +230,8 @@ class LibraryBrowser {
         await host.loadCatalogue(refresh: refresh);
         return;
       }
+      // The phone's photos are not on the server, so there is nothing to load.
+      if (run.view is NotBackedUpTarget) return;
       await _restoreStore(session);
       if (!_isCurrent(run)) return;
       final cached = await _restoreListing(run, keepItems: keepItems);

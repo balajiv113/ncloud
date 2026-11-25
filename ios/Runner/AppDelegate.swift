@@ -44,6 +44,9 @@ import workmanager_apple
     // Copies off the phone run apart from everything else and from each other, so
     // one very large video does not hold up the small files behind it.
     private let copyQueue = DispatchQueue(label: "app.ncloud.folder-copy", attributes: .concurrent)
+    private lazy var photoWatcher = PhotoLibraryWatcher { [weak self] in
+      DispatchQueue.main.async { self?.channel.invokeMethod("mediaChanged", arguments: nil) }
+    }
     private var pickerResult: FlutterResult?
     private let manager = FileManager.default
     private let albums = AlbumBackupService()
@@ -96,11 +99,15 @@ import workmanager_apple
       // so the app shows the phone's photos the same on both.
       switch call.method {
       case "mediaAccess":
+        photoWatcher.start()
         result(["status": PhonePhotoList.status()])
         return
       case "mediaRequest":
         PhonePhotoList.request { status in
-          DispatchQueue.main.async { result(["status": status]) }
+          DispatchQueue.main.async {
+            self.photoWatcher.start()
+            result(["status": status])
+          }
         }
         return
       case "mediaThumbnail":
