@@ -11,13 +11,12 @@ import 'phone_library.dart';
 import 'phone_photo.dart';
 import 'phone_source.dart';
 import 'phone_thumbnails.dart';
+import 'phone_view.dart';
 
-/// The phone's photos that the cloud does not have, laid in with the cloud's
-/// own in the Timeline.
-///
-/// It is an overlay: it hands the Timeline merged lists and leaves the cloud's
-/// own lists, and the cache behind them, untouched. With no phone to read it
-/// passes the cloud's lists straight through.
+/// The phone's photos that the cloud does not have: read from the phone, kept
+/// as a view of all of them and one for each album, and handed to the Timeline
+/// and the albums to lay in with the cloud's own. With no phone to read it has
+/// nothing to show.
 class PhoneTimeline {
   PhoneTimeline({
     required PhoneLibrary library,
@@ -48,28 +47,25 @@ class PhoneTimeline {
   /// the caller removes.
   Future<File> original(String id) => _source!.original(id);
 
-  List<CloudFile> _files = const [];
-  Map<int, int> _perDay = const {};
+  PhoneView _all = PhoneView.none();
+  Map<String, PhoneView> _albums = const {};
+  Map<String, String> _albumNames = const {};
 
-  // The merged lists are kept while their inputs are the same lists, so the
-  // screens that compare lists by identity see no change.
-  (List<CloudFile>, List<CloudFile>)? _mergedFiles;
-  List<CloudFile>? _merged;
-  (List<TimelineDay>, Map<int, int>)? _mergedDaysFrom;
-  List<TimelineDay>? _mergedDays;
-  Set<int> _cloudDays = const {};
+  /// Every photo that is only on the phone, for the Timeline.
+  PhoneView get all => _all;
 
-  /// The photos on the phone that are not backed up, newest first.
-  List<CloudFile> get files => _files;
+  /// The photos of the album called [name] on the phone, whatever its case.
+  PhoneView album(String name) =>
+      _albums[name.toLowerCase()] ?? PhoneView.none();
 
-  /// How many of the photos shown are in each state.
-  Map<BackupState, int> get counts {
-    final counts = <BackupState, int>{};
-    for (final file in _files) {
-      counts.update(file.onPhone!.state, (n) => n + 1, ifAbsent: () => 1);
-    }
-    return counts;
-  }
+  /// The phone's albums that have photos not backed up, by the name the phone
+  /// gives them.
+  Map<String, PhoneView> get albums => {
+    for (final entry in _albums.entries) _albumNames[entry.key]!: entry.value,
+  };
+
+  /// The photos that are only on the phone, newest first.
+  List<CloudFile> get files => _all.files;
 
   /// Reads the phone again. Returns whether anything shown changed.
   Future<bool> load() async {
@@ -82,12 +78,6 @@ class PhoneTimeline {
         if (entry.state != BackupState.backedUp) entry,
     ]);
   }
-
-  /// What is shown, by photo and state, to tell whether a reading changed it.
-  static List<String> _signature(Iterable<CloudFile> files) => [
-    for (final file in files)
-      '${file.onPhone!.id}|${file.onPhone!.state.index}',
-  ];
 
   /// Whether the phone's photos may be read now: the user has not turned them
   /// off, and the phone allows it. The first time, the user is asked.
@@ -129,14 +119,27 @@ class PhoneTimeline {
     unawaited(_watching?.cancel());
   }
 
+  /// What is shown, by photo and state, to tell whether a reading changed it.
+  static List<String> _signature(Iterable<CloudFile> files) => [
+    for (final file in files)
+      '${file.onPhone!.id}|${file.onPhone!.state.index}',
+  ];
+
   bool _replace(List<PhoneEntry> entries) {
     final files = [for (final entry in entries) _file(entry)];
-    if (listEquals(_signature(files), _signature(_files))) return false;
-    _files = files;
-    _perDay = {};
+    if (listEquals(_signature(files), _signature(_all.files))) return false;
+    _all = PhoneView(files);
+    final byAlbum = <String, List<CloudFile>>{};
+    _albumNames = {};
     for (final file in files) {
-      _perDay.update(file.captureDay!, (n) => n + 1, ifAbsent: () => 1);
+      final name = file.onPhone!.album;
+      final key = name.toLowerCase();
+      _albumNames.putIfAbsent(key, () => name);
+      byAlbum.putIfAbsent(key, () => []).add(file);
     }
+    _albums = {
+      for (final entry in byAlbum.entries) entry.key: PhoneView(entry.value),
+    };
     thumbnails?.clear();
     return true;
   }
@@ -157,47 +160,7 @@ class PhoneTimeline {
       modified: photo.taken,
       taken: photo.taken,
       captureDay: day.millisecondsSinceEpoch ~/ 86400000,
-      onPhone: OnPhone(photo.id, entry.state),
+      onPhone: OnPhone(photo.id, entry.state, photo.album),
     );
   }
-
-  /// The cloud's [cloud] photos with the phone's laid in by date.
-  List<CloudFile> items(List<CloudFile> cloud) {
-    if (_files.isEmpty) return cloud;
-    final from = _mergedFiles;
-    if (from != null &&
-        identical(from.$1, cloud) &&
-        identical(from.$2, _files)) {
-      return _merged!;
-    }
-    _mergedFiles = (cloud, _files);
-    return _merged = [...cloud, ..._files];
-  }
-
-  /// The cloud's days with the phone's added, so a day that only the phone has
-  /// gets a section of its own and the others count both.
-  List<TimelineDay> days(List<TimelineDay> cloud) {
-    _cloudDays = {for (final day in cloud) day.id};
-    if (_perDay.isEmpty) return cloud;
-    final from = _mergedDaysFrom;
-    if (from != null &&
-        identical(from.$1, cloud) &&
-        identical(from.$2, _perDay)) {
-      return _mergedDays!;
-    }
-    _mergedDaysFrom = (cloud, _perDay);
-    final counts = {for (final day in cloud) day.id: day.count};
-    _perDay.forEach(
-      (id, n) => counts.update(id, (c) => c + n, ifAbsent: () => n),
-    );
-    return _mergedDays = [
-      for (final id in counts.keys.toList()..sort((a, b) => b.compareTo(a)))
-        TimelineDay(id, counts[id]!),
-    ];
-  }
-
-  /// Whether [day] is whole as far as this overlay knows: a day only the phone
-  /// has has nothing to load from the server. Otherwise [cloudLoaded] says.
-  bool dayLoaded(int day, bool Function(int day) cloudLoaded) =>
-      _perDay.containsKey(day) && !_cloudDays.contains(day) || cloudLoaded(day);
 }

@@ -299,12 +299,15 @@ class SmartAlbum {
 }
 
 /// A photo on the phone that the cloud does not have: the phone's own id for it,
-/// and where the backup stands with it.
+/// where the backup stands with it, and the album it is in.
 class OnPhone {
-  const OnPhone(this.id, this.state);
+  const OnPhone(this.id, this.state, this.album);
 
   final String id;
   final BackupState state;
+
+  /// The album the phone keeps it in, such as `Camera` or `Screenshots`.
+  final String album;
 }
 
 class TimelineDay {

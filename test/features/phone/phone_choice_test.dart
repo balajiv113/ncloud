@@ -43,6 +43,7 @@ class _Source implements PhoneSource {
       size: 10,
       taken: DateTime(2025, 5, 1),
       isVideo: false,
+      album: 'Camera',
     ),
   ];
   @override

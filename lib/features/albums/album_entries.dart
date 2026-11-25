@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart' show listEquals;
 
 import '../../models.dart';
 import '../../app/shell/library_view.dart';
+import '../phone/phone_view.dart';
 
 /// Where an album comes from. Server albums are the ordinary case and carry
 /// no mark; Smart and Shared albums are told apart by an icon.
@@ -18,6 +19,7 @@ class AlbumEntry {
     this.modified,
     this.path = const [],
     this.server,
+    this.notBackedUp = 0,
   });
 
   final AlbumKind kind;
@@ -35,8 +37,17 @@ class AlbumEntry {
   /// The server album, for [AlbumKind.server].
   final CloudAlbum? server;
 
+  /// How many of the album's photos are only on the phone. The album is
+  /// highlighted when there are any.
+  final int notBackedUp;
+
+  /// What the highlight says, or null when everything in the album is backed up.
+  String? get notBackedUpLabel =>
+      notBackedUp == 0 ? null : '$notBackedUp not backed up';
+
   String get key => switch (kind) {
     AlbumKind.server => 'server|${server!.reference.join('/')}',
+    AlbumKind.phone => 'phone|$name',
     _ => '${kind.name}|${path.join('/')}',
   };
 
@@ -67,15 +78,22 @@ List<AlbumEntry> albumEntries({
   required List<String> root,
   required String query,
   required LibrarySort sort,
-  List<CloudFile> notBackedUp = const [],
+  Map<String, PhoneView> phoneAlbums = const {},
 }) {
   final needle = query.toLowerCase();
   bool matches(String text) =>
       needle.isEmpty || text.toLowerCase().contains(needle);
+  // The phone's albums are matched to the Smart albums the backup made from
+  // them, by name; those left over are albums that exist only on the phone.
+  final onPhone = {
+    for (final entry in phoneAlbums.entries) entry.key.toLowerCase(): entry,
+  };
   final entries = [
     for (final album in smart)
       if (matches('${album.name} ${album.path.join(' ')}'))
         AlbumEntry(
+          notBackedUp:
+              onPhone.remove(album.name.toLowerCase())?.value.files.length ?? 0,
           kind: AlbumKind.smart,
           name: listEquals(album.path, root) ? 'Photos at root' : album.name,
           subtitle: album.path.length <= root.length + 1
@@ -107,6 +125,20 @@ List<AlbumEntry> albumEntries({
           server: album,
         ),
   ];
+  entries.addAll([
+    for (final MapEntry(key: name, value: view) in onPhone.values)
+      if (matches(name))
+        AlbumEntry(
+          kind: AlbumKind.phone,
+          name: name,
+          count: view.files.length == 1
+              ? '1 photo'
+              : '${view.files.length} photos',
+          cover: view.files.first,
+          modified: _newest(view.files),
+          notBackedUp: view.files.length,
+        ),
+  ]);
   int byName(AlbumEntry a, AlbumEntry b) =>
       a.name.toLowerCase().compareTo(b.name.toLowerCase());
   switch (sort) {
@@ -126,19 +158,5 @@ List<AlbumEntry> albumEntries({
     case LibrarySort.size:
       break;
   }
-  // The photos that are only on the phone come first: they are the ones that
-  // still need something done.
-  return [
-    if (notBackedUp.isNotEmpty && matches('Not backed up'))
-      AlbumEntry(
-        kind: AlbumKind.phone,
-        name: 'Not backed up',
-        count: notBackedUp.length == 1
-            ? '1 photo'
-            : '${notBackedUp.length} photos',
-        cover: notBackedUp.first,
-        modified: _newest(notBackedUp),
-      ),
-    ...entries,
-  ];
+  return entries;
 }

@@ -400,10 +400,15 @@ Built in slices, each of which works on its own:
 4. The viewer for phone photos (`PhoneViewer`), without the actions that need the
    cloud: it swipes among the phone photos, and a video is copied to a temporary
    file (`mediaOriginal`) and played from that. *(Done.)*
-5. A **Not backed up** album (`NotBackedUpTarget`), first in the Albums list,
-   that lists the photos that are waiting, failed or left out, with a count of
-   each and a shortcut to the backup settings. It has no per-photo upload; what
-   gets backed up is decided by the backups. *(Done.)*
+5. **Albums.** Each photo carries the album the phone keeps it in (Android's
+   folder, Photos' album, or *Camera Roll*). In the Albums list, a phone album
+   with photos not backed up is highlighted: the Smart album the backup made from
+   it, matched by name, gets a *N not backed up* mark and shows those photos laid
+   in with the cloud's (`PhoneView` per album); an album the cloud does not have
+   gets a card of its own (`PhoneAlbumTarget`, shown from the phone with nothing
+   to load). Opening either shows a banner with the count in each state and a
+   shortcut to the backup settings. There is no per-photo upload; what gets backed
+   up is decided by the backups. *(Done.)*
 6. Live refresh and the choice. The first time the Timeline opens, the user is
    asked for access to the phone's photos (`PhoneChoice.ask`); yes shows them and
    no hides them, and **Settings → Photos on this phone** turns them on or off
@@ -414,4 +419,5 @@ Built in slices, each of which works on its own:
 
 Not done yet: playing a phone video uses a temporary copy, which can take a while
 for a large one; and there are no filters by reason (waiting, failed, left out)
-inside the album beyond the mark on each photo.
+inside an album beyond the mark on each photo. A phone album is matched to a
+cloud album by name only, so two phone folders with one name share a mark.

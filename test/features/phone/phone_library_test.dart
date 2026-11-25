@@ -24,6 +24,7 @@ PhonePhoto photo(
   size: size,
   taken: DateTime(2025, 1, day),
   isVideo: video,
+  album: 'Camera',
 );
 
 FileMark mark(

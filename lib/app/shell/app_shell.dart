@@ -754,7 +754,7 @@ class _AppShellState extends State<AppShell>
         case AlbumKind.server:
           c.openCloudAlbum(album.server!);
         case AlbumKind.phone:
-          c.openNotBackedUp();
+          c.openPhoneAlbum(album.name);
       }
     },
     openPerson: _openPerson,
