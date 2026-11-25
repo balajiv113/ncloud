@@ -37,7 +37,7 @@ class _PhonePhotosTileState extends State<PhonePhotosTile> {
         ),
       );
     }
-    await c.refreshPhone();
+    await c.refreshPhone(force: true);
   }
 
   @override

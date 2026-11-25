@@ -51,7 +51,7 @@ class AppController extends ChangeNotifier implements StatusSink {
   }) {
     _backup = backupController
       ?..onServerChanged = _backupChangedServer
-      ..onRunEnded = refreshPhone;
+      ..onRunEnded = (() => refreshPhone(force: true));
     _phone = phoneTimeline;
     cache?.onWriteError = (message) {
       if (_disposed || notice == message) return;
@@ -72,7 +72,7 @@ class AppController extends ChangeNotifier implements StatusSink {
   BackupController? _backup;
   BackupController get backup => _backup ??= _createBackup()
     ..onServerChanged = _backupChangedServer
-    ..onRunEnded = refreshPhone;
+    ..onRunEnded = (() => refreshPhone(force: true));
 
   PhoneTimeline? _phone;
 
@@ -95,15 +95,33 @@ class AppController extends ChangeNotifier implements StatusSink {
         },
         marks: backup.marksOf,
       ),
-    )..watch(refreshPhone);
+    )..watch(() => refreshPhone(force: true));
   }
+
+  /// How long what was read from the phone is still good when the screens only
+  /// ask for it again. A change in the library or the end of a backup does not
+  /// wait: those ask with `force`.
+  static const _phoneFresh = Duration(minutes: 1);
+  DateTime? _phoneRead;
+  Future<void>? _phoneReading;
 
   /// Reads the phone again, and redraws if what it shows changed. The phone's
   /// photos are an addition, so a failure to read them leaves the cloud's alone.
-  Future<void> refreshPhone() async {
-    if (account == null) return;
+  /// Reading goes through the whole library and every backup, so it is not
+  /// repeated while it is still fresh, and runs one at a time.
+  Future<void> refreshPhone({bool force = false}) {
+    final read = _phoneRead;
+    final fresh = read != null && DateTime.now().difference(read) < _phoneFresh;
+    if (account == null || (!force && fresh)) return Future.value();
+    return _phoneReading ??= _readPhone().whenComplete(() {
+      _phoneReading = null;
+    });
+  }
+
+  Future<void> _readPhone() async {
     try {
       if (await phone.load() && !_disposed) notifyListeners();
+      _phoneRead = DateTime.now();
     } on Object {
       // Nothing to show from the phone this time.
     }
@@ -128,6 +146,7 @@ class AppController extends ChangeNotifier implements StatusSink {
   BackupController _createBackup() {
     final journal = SyncJournal();
     return BackupController(
+      readAccess: NativeFolderAccess.new,
       client: client,
       account: () => account,
       journal: journal,
