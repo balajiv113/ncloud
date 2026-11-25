@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/services.dart';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -52,6 +53,8 @@ class _Source implements PhoneSource {
   Future<List<PhonePhoto>> photos() async => all;
   @override
   Future<Uint8List?> thumbnail(String id, int size) async => null;
+  @override
+  Future<File> original(String id) async => throw UnimplementedError();
 }
 
 void main() {
@@ -232,4 +235,36 @@ void main() {
       },
     );
   });
+
+  test(
+    'the native source copies a photo as it is to a temporary file',
+    () async {
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      addTearDown(
+        () => messenger.setMockMethodCallHandler(
+          NativeFolderAccess.channel,
+          null,
+        ),
+      );
+      final asked = <Object?>[];
+      messenger.setMockMethodCallHandler(NativeFolderAccess.channel, (
+        call,
+      ) async {
+        asked.add([call.method, call.arguments]);
+        return {
+          'path': '/tmp/original.part',
+          'sha1': 'da39a3ee5e6b4b0d3255bfef95601890afd80709',
+        };
+      });
+      final file = await NativePhoneSource(
+        NativeFolderAccess(),
+      ).original('video:7');
+      expect(file.path, '/tmp/original.part');
+      expect(asked.single, [
+        'mediaOriginal',
+        {'id': 'video:7'},
+      ]);
+    },
+  );
 }

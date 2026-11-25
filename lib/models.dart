@@ -1,3 +1,5 @@
+import 'features/backup/model/backup_state.dart';
+
 Uri normalizeServer(String input) {
   if (RegExp(
     r'/(?:\.|%2e){1,2}(?:/|$)',
@@ -66,6 +68,7 @@ class CloudFile {
     this.etag,
     this.sharing = Sharing.none,
     this.liveId,
+    this.onPhone,
   });
 
   final List<String> path;
@@ -87,6 +90,10 @@ class CloudFile {
   /// Identifies the short video that goes with this photo, when it is a Live
   /// Photo (an iPhone Live Photo or an Android motion photo).
   final String? liveId;
+
+  /// Set when this is a photo on the phone that the cloud does not have, shown
+  /// beside the cloud's photos.
+  final OnPhone? onPhone;
   bool get isLive => liveId != null;
   DateTime? get timelineDate {
     if (captureDay case final day?) {
@@ -99,7 +106,8 @@ class CloudFile {
     return taken ?? modified;
   }
 
-  bool get readOnly => albumReference != null;
+  /// Whether cloud actions such as selecting, favoriting or sharing do not apply.
+  bool get readOnly => albumReference != null || onPhone != null;
 
   Map<String, dynamic> toJson() => {
     'path': path,
@@ -138,6 +146,10 @@ class CloudFile {
     sharing: Sharing.values.byName(json['sharing'] as String? ?? 'none'),
     liveId: json['liveId'] as String?,
   );
+
+  /// Root of the paths of photos that are only on the phone, which have no place
+  /// in the cloud.
+  static const phoneRoot = '\u0001phone';
 
   /// Root of placeholder paths for timeline items whose real file path is
   /// still being looked up; such files are addressed by [id] only.
@@ -284,6 +296,15 @@ class SmartAlbum {
         .map((f) => CloudFile.fromJson((f as Map).cast<String, dynamic>()))
         .toList(),
   );
+}
+
+/// A photo on the phone that the cloud does not have: the phone's own id for it,
+/// and where the backup stands with it.
+class OnPhone {
+  const OnPhone(this.id, this.state);
+
+  final String id;
+  final BackupState state;
 }
 
 class TimelineDay {

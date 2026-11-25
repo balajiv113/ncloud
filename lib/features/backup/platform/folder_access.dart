@@ -215,6 +215,11 @@ class NativeFolderAccess
     return byId.values.toList();
   }
 
+  /// A copy of a photo or video on the phone as it is, in a temporary file the
+  /// caller removes, for looking at or playing it.
+  Future<File> mediaOriginal(String id) async =>
+      _staged(await channel.invokeMethod<Object>('mediaOriginal', {'id': id}));
+
   /// A small picture of a photo or video on the phone, as JPEG bytes, or null if
   /// the phone has none for it.
   Future<Uint8List?> mediaThumbnail(String id, int size) async {

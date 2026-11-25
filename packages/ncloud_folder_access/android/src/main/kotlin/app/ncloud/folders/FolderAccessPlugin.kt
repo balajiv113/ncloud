@@ -128,12 +128,13 @@ class FolderAccessPlugin : FlutterPlugin, ActivityAware, PluginRegistry.Activity
                         main.post { result.error("media_thumbnail", "The photo has no thumbnail.", null) }
                     }
                 }
-                "mediaTransfer" -> (if (call.method == "mediaExport") copiers else worker).execute {
+                "mediaTransfer" -> (if (call.method == "mediaList") worker else copiers).execute {
                     try {
                         val output: Any? = when (call.method) {
                             "mediaList" -> mediaPage(
                                 call.argument<Number>("offset")!!.toInt(),
                                 call.argument<Number>("limit")!!.toInt())
+                            "mediaOriginal" -> mediaOriginal(call.argument<String>("id")!!)
                             else -> mediaExport(
                                 call.argument<String>("id")!!,
                                 call.argument<Number>("size")!!.toLong(),
@@ -435,7 +436,7 @@ class FolderAccessPlugin : FlutterPlugin, ActivityAware, PluginRegistry.Activity
 
     /** A small JPEG of a photo or video, from the system's own thumbnail cache. */
     private fun mediaThumbnail(id: String, size: Int): ByteArray {
-        require(size in 16..1024)
+        require(size in 16..2048)
         val uri = mediaUri(id)
         val resolver = context.contentResolver
         val bitmap = if (Build.VERSION.SDK_INT >= 29) {
@@ -451,6 +452,18 @@ class FolderAccessPlugin : FlutterPlugin, ActivityAware, PluginRegistry.Activity
         return java.io.ByteArrayOutputStream().also {
             bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, it)
         }.toByteArray()
+    }
+
+    /** Copies one photo or video as it is, to look at or play it, without the checks a backup makes. */
+    private fun mediaOriginal(id: String): String {
+        val temp = newStage()
+        try {
+            openMedia(mediaUri(id)).use { input -> copyHashed(input, temp) }
+            return temp.path
+        } catch (error: Exception) {
+            temp.delete()
+            throw error
+        }
     }
 
     private fun mediaUri(id: String): Uri {

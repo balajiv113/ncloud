@@ -18,6 +18,7 @@ import '../engine/backup_preview.dart';
 import '../engine/phone_removal.dart';
 import '../engine/sync_engine.dart';
 import '../engine/sync_errors.dart';
+import '../engine/file_mark.dart';
 import '../engine/sync_runner.dart';
 import '../model/sync_rules.dart';
 import '../platform/sync_background.dart';
@@ -98,6 +99,9 @@ class BackupController extends ChangeNotifier {
   /// Called after a run that uploaded or moved files, so the screens that show
   /// the server's files can reload.
   void Function()? onServerChanged;
+
+  /// Called whenever a run ends, which can change where photos stand.
+  void Function()? onRunEnded;
   bool get busy =>
       activeId != null ||
       _batch != null ||
@@ -551,16 +555,24 @@ class BackupController extends ChangeNotifier {
     if (session == null || syncAccount(session) != pair.account) {
       throw StateError('Sign in to this account to preview its backup.');
     }
-    return SyncRunner(
-      client: client,
-      access: access,
-      journal: journal,
-      runLock: runLock,
-      foreground: () => true,
-      accountKey: () => _accountKey,
-      onChanged: () {},
-    ).preview(session, pair);
+    return _idleRunner().preview(session, pair);
   }
+
+  /// Where each file [pair] covers stands, without doing anything: on the
+  /// server, waiting, or failed.
+  Future<List<FileMark>> marksOf(FolderPair pair) => _idleRunner().marks(pair);
+
+  /// A runner for reading what a backup would do, which takes no lock and
+  /// starts nothing.
+  SyncRunner _idleRunner() => SyncRunner(
+    client: client,
+    access: access,
+    journal: journal,
+    runLock: runLock,
+    foreground: () => true,
+    accountKey: () => _accountKey,
+    onChanged: () {},
+  );
 
   /// Whether [pair]'s files can be removed from the phone from here: photos
   /// and videos, not arbitrary folders.
@@ -679,8 +691,9 @@ class BackupController extends ChangeNotifier {
       _running = null;
       finished.complete();
       _notify();
-      if (!_disposed && progress.transferred + progress.moved > 0) {
-        onServerChanged?.call();
+      if (!_disposed) {
+        onRunEnded?.call();
+        if (progress.transferred + progress.moved > 0) onServerChanged?.call();
       }
     }
   }

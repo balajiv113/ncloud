@@ -9,6 +9,7 @@ import '../browse_target.dart';
 import '../../features/timeline/change_monitor.dart';
 import 'library_view_state.dart';
 import '../../features/albums/albums_home.dart';
+import '../../features/phone/phone_viewer.dart';
 import '../../features/viewer/asset_viewer.dart';
 import '../../discovery_models.dart';
 import '../../features/settings/settings_screen.dart';
@@ -326,8 +327,11 @@ class _AppShellState extends State<AppShell>
     }
   }
 
-  List<CloudFile> get _visible =>
-      _view.visibleFiles(c.items, drive: _drive, collection: _collection);
+  List<CloudFile> get _visible => _view.visibleFiles(
+    c.timelineItems,
+    drive: _drive,
+    collection: _collection,
+  );
 
   void _toggle(CloudFile file) {
     if (file.readOnly) return;
@@ -342,7 +346,12 @@ class _AppShellState extends State<AppShell>
       _resetView();
       c.openFolder(file);
     } else if (file.isMedia) {
-      final media = visible.where((f) => f.isMedia).toList();
+      // Photos only on the phone are looked at among themselves, and the cloud's
+      // among theirs: they are shown by different viewers.
+      final onPhone = file.onPhone != null;
+      final media = visible
+          .where((f) => f.isMedia && (f.onPhone != null) == onPhone)
+          .toList();
       Navigator.push(
         context,
         PageRouteBuilder<void>(
@@ -352,11 +361,17 @@ class _AppShellState extends State<AppShell>
           reverseTransitionDuration: MediaQuery.disableAnimationsOf(context)
               ? Duration.zero
               : const Duration(milliseconds: 150),
-          pageBuilder: (_, _, _) => AssetViewer(
-            files: media,
-            initialIndex: media.indexWhere((f) => f.key == file.key),
-            controller: c,
-          ),
+          pageBuilder: (_, _, _) => onPhone
+              ? PhoneViewer(
+                  files: media,
+                  initialIndex: media.indexWhere((f) => f.key == file.key),
+                  phone: c.phone,
+                )
+              : AssetViewer(
+                  files: media,
+                  initialIndex: media.indexWhere((f) => f.key == file.key),
+                  controller: c,
+                ),
           transitionsBuilder: (_, animation, _, child) => FadeTransition(
             opacity: animation.drive(CurveTween(curve: Curves.easeOut)),
             child: child,
