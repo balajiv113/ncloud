@@ -187,7 +187,7 @@ class NativeFolderAccess
 
   /// Every photo and video, read a page at a time so a very large library never
   /// has to cross the channel in one message.
-  Future<List<LibraryItem>> _libraryItems() async {
+  Future<List<LibraryItem>> libraryItems() async {
     if (await libraryPermission() == LibraryPermission.denied) {
       throw PlatformException(
         code: 'media_permission',
@@ -223,7 +223,7 @@ class NativeFolderAccess
     // The top of the library starts a new look; the folders below reuse it.
     if (path.isEmpty || _tree == null || _treeToken != token) {
       _tree = LibraryTree(
-        await _libraryItems(),
+        await libraryItems(),
         exclude: [..._skipped, ...DeviceFolder.excludedFolders(token)],
       );
       _treeToken = token;
@@ -233,7 +233,7 @@ class NativeFolderAccess
 
   @override
   Future<List<LibraryFolder>> libraryFolders() async =>
-      LibraryTree(await _libraryItems()).folders;
+      LibraryTree(await libraryItems()).folders;
 
   Future<File> _exportLibrary(
     List<String> path,

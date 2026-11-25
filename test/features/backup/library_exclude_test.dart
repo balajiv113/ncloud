@@ -23,6 +23,7 @@ LibraryItem item(int id, String folder, {String? name}) => LibraryItem(
   name: name ?? 'IMG_$id.jpg',
   size: 4,
   modified: 1700000000000 + id,
+  taken: 1700000000000 + id,
   contentType: 'image/jpeg',
   folder: folder,
 );

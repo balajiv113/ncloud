@@ -48,6 +48,7 @@ class LibraryItem {
     required this.name,
     required this.size,
     required this.modified,
+    required this.taken,
     required this.contentType,
     required this.folder,
   });
@@ -59,6 +60,10 @@ class LibraryItem {
 
   /// Milliseconds since the epoch.
   final int modified;
+
+  /// When it was taken, in milliseconds since the epoch; the modified date when
+  /// the phone does not record it.
+  final int taken;
   final String contentType;
 
   /// The folder it is in on the phone, such as `DCIM/Camera`. Empty at the top.
@@ -69,6 +74,7 @@ class LibraryItem {
     name: value['name'] as String,
     size: (value['size'] as num).toInt(),
     modified: (value['modified'] as num).toInt(),
+    taken: ((value['taken'] ?? value['modified']) as num).toInt(),
     contentType: value['contentType'] as String? ?? '',
     folder: value['folder'] as String? ?? '',
   );

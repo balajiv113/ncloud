@@ -538,3 +538,55 @@ func sha1Hex(of url: URL) throws -> String {
   }
   return hasher.finalize().map { String(format: "%02x", $0) }.joined()
 }
+
+/// The phone's photos and videos as one flat list, for showing next to the ones
+/// in the cloud. It answers the way Android's media listing does: one entry per
+/// photo with its own id, name, dates and type.
+enum PhonePhotoList {
+  /// The listing being read a page at a time, so every page comes from the same
+  /// snapshot and no photo is missed or repeated between pages.
+  private static var snapshot: PHFetchResult<PHAsset>?
+  private static let lock = NSLock()
+
+  static func status() -> String {
+    switch PHPhotoLibrary.authorizationStatus(for: .readWrite) {
+    case .authorized: return "granted"
+    case .limited: return "partial"
+    default: return "denied"
+    }
+  }
+
+  static func request(_ done: @escaping (String) -> Void) {
+    PHPhotoLibrary.requestAuthorization(for: .readWrite) { _ in done(status()) }
+  }
+
+  static func page(offset: Int, limit: Int) -> [[String: Any]] {
+    lock.lock()
+    defer { lock.unlock() }
+    if offset == 0 || snapshot == nil {
+      let options = PHFetchOptions()
+      options.predicate = NSPredicate(format: "mediaType == %d OR mediaType == %d",
+                                      PHAssetMediaType.image.rawValue, PHAssetMediaType.video.rawValue)
+      options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: true)]
+      snapshot = PHAsset.fetchAssets(with: options)
+    }
+    guard let assets = snapshot, offset < assets.count else { return [] }
+    let end = min(assets.count, offset + limit)
+    return assets.objects(at: IndexSet(integersIn: offset..<end)).map { asset in
+      let resource = PHAssetResource.assetResources(for: asset).first
+      let modified = max(Int64(1), Int64((asset.modificationDate ?? Date(timeIntervalSince1970: 1)).timeIntervalSince1970 * 1000))
+      let taken = Int64((asset.creationDate ?? Date(timeIntervalSince1970: 1)).timeIntervalSince1970 * 1000)
+      let fallback = asset.mediaType == .video ? "video/mp4" : "image/jpeg"
+      return [
+        "id": asset.localIdentifier,
+        "name": resource?.originalFilename ?? "photo",
+        // Photos does not say how big an original is without reading it.
+        "size": Int64(-1),
+        "modified": modified,
+        "taken": max(Int64(1), taken),
+        "contentType": resource.flatMap { UTType($0.uniformTypeIdentifier)?.preferredMIMEType } ?? fallback,
+        "folder": "",
+      ]
+    }
+  }
+}

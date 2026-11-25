@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ncloud/core/cloud/cloud_backend.dart';
 import 'package:ncloud/features/backup/engine/backup_preview.dart';
 import 'package:ncloud/features/backup/engine/sync_engine.dart';
+import 'package:ncloud/features/backup/model/backup_state.dart';
 import 'package:ncloud/features/backup/platform/folder_access.dart';
 import 'package:ncloud/models.dart';
 import 'package:ncloud/features/backup/state/sync_journal.dart';
@@ -1055,6 +1056,56 @@ void main() {
       await run();
       expect(server.files['Backup/Camera/a.jpg']!.bytes, bytes(2));
     });
+  });
+
+  group('file marks', () {
+    Future<Map<String, BackupState>> marks() async => {
+      for (final mark in await engine().marks(pair())) mark.name: mark.state,
+    };
+
+    test('say which files are on the server and which are waiting', () async {
+      device.add('a.jpg', bytes(1), id: 'image:1');
+      device.add('b.jpg', bytes(2), id: 'image:2');
+      await run();
+      device.add('c.jpg', bytes(3), id: 'image:3');
+      final before = server.uploads;
+      final found = await engine().marks(pair());
+      expect(
+        found.map((m) => m.id),
+        unorderedEquals(['image:1', 'image:2', 'image:3']),
+      );
+      expect(await marks(), {
+        'a.jpg': BackupState.backedUp,
+        'b.jpg': BackupState.backedUp,
+        'c.jpg': BackupState.waiting,
+      });
+      // Reading the marks changed nothing.
+      expect(server.uploads, before);
+      expect(device.exports, 2);
+    });
+
+    test('say a file that could not be backed up has failed', () async {
+      device.add('a.jpg', bytes(1));
+      device.beforeExport = (_) =>
+          throw const FormatException('Cannot read this file.');
+      await run();
+      expect(await marks(), {'a.jpg': BackupState.failed});
+      // Still failed once it is given up on and no longer tried.
+      for (var i = 0; i < 5; i++) {
+        await run();
+      }
+      expect(await marks(), {'a.jpg': BackupState.failed});
+    });
+
+    test(
+      'carry the size, so a source with no ids can still be matched',
+      () async {
+        device.add('a.jpg', bytes(1));
+        final mark = (await engine().marks(pair())).single;
+        expect(mark.size, 32);
+        expect(mark.id, isNull);
+      },
+    );
   });
 
   group('a dry run', () {

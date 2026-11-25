@@ -92,6 +92,28 @@ import workmanager_apple
 
     func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
       let arguments = call.arguments as? [String: Any] ?? [:]
+      // The whole photo library as one list, answered the way Android answers it,
+      // so the app shows the phone's photos the same on both.
+      switch call.method {
+      case "mediaAccess":
+        result(["status": PhonePhotoList.status()])
+        return
+      case "mediaRequest":
+        PhonePhotoList.request { status in
+          DispatchQueue.main.async { result(["status": status]) }
+        }
+        return
+      case "mediaList":
+        let offset = (arguments["offset"] as? NSNumber)?.intValue ?? 0
+        let limit = (arguments["limit"] as? NSNumber)?.intValue ?? 2000
+        DispatchQueue.global(qos: .userInitiated).async {
+          let page = PhonePhotoList.page(offset: offset, limit: limit)
+          DispatchQueue.main.async { result(page) }
+        }
+        return
+      default:
+        break
+      }
       if call.method == "albums" {
         guard controller != nil else {
           result(FlutterError(code: "photos_permission",

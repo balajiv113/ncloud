@@ -8,6 +8,7 @@ import 'adaptive_limit.dart';
 import 'sync_engine.dart';
 import '../platform/device_library.dart';
 import 'backup_preview.dart';
+import 'file_mark.dart';
 import 'pair_policy.dart';
 import 'sync_errors.dart';
 import '../state/sync_journal.dart';
@@ -105,6 +106,20 @@ class SyncRunner {
         coveredFolders(pair, await journal.pairs(pair.account)),
       );
     }
+  }
+
+  /// Where each file a backup covers stands, under the same rules a run uses and
+  /// without changing anything.
+  Future<List<FileMark>> marks(FolderPair pair) async {
+    await _skipCoveredFolders(pair);
+    return SyncEngine(
+      client: client,
+      access: access,
+      journal: journal,
+      progress: SyncProgress(),
+      check: _check,
+      onChanged: () {},
+    ).marks(pair);
   }
 
   /// What a run would do, worked out under the same rules and without changing

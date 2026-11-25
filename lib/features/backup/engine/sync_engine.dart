@@ -7,7 +7,9 @@ import '../../../models.dart';
 import '../platform/folder_access.dart';
 import '../state/sync_journal.dart';
 import 'adaptive_limit.dart';
+import '../model/backup_state.dart';
 import 'backup_preview.dart';
+import 'file_mark.dart';
 import 'conflict_name.dart';
 import 'failure_policy.dart';
 import 'fingerprint.dart';
@@ -84,11 +86,18 @@ class _Lane {
 /// The key the journal stores a path under.
 /// What a run has to do: the files to upload, and how many needed nothing.
 class _Plan {
-  _Plan(this.todo, this.alreadyBackedUp, this.blocked);
+  _Plan(this.todo, this.backedUp, this.blocked);
 
+  /// Files to upload this run.
   final List<_Item> todo;
-  final int alreadyBackedUp;
-  final int blocked;
+
+  /// Files whose current version is already on the server.
+  final List<_Item> backedUp;
+
+  /// Files skipped because they have failed in several runs.
+  final List<_Item> blocked;
+
+  int get alreadyBackedUp => backedUp.length;
 }
 
 String _pathKey(List<String> path) => jsonEncode(path);
@@ -191,7 +200,7 @@ class SyncEngine {
     final todo = plan.todo;
     progress
       ..alreadyBackedUp = plan.alreadyBackedUp
-      ..blocked = plan.blocked
+      ..blocked = plan.blocked.length
       ..toUpload = todo.length
       ..bytesTotal = _bytes(todo);
     _status('Preparing the destination');
@@ -266,8 +275,8 @@ class SyncEngine {
   /// library times the number of queries.
   Future<_Plan> _classify(FolderPair pair, List<_Item> local) async {
     final todo = <_Item>[];
-    var alreadyBackedUp = 0;
-    var blocked = 0;
+    final backedUp = <_Item>[];
+    final blocked = <_Item>[];
     final anyFailures = await journal.failureCount(pair.id) > 0;
     const group = 400;
     for (var start = 0; start < local.length; start += group) {
@@ -287,14 +296,14 @@ class SyncEngine {
       for (final item in chunk) {
         final version = item.entry.version;
         if (receipts[item.key]?.version == version) {
-          alreadyBackedUp++;
+          backedUp.add(item);
           continue;
         }
         final failure = failures[item.key];
         if (failure != null) {
           item.hadFailure = true;
           if (failure.version == version && failure.attempts >= _maxAttempts) {
-            blocked++;
+            blocked.add(item);
             continue;
           }
         }
@@ -303,11 +312,31 @@ class SyncEngine {
       }
     }
     todo.sort((a, b) => b.entry.modified.compareTo(a.entry.modified));
-    return _Plan(todo, alreadyBackedUp, blocked);
+    return _Plan(todo, backedUp, blocked);
   }
 
   static int _bytes(List<_Item> items) =>
       items.fold(0, (sum, i) => sum + (i.entry.size > 0 ? i.entry.size : 0));
+
+  /// Where each file the pair covers stands, without doing anything: on the
+  /// server, waiting to be uploaded, or failed. It reads the device and the saved
+  /// records the way a run does, and nothing else.
+  Future<List<FileMark>> marks(FolderPair pair) async {
+    check(pair);
+    final plan = await _classify(pair, await _scanDevice(pair));
+    FileMark mark(_Item item, BackupState state) => FileMark(
+      id: item.entry.id,
+      name: item.entry.name,
+      size: item.entry.size,
+      state: state,
+    );
+    return [
+      for (final item in plan.backedUp) mark(item, BackupState.backedUp),
+      for (final item in plan.todo)
+        mark(item, item.hadFailure ? BackupState.failed : BackupState.waiting),
+      for (final item in plan.blocked) mark(item, BackupState.failed),
+    ];
+  }
 
   /// Works out what a run would do, without doing any of it. It reads the
   /// device and the saved records and asks the server one question, whether
@@ -353,7 +382,7 @@ class SyncEngine {
       alreadyBackedUp: plan.alreadyBackedUp,
       toUpload: plan.todo.length,
       bytes: _bytes(plan.todo),
-      blocked: plan.blocked,
+      blocked: plan.blocked.length,
       folders: folders,
       oldest: oldest,
       newest: newest,
