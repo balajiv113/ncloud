@@ -13,6 +13,9 @@ import 'status_sink.dart';
 import '../discovery_models.dart';
 import '../core/storage/file_store.dart';
 import '../features/backup/state/backup_controller.dart';
+import '../features/phone/phone_library.dart';
+import '../features/phone/phone_source.dart';
+import '../features/phone/phone_timeline.dart';
 import '../core/storage/local_cache.dart';
 import '../models.dart';
 import '../features/files/library_operations.dart';
@@ -43,8 +46,12 @@ class AppController extends ChangeNotifier implements StatusSink {
     this.cache,
     this.pathlessTimeline = false,
     BackupController? backupController,
+    PhoneTimeline? phoneTimeline,
   }) {
-    _backup = backupController?..onServerChanged = _backupChangedServer;
+    _backup = backupController
+      ?..onServerChanged = _backupChangedServer
+      ..onRunEnded = refreshPhone;
+    _phone = phoneTimeline;
     cache?.onWriteError = (message) {
       if (_disposed || notice == message) return;
       notice = message;
@@ -62,8 +69,47 @@ class AppController extends ChangeNotifier implements StatusSink {
   /// Optional persistent cache; tests run purely in memory without it.
   final LocalCache? cache;
   BackupController? _backup;
-  BackupController get backup =>
-      _backup ??= _createBackup()..onServerChanged = _backupChangedServer;
+  BackupController get backup => _backup ??= _createBackup()
+    ..onServerChanged = _backupChangedServer
+    ..onRunEnded = refreshPhone;
+
+  PhoneTimeline? _phone;
+
+  /// The phone's photos that the cloud does not have, shown in the Timeline.
+  PhoneTimeline get phone => _phone ??= _createPhone();
+
+  static final PhoneTimeline _noPhone = PhoneTimeline.none();
+
+  PhoneTimeline _createPhone() {
+    if (!Platform.isAndroid && !Platform.isIOS) return _noPhone;
+    final source = NativePhoneSource(NativeFolderAccess());
+    return PhoneTimeline(
+      source: source,
+      library: PhoneLibrary(
+        source: source,
+        pairs: () async {
+          await backup.load();
+          return backup.pairs;
+        },
+        marks: backup.marksOf,
+      ),
+    );
+  }
+
+  /// Reads the phone again, and redraws if what it shows changed. The phone's
+  /// photos are an addition, so a failure to read them leaves the cloud's alone.
+  Future<void> refreshPhone() async {
+    if (account == null) return;
+    try {
+      if (await phone.load() && !_disposed) notifyListeners();
+    } on Object {
+      // Nothing to show from the phone this time.
+    }
+  }
+
+  /// The phone's overlay for the view on screen: only the Timeline has one.
+  PhoneTimeline get _overlay =>
+      destination == Destination.timeline ? phone : _noPhone;
 
   /// A backup put files on the server, so what Drive, the Timeline and the
   /// albums show is out of date.
@@ -114,6 +160,9 @@ class AppController extends ChangeNotifier implements StatusSink {
     pathlessTimeline: pathlessTimeline,
   );
   List<CloudFile> get items => _browser.items;
+
+  /// What the Timeline lists: the cloud's photos with the phone's laid in.
+  List<CloudFile> get timelineItems => _overlay.items(items);
   bool get loading => _browser.loading;
   bool get loadingMore => _browser.loadingMore;
   @visibleForTesting
@@ -142,7 +191,7 @@ class AppController extends ChangeNotifier implements StatusSink {
   bool get loadingPeople => _people.loading;
   bool? get peopleAvailable => _people.available;
   String? get peopleError => _people.error;
-  List<TimelineDay> get indexedDays => _browser.indexedDays;
+  List<TimelineDay> get indexedDays => _overlay.days(_browser.indexedDays);
   List<CloudAlbum> get nativeAlbums => _albums.server;
   String? get nativeAlbumError => _albums.serverError;
   String? get catalogueError => _albums.error;
@@ -494,9 +543,16 @@ class AppController extends ChangeNotifier implements StatusSink {
   }
 
   /// Opens [next] and loads it.
-  Future<void> open(BrowseTarget next) => _browser.open(next);
+  Future<void> open(BrowseTarget next) {
+    unawaited(refreshPhone());
+    return _browser.open(next);
+  }
 
-  Future<void> load({bool refresh = true}) => _browser.load(refresh: refresh);
+  Future<void> load({bool refresh = true}) {
+    unawaited(refreshPhone());
+    return _browser.load(refresh: refresh);
+  }
+
   Future<void> loadNextPage() => _browser.loadNextPage();
   Future<bool> checkForChanges({
     Set<String>? changedFileIds,
@@ -504,7 +560,7 @@ class AppController extends ChangeNotifier implements StatusSink {
   }) => _browser.checkForChanges(changedFileIds: changedFileIds, force: force);
   void applyChanges() => _browser.applyChanges();
   void ensureDays(Iterable<int> days) => _browser.ensureDays(days);
-  bool dayLoaded(int day) => _browser.dayLoaded(day);
+  bool dayLoaded(int day) => _overlay.dayLoaded(day, _browser.dayLoaded);
   bool dayNeedsRefresh(int day) => _browser.dayNeedsRefresh(day);
   ({int loaded, int stale}) get dayLoadState => _browser.dayLoadState;
 

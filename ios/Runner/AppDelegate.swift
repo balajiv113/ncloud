@@ -113,6 +113,27 @@ import workmanager_apple
           }
         }
         return
+      case "mediaOriginal":
+        let id = arguments["id"] as? String ?? ""
+        copyQueue.async {
+          do {
+            try self.manager.createDirectory(at: self.staging, withIntermediateDirectories: true)
+            let destination = try self.newStage(create: false)
+            PhonePhotoList.writeOriginal(id: id, to: destination) { error in
+              DispatchQueue.main.async {
+                if let error = error {
+                  try? self.manager.removeItem(at: destination)
+                  result(Self.flutterError(error))
+                } else {
+                  result(destination.path)
+                }
+              }
+            }
+          } catch {
+            DispatchQueue.main.async { result(Self.flutterError(error)) }
+          }
+        }
+        return
       case "mediaList":
         let offset = (arguments["offset"] as? NSNumber)?.intValue ?? 0
         let limit = (arguments["limit"] as? NSNumber)?.intValue ?? 2000

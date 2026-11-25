@@ -590,6 +590,24 @@ enum PhonePhotoList {
     }
   }
 
+  /// Writes the photo or video as it is to [url], for looking at or playing it.
+  static func writeOriginal(id: String, to url: URL, done: @escaping (Error?) -> Void) {
+    guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [id], options: nil).firstObject else {
+      done(AlbumBackupError(code: "photos_changed", message: "That photo is no longer on the phone."))
+      return
+    }
+    let resources = PHAssetResource.assetResources(for: asset)
+    let kind: PHAssetResourceType = asset.mediaType == .video ? .video : .photo
+    guard let original = resources.first(where: { $0.type == kind }) ?? resources.first else {
+      done(AlbumBackupError(code: "photos_export", message: "Photos has no original for that photo."))
+      return
+    }
+    let options = PHAssetResourceRequestOptions()
+    options.isNetworkAccessAllowed = true
+    PHAssetResourceManager.default().writeData(for: original, toFile: url, options: options,
+                                              completionHandler: done)
+  }
+
   static func page(offset: Int, limit: Int) -> [[String: Any]] {
     lock.lock()
     defer { lock.unlock() }

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -25,6 +26,9 @@ class _Source implements PhoneSource {
     if (failWith != null) return Future.error(failWith!);
     return hold?.future ?? Future.value(Uint8List.fromList([size]));
   }
+
+  @override
+  Future<File> original(String id) async => throw UnimplementedError();
 }
 
 void main() {

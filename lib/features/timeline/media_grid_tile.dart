@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../app/app_controller.dart';
 import '../../models.dart';
 import '../../shared/ui/media_tile.dart';
+import '../phone/phone_tile.dart';
 
 /// A photo or video in a grid: its thumbnail with selection, favorite and
 /// video marks. It zooms into the viewer through a shared [Hero].
@@ -47,11 +48,17 @@ class MediaGridTile extends StatelessWidget {
             children: [
               Hero(
                 tag: 'asset:${file.key}',
-                child: MediaTile(
-                  key: ValueKey(file.key),
-                  file: file,
-                  controller: controller,
-                ),
+                child: file.onPhone == null
+                    ? MediaTile(
+                        key: ValueKey(file.key),
+                        file: file,
+                        controller: controller,
+                      )
+                    : PhoneTile(
+                        key: ValueKey(file.key),
+                        file: file,
+                        thumbnails: controller.phone.thumbnails!,
+                      ),
               ),
               if (selecting && !file.readOnly)
                 Positioned(

@@ -392,7 +392,14 @@ Built in slices, each of which works on its own:
    shares one request between tiles. The phone's own thumbnail cache does the
    rest. *(Done.)*
 3. The merge into the Timeline, by taken date, with a marker for each state.
-4. The viewer for phone photos, without the actions that need the cloud.
+   `PhoneTimeline` is an overlay that hands the Timeline merged lists (and merged
+   day counts, so a day only the phone has gets its own section) and leaves the
+   cloud's lists and cache alone. A phone photo is a `CloudFile` with an `onPhone`
+   field, which makes it read-only, so selecting and cloud actions do not apply.
+   *(Done.)*
+4. The viewer for phone photos (`PhoneViewer`), without the actions that need the
+   cloud: it swipes among the phone photos, and a video is copied to a temporary
+   file (`mediaOriginal`) and played from that. *(Done.)*
 5. A **Not backed up** album that lists the photos that are waiting, failed or
    left out, with a shortcut to the backup settings. It has no per-photo upload.
 6. Live refresh, the permission prompt and a switch to hide phone photos.

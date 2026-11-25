@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:typed_data';
 
 import '../backup/platform/device_library.dart';
@@ -16,6 +17,9 @@ abstract interface class PhoneSource {
 
   /// A small picture of one, as JPEG bytes, or null if there is none.
   Future<Uint8List?> thumbnail(String id, int size);
+
+  /// A copy of one as it is, in a temporary file the caller removes.
+  Future<File> original(String id);
 }
 
 /// Reads the phone's library through the native side, which answers the same
@@ -34,6 +38,9 @@ class NativePhoneSource implements PhoneSource {
   @override
   Future<Uint8List?> thumbnail(String id, int size) =>
       _access.mediaThumbnail(id, size);
+
+  @override
+  Future<File> original(String id) => _access.mediaOriginal(id);
 
   @override
   Future<List<PhonePhoto>> photos() async => [
