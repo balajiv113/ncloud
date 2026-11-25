@@ -50,7 +50,9 @@ class BackupController extends ChangeNotifier {
     BackupScheduler? scheduler,
     SyncRunLock? runLock,
     this.prepareExecution,
+    FolderAccess Function()? readAccess,
   }) : access = access ?? NativeFolderAccess(),
+       _readAccess = readAccess,
        journal = journal ?? SyncJournal(),
        backgroundService = backgroundService ?? NativeSyncBackground(),
        scheduler = scheduler ?? UnsupportedBackupScheduler(),
@@ -72,6 +74,10 @@ class BackupController extends ChangeNotifier {
   final BackupScheduler scheduler;
   final SyncRunLock runLock;
   final Future<void> Function()? prepareExecution;
+
+  /// Makes the device access for reading what a backup covers while a backup
+  /// may be running, so reading cannot change the folders that run is skipping.
+  final FolderAccess Function()? _readAccess;
   final Map<String, Map<String, dynamic>> results = {};
   List<FolderPair> pairs = [];
   String? error;
@@ -560,13 +566,14 @@ class BackupController extends ChangeNotifier {
 
   /// Where each file [pair] covers stands, without doing anything: on the
   /// server, waiting, or failed.
-  Future<List<FileMark>> marksOf(FolderPair pair) => _idleRunner().marks(pair);
+  Future<List<FileMark>> marksOf(FolderPair pair) =>
+      _idleRunner(access: _readAccess?.call()).marks(pair);
 
   /// A runner for reading what a backup would do, which takes no lock and
   /// starts nothing.
-  SyncRunner _idleRunner() => SyncRunner(
+  SyncRunner _idleRunner({FolderAccess? access}) => SyncRunner(
     client: client,
-    access: access,
+    access: access ?? this.access,
     journal: journal,
     runLock: runLock,
     foreground: () => true,

@@ -237,4 +237,55 @@ void main() {
       isFalse,
     );
   });
+
+  group('how often the phone is read', () {
+    late _CountingSource source;
+    late AppController controller;
+    setUp(() {
+      source = _CountingSource();
+      controller = AppController(
+        store: MemoryStore(),
+        client: NextcloudClient(
+          transport: MockClient((_) async => http.Response('', 404)),
+        ),
+        phoneTimeline: overlay(source, MemoryPhoneChoiceStore()),
+      )..account = account;
+      addTearDown(controller.dispose);
+    });
+
+    test('is not repeated while what was read is fresh', () async {
+      await controller.refreshPhone();
+      await controller.refreshPhone();
+      await controller.refreshPhone();
+      expect(source.reads, 1);
+    });
+
+    test(
+      'is repeated at once when the library changed or a backup ended',
+      () async {
+        await controller.refreshPhone();
+        await controller.refreshPhone(force: true);
+        expect(source.reads, 2);
+      },
+    );
+
+    test('runs one reading at a time', () async {
+      await Future.wait([
+        controller.refreshPhone(force: true),
+        controller.refreshPhone(force: true),
+        controller.refreshPhone(force: true),
+      ]);
+      expect(source.reads, 1);
+    });
+  });
+}
+
+class _CountingSource extends _Source {
+  int reads = 0;
+
+  @override
+  Future<List<PhonePhoto>> photos() {
+    reads++;
+    return super.photos();
+  }
 }
