@@ -1,5 +1,7 @@
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ncloud/features/backup/engine/sync_errors.dart';
+import 'package:ncloud/features/backup/engine/failure_policy.dart';
 import 'package:ncloud/features/backup/state/backup_controller.dart';
 import 'package:ncloud/features/backup/model/backup_schedule.dart';
 import 'package:ncloud/features/backup/background/android_backup.dart';
@@ -189,35 +191,106 @@ void main() {
     },
   );
 
-  test(
-    'native worker notification verification fails closed without picker calls',
-    () async {
-      final methods = <String>[];
-      final messenger =
-          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+  group('the scheduled backup notification', () {
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    tearDown(
+      () =>
+          messenger.setMockMethodCallHandler(NativeFolderAccess.channel, null),
+    );
+
+    List<String> answers(List<String> replies) {
+      final asked = <String>[];
       messenger.setMockMethodCallHandler(NativeFolderAccess.channel, (
         call,
       ) async {
-        methods.add(call.method);
-        return true;
+        asked.add(call.method);
+        return replies[(asked.length - 1).clamp(0, replies.length - 1)];
       });
-      addTearDown(
-        () => messenger.setMockMethodCallHandler(
-          NativeFolderAccess.channel,
-          null,
+      return asked;
+    }
+
+    test('goes ahead once it is showing, with no picker calls', () async {
+      final asked = answers(['shown']);
+      await NativeFolderAccess().requireWorkerNotification(42);
+      expect(asked, ['workerNotification']);
+    });
+
+    test('waits for one that is only slow to appear', () async {
+      final asked = answers(['waiting', 'waiting', 'shown']);
+      await NativeFolderAccess().requireWorkerNotification(42);
+      expect(asked, hasLength(3));
+    });
+
+    test('says at once when notifications are off, without waiting', () async {
+      for (final off in ['permission', 'disabled']) {
+        final asked = answers([off]);
+        await expectLater(
+          NativeFolderAccess().requireWorkerNotification(42),
+          throwsA(
+            isA<PlatformException>().having(
+              (e) => e.code,
+              'code',
+              'background_permission',
+            ),
+          ),
+        );
+        expect(
+          asked,
+          hasLength(1),
+          reason: 'waiting would not change a setting',
+        );
+      }
+    });
+
+    test(
+      'says at once when the backup notifications are switched off',
+      () async {
+        final asked = answers(['channel']);
+        await expectLater(
+          NativeFolderAccess().requireWorkerNotification(42),
+          throwsA(
+            isA<PlatformException>().having(
+              (e) => e.code,
+              'code',
+              'background_channel',
+            ),
+          ),
+        );
+        expect(asked, hasLength(1));
+      },
+    );
+
+    test('gives up on one that never appears, and fails closed', () async {
+      answers(['waiting']);
+      await expectLater(
+        NativeFolderAccess().requireWorkerNotification(
+          42,
+          wait: const Duration(milliseconds: 600),
+        ),
+        throwsA(
+          isA<PlatformException>().having(
+            (e) => e.code,
+            'code',
+            'scheduled_background',
+          ),
         ),
       );
-      await NativeFolderAccess().requireWorkerNotification(42);
-      expect(methods, ['workerNotification']);
-      messenger.setMockMethodCallHandler(NativeFolderAccess.channel, (
-        call,
-      ) async {
-        throw PlatformException(code: 'scheduled_background');
-      });
-      await expectLater(
-        NativeFolderAccess().requireWorkerNotification(42),
-        throwsA(isA<PlatformException>()),
+    });
+
+    test('each reason says what to do', () {
+      String say(String code) =>
+          describeSyncError(PlatformException(code: code), phase: 'x').message;
+      expect(
+        say('background_permission'),
+        contains('notifications are turned off'),
       );
-    },
-  );
+      expect(say('background_channel'), contains('Scheduled folder backups'));
+      expect(say('scheduled_background'), contains('next scheduled run'));
+      expect(
+        classifyFailure(PlatformException(code: 'background_channel')),
+        FailureKind.fatal,
+      );
+    });
+  });
 }

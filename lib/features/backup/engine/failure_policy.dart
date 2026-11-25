@@ -49,6 +49,7 @@ FailureKind classifyFailure(Object error) {
       'media_permission' ||
       'conditions_permission' ||
       'background_permission' ||
+      'background_channel' ||
       'background_start' ||
       'scheduled_background' => FailureKind.fatal,
       _ => FailureKind.item,

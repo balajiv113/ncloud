@@ -379,13 +379,34 @@ class NativeFolderAccess
     ];
   }
 
-  Future<void> requireWorkerNotification(int id) async {
-    for (var attempt = 0; attempt < 20; attempt++) {
-      if (await channel.invokeMethod<bool>('workerNotification', {'id': id}) ==
-          true) {
-        return;
+  /// Waits for the scheduled backup's foreground notification to be showing, as
+  /// Android requires of a background upload. A notification that is off in the
+  /// phone's settings is reported at once and by name, since waiting will not
+  /// change it; one that is only slow to appear is waited for.
+  Future<void> requireWorkerNotification(
+    int id, {
+    Duration wait = const Duration(seconds: 15),
+  }) async {
+    const step = Duration(milliseconds: 200);
+    for (var waited = Duration.zero; waited <= wait; waited += step) {
+      final status = await channel.invokeMethod<String>('workerNotification', {
+        'id': id,
+      });
+      switch (status) {
+        case 'shown':
+          return;
+        case 'permission' || 'disabled':
+          throw PlatformException(
+            code: 'background_permission',
+            message: 'Notifications are off for ncloud.',
+          );
+        case 'channel':
+          throw PlatformException(
+            code: 'background_channel',
+            message: 'Scheduled folder backups notifications are off.',
+          );
       }
-      await Future<void>.delayed(const Duration(milliseconds: 100));
+      await Future<void>.delayed(step);
     }
     throw PlatformException(
       code: 'scheduled_background',

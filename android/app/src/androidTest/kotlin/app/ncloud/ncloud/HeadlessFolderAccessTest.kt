@@ -68,7 +68,7 @@ class HeadlessFolderAccessTest {
             val conditions = call(one, "conditions")
             assertNull(conditions.second)
             assertTrue((conditions.first as Map<*, *>)["wifi"] is Boolean)
-            assertEquals(false, call(one, "workerNotification", mapOf("id" to 12345)).first)
+            assertNotEquals("shown", call(one, "workerNotification", mapOf("id" to 12345)).first)
             val staged = call(one, "stage")
             assertNull(staged.second)
             assertTrue(File(staged.first as String).exists())

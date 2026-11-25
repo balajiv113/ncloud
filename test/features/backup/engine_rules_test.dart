@@ -48,7 +48,7 @@ void main() {
       );
       expect(
         message(PlatformException(code: 'background_permission')),
-        contains('Allow ncloud notifications'),
+        contains('notifications are turned off'),
       );
       expect(message(PlatformException(code: 'odd')), contains('failed (odd)'));
     });
