@@ -453,8 +453,8 @@ class NextcloudClient implements CloudBackend, ResumableUploads {
     final result = <CloudAlbum>[];
     for (final entry in XmlDocument.parse(
       response.body,
-    ).findAllElements('response', namespace: 'DAV:')) {
-      final href = entry.getElement('href', namespace: 'DAV:')?.innerText;
+    ).findAllElements('response', namespaceUri: 'DAV:')) {
+      final href = entry.getElement('href', namespaceUri: 'DAV:')?.innerText;
       if (href == null) continue;
       final uri = Uri.parse(href);
       if (uri.hasAuthority && uri.origin != account.server.origin) continue;
@@ -468,7 +468,7 @@ class NextcloudClient implements CloudBackend, ResumableUploads {
       if (props.isEmpty) continue;
       String value(String name, String ns) =>
           props
-              .map((p) => p.getElement(name, namespace: ns)?.innerText)
+              .map((p) => p.getElement(name, namespaceUri: ns)?.innerText)
               .nonNulls
               .firstOrNull ??
           '';
@@ -493,13 +493,13 @@ class NextcloudClient implements CloudBackend, ResumableUploads {
   }
 
   static List<XmlElement> _successfulProps(XmlElement entry) => entry
-      .findElements('propstat', namespace: 'DAV:')
+      .findElements('propstat', namespaceUri: 'DAV:')
       .where(
-        (p) => RegExp(
-          r'\s200(?:\s|$)',
-        ).hasMatch(p.getElement('status', namespace: 'DAV:')?.innerText ?? ''),
+        (p) => RegExp(r'\s200(?:\s|$)').hasMatch(
+          p.getElement('status', namespaceUri: 'DAV:')?.innerText ?? '',
+        ),
       )
-      .map((p) => p.getElement('prop', namespace: 'DAV:'))
+      .map((p) => p.getElement('prop', namespaceUri: 'DAV:'))
       .nonNulls
       .toList();
 
@@ -527,8 +527,8 @@ class NextcloudClient implements CloudBackend, ResumableUploads {
     final result = <CloudAlbumMember>[];
     for (final entry in XmlDocument.parse(
       response.body,
-    ).findAllElements('response', namespace: 'DAV:')) {
-      final href = entry.getElement('href', namespace: 'DAV:')?.innerText;
+    ).findAllElements('response', namespaceUri: 'DAV:')) {
+      final href = entry.getElement('href', namespaceUri: 'DAV:')?.innerText;
       if (href == null) continue;
       final uri = Uri.parse(href);
       if (uri.hasAuthority && uri.origin != account.server.origin) continue;
@@ -542,7 +542,7 @@ class NextcloudClient implements CloudBackend, ResumableUploads {
       if (props.isEmpty) continue;
       String value(String name, [String ns = 'DAV:']) =>
           props
-              .map((p) => p.getElement(name, namespace: ns)?.innerText)
+              .map((p) => p.getElement(name, namespaceUri: ns)?.innerText)
               .nonNulls
               .firstOrNull ??
           '';
@@ -588,16 +588,16 @@ class NextcloudClient implements CloudBackend, ResumableUploads {
     final root = XmlDocument.parse(response.body);
     for (final propstat in root.findAllElements(
       'propstat',
-      namespace: 'DAV:',
+      namespaceUri: 'DAV:',
     )) {
       if (!RegExp(r'\s200(?:\s|$)').hasMatch(
-        propstat.getElement('status', namespace: 'DAV:')?.innerText ?? '',
+        propstat.getElement('status', namespaceUri: 'DAV:')?.innerText ?? '',
       )) {
         continue;
       }
       final etag = propstat
-          .getElement('prop', namespace: 'DAV:')
-          ?.getElement('getetag', namespace: 'DAV:')
+          .getElement('prop', namespaceUri: 'DAV:')
+          ?.getElement('getetag', namespaceUri: 'DAV:')
           ?.innerText
           .trim();
       if (etag != null && etag.isNotEmpty) return etag;
@@ -1387,9 +1387,9 @@ class NextcloudClient implements CloudBackend, ResumableUploads {
     final result = <TrashEntry>[];
     for (final item in XmlDocument.parse(
       response.body,
-    ).findAllElements('response', namespace: 'DAV:')) {
+    ).findAllElements('response', namespaceUri: 'DAV:')) {
       final href = Uri.tryParse(
-        item.getElement('href', namespace: 'DAV:')?.innerText ?? '',
+        item.getElement('href', namespaceUri: 'DAV:')?.innerText ?? '',
       );
       if (href == null ||
           (href.hasAuthority && href.origin != account.server.origin)) {
@@ -1403,18 +1403,20 @@ class NextcloudClient implements CloudBackend, ResumableUploads {
       final key = segments.last;
       validateName(key);
       final props = item
-          .findElements('propstat', namespace: 'DAV:')
+          .findElements('propstat', namespaceUri: 'DAV:')
           .where(
             (p) => RegExp(r'\s200(?:\s|$)').hasMatch(
-              p.getElement('status', namespace: 'DAV:')?.innerText ?? '',
+              p.getElement('status', namespaceUri: 'DAV:')?.innerText ?? '',
             ),
           )
-          .expand((p) => p.findElements('prop', namespace: 'DAV:'));
+          .expand((p) => p.findElements('prop', namespaceUri: 'DAV:'));
       String value(String name) =>
           props
               .expand(
-                (p) =>
-                    p.findElements(name, namespace: 'http://nextcloud.org/ns'),
+                (p) => p.findElements(
+                  name,
+                  namespaceUri: 'http://nextcloud.org/ns',
+                ),
               )
               .map((e) => e.innerText)
               .firstOrNull ??
@@ -1728,9 +1730,9 @@ class NextcloudClient implements CloudBackend, ResumableUploads {
     final files = <CloudFile>[];
     for (final response in document.findAllElements(
       'response',
-      namespace: 'DAV:',
+      namespaceUri: 'DAV:',
     )) {
-      final href = response.getElement('href', namespace: 'DAV:')?.innerText;
+      final href = response.getElement('href', namespaceUri: 'DAV:')?.innerText;
       if (href == null) continue;
       final uri = Uri.parse(href);
       if (uri.hasAuthority && uri.origin != account.server.origin) continue;
@@ -1748,18 +1750,18 @@ class NextcloudClient implements CloudBackend, ResumableUploads {
         continue;
       }
       final props = response
-          .findElements('propstat', namespace: 'DAV:')
+          .findElements('propstat', namespaceUri: 'DAV:')
           .where(
             (p) => RegExp(r'\s200(?:\s|$)').hasMatch(
-              p.getElement('status', namespace: 'DAV:')?.innerText ?? '',
+              p.getElement('status', namespaceUri: 'DAV:')?.innerText ?? '',
             ),
           )
-          .map((p) => p.getElement('prop', namespace: 'DAV:'))
+          .map((p) => p.getElement('prop', namespaceUri: 'DAV:'))
           .nonNulls
           .toList();
       String value(String name, [String ns = 'DAV:']) {
         for (final prop in props) {
-          final value = prop.getElement(name, namespace: ns);
+          final value = prop.getElement(name, namespaceUri: ns);
           if (value != null) return value.innerText;
         }
         return '';
@@ -1774,11 +1776,11 @@ class NextcloudClient implements CloudBackend, ResumableUploads {
               p
                   .getElement(
                     'share-types',
-                    namespace: 'http://owncloud.org/ns',
+                    namespaceUri: 'http://owncloud.org/ns',
                   )
                   ?.findElements(
                     'share-type',
-                    namespace: 'http://owncloud.org/ns',
+                    namespaceUri: 'http://owncloud.org/ns',
                   )
                   .isNotEmpty ??
               false,
@@ -1789,8 +1791,9 @@ class NextcloudClient implements CloudBackend, ResumableUploads {
           path: path,
           name: path.last,
           isDirectory: props.any(
-            (p) =>
-                p.findAllElements('collection', namespace: 'DAV:').isNotEmpty,
+            (p) => p
+                .findAllElements('collection', namespaceUri: 'DAV:')
+                .isNotEmpty,
           ),
           contentType: value('getcontenttype'),
           size: int.tryParse(value('getcontentlength')) ?? 0,
@@ -1879,7 +1882,7 @@ class NextcloudClient implements CloudBackend, ResumableUploads {
     );
     _expect(response, {207});
     final statuses = XmlDocument.parse(response.body)
-        .findAllElements('status', namespace: 'DAV:')
+        .findAllElements('status', namespaceUri: 'DAV:')
         .map((element) => element.innerText)
         .toList();
     if (statuses.isEmpty ||
@@ -1997,14 +2000,15 @@ class NextcloudClient implements CloudBackend, ResumableUploads {
     final pieces = <String, int>{};
     for (final item in XmlDocument.parse(
       response.body,
-    ).findAllElements('response', namespace: 'DAV:')) {
-      final href = item.getElement('href', namespace: 'DAV:')?.innerText ?? '';
+    ).findAllElements('response', namespaceUri: 'DAV:')) {
+      final href =
+          item.getElement('href', namespaceUri: 'DAV:')?.innerText ?? '';
       final name = Uri.decodeComponent(
         href.split('/').lastWhere((p) => p.isNotEmpty, orElse: () => ''),
       );
       final size = int.tryParse(
         item
-                .findAllElements('getcontentlength', namespace: 'DAV:')
+                .findAllElements('getcontentlength', namespaceUri: 'DAV:')
                 .firstOrNull
                 ?.innerText ??
             '',
@@ -2169,23 +2173,23 @@ class NextcloudClient implements CloudBackend, ResumableUploads {
     _expect(response, {207});
     final document = XmlDocument.parse(response.body);
     final props = document
-        .findAllElements('prop', namespace: 'DAV:')
+        .findAllElements('prop', namespaceUri: 'DAV:')
         .firstOrNull;
     if (props == null) return null;
     String? text(String name, [String ns = 'DAV:']) =>
-        props.getElement(name, namespace: ns)?.innerText;
+        props.getElement(name, namespaceUri: ns)?.innerText;
     // The server lists every checksum it holds in one element, separated by
     // spaces, in no fixed order.
     final sha1 = props
-        .getElement('checksums', namespace: 'http://owncloud.org/ns')
-        ?.findAllElements('checksum', namespace: 'http://owncloud.org/ns')
+        .getElement('checksums', namespaceUri: 'http://owncloud.org/ns')
+        ?.findAllElements('checksum', namespaceUri: 'http://owncloud.org/ns')
         .expand((e) => e.innerText.split(RegExp(r'\s+')))
         .where((value) => value.toUpperCase().startsWith('SHA1:'))
         .map((value) => value.substring(5).toLowerCase())
         .firstOrNull;
     return RemoteStat(
       isDirectory: props
-          .findAllElements('collection', namespace: 'DAV:')
+          .findAllElements('collection', namespaceUri: 'DAV:')
           .isNotEmpty,
       size: int.tryParse(text('getcontentlength') ?? '') ?? 0,
       etag: text('getetag'),

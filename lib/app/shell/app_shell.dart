@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 
 import '../app_controller.dart';
@@ -515,7 +515,9 @@ class _AppShellState extends State<AppShell>
                             physics: const AlwaysScrollableScrollPhysics(),
                             // Builds and fetches roughly a screen ahead so tiles
                             // are painted before they scroll into view.
-                            cacheExtent: 1200,
+                            scrollCacheExtent: const ScrollCacheExtent.pixels(
+                              1200,
+                            ),
                             slivers: [
                               LibraryAppBar(
                                 title: _view.selecting

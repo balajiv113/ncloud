@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 /// The floating header: back or cancel, the title or search field, and the
 /// search, view-options and settings actions.
