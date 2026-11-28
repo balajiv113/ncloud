@@ -328,10 +328,19 @@ class _AppShellState extends State<AppShell>
   }
 
   List<CloudFile> get _visible => _view.visibleFiles(
-    c.timelineItems,
+    _view.query.isEmpty ? c.timelineItems : _withServerResults(c.timelineItems),
     drive: _drive,
     collection: _collection,
   );
+
+  List<CloudFile> _withServerResults(List<CloudFile> items) {
+    final keys = {for (final f in items) f.key};
+    return [
+      ...items,
+      for (final f in c.serverSearchResults)
+        if (keys.add(f.key)) f,
+    ];
+  }
 
   void _toggle(CloudFile file) {
     if (file.readOnly) return;
@@ -549,6 +558,8 @@ class _AppShellState extends State<AppShell>
                                 onBack: _back,
                                 onQueryChanged: (value) =>
                                     setState(() => _view.query = value),
+                                onQuerySubmitted: (value) =>
+                                    unawaited(c.searchServer(value)),
                                 onToggleSearch: () => setState(() {
                                   _view.toggleSearch();
                                   if (!_view.searching) _search.clear();

@@ -221,6 +221,33 @@ void main() {
     },
   );
 
+  test('library search matches names and dates on the server', () async {
+    final client = NextcloudClient(
+      transport: MockClient((request) async {
+        expect(request.method, 'SEARCH');
+        expect(request.body, contains('<d:displayname/>'));
+        expect(request.body, contains('%beach%'));
+        expect(request.body, contains('<d:gte>'));
+        expect(request.body, contains('2025-01-01T00:00:00.000Z'));
+        expect(request.body, isNot(contains('%_')));
+        return http.Response(
+          multistatus(
+            responseEntry(
+              href: '/nextcloud/remote.php/dav/files/alice/Trips/Beach%201.jpg',
+            ),
+          ),
+          207,
+        );
+      }),
+    );
+    addTearDown(client.close);
+    final found = await client.search(
+      account,
+      CloudSearchQuery(text: ' beach_ ', from: DateTime.utc(2025, 1, 1)),
+    );
+    expect([for (final f in found) f.name], ['Beach 1.jpg']);
+  });
+
   test('search is recursive, server-scoped and bounded', () async {
     final client = NextcloudClient(
       transport: MockClient((request) async {

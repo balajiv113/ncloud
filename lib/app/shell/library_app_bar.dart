@@ -15,6 +15,7 @@ class LibraryAppBar extends StatelessWidget {
     required this.showSettings,
     required this.onBack,
     required this.onQueryChanged,
+    this.onQuerySubmitted,
     required this.onToggleSearch,
     required this.onViewOptions,
     required this.onSettings,
@@ -34,6 +35,7 @@ class LibraryAppBar extends StatelessWidget {
   final bool showSettings;
   final VoidCallback onBack;
   final ValueChanged<String> onQueryChanged;
+  final ValueChanged<String>? onQuerySubmitted;
   final VoidCallback onToggleSearch;
   final VoidCallback onViewOptions;
   final VoidCallback onSettings;
@@ -58,6 +60,8 @@ class LibraryAppBar extends StatelessWidget {
               controller: searchController,
               autofocus: true,
               onChanged: onQueryChanged,
+              onSubmitted: onQuerySubmitted,
+              textInputAction: TextInputAction.search,
               decoration: const InputDecoration(
                 hintText: 'Search',
                 isDense: true,

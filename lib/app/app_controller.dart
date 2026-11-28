@@ -578,6 +578,53 @@ class AppController extends ChangeNotifier implements StatusSink {
     }
   }
 
+  /// Photos and videos found anywhere in the library for the search on screen.
+  List<CloudFile> serverSearchResults = const [];
+  String? serverSearchError;
+  bool serverSearching = false;
+  int _serverSearchRun = 0;
+
+  /// Searches the whole library on the server for [query], when the backend
+  /// can search. Results from an older search or another account are dropped.
+  Future<void> searchServer(String query) async {
+    final run = ++_serverSearchRun;
+    final session = account;
+    final CloudSearch? searcher = client is CloudSearch
+        ? client as CloudSearch
+        : null;
+    final text = query.trim();
+    if (session == null || text.isEmpty || searcher == null) {
+      serverSearchResults = const [];
+      serverSearchError = null;
+      serverSearching = false;
+      notifyListeners();
+      return;
+    }
+    serverSearching = true;
+    serverSearchError = null;
+    notifyListeners();
+    try {
+      final found = await searcher.search(
+        session,
+        CloudSearchQuery(text: text),
+      );
+      if (_disposed ||
+          run != _serverSearchRun ||
+          !identical(account, session)) {
+        return;
+      }
+      serverSearchResults = found;
+    } catch (e) {
+      if (_disposed || run != _serverSearchRun) return;
+      serverSearchError = errorMessage(e);
+    } finally {
+      if (!_disposed && run == _serverSearchRun) {
+        serverSearching = false;
+        notifyListeners();
+      }
+    }
+  }
+
   /// Opens [next] and loads it.
   Future<void> open(BrowseTarget next) {
     unawaited(refreshPhone());

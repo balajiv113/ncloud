@@ -53,7 +53,7 @@ extension NextcloudAuthorization on Account {
       'Basic ${base64Encode(utf8.encode('$loginName:$appPassword'))}';
 }
 
-class NextcloudClient implements CloudBackend, ResumableUploads {
+class NextcloudClient implements CloudBackend, CloudSearch, ResumableUploads {
   NextcloudClient({
     http.Client? transport,
     Future<WebSocket> Function(Uri)? connectPush,
@@ -730,6 +730,48 @@ class NextcloudClient implements CloudBackend, ResumableUploads {
   }
 
   /// Reports server results before filtering so paging advances correctly.
+  /// Searches the whole library for photos and videos whose names contain
+  /// [query.text] and that were modified in the given range.
+  @override
+  Future<List<CloudFile>> search(
+    Account account,
+    CloudSearchQuery query,
+  ) async {
+    final text = query.text.trim().replaceAll(RegExp(r'[%_\\]'), '');
+    if (text.isEmpty) return [];
+    final clauses = [
+      '<d:or><d:like><d:prop><d:displayname/></d:prop><d:literal>%$text%</d:literal></d:like></d:or>',
+      '<d:or><d:like><d:prop><d:getcontenttype/></d:prop><d:literal>image/%</d:literal></d:like><d:like><d:prop><d:getcontenttype/></d:prop><d:literal>video/%</d:literal></d:like></d:or>',
+      if (query.from != null)
+        '<d:gte><d:prop><d:getlastmodified/></d:prop><d:literal>${query.from!.toUtc().toIso8601String()}</d:literal></d:gte>',
+      if (query.to != null)
+        '<d:lt><d:prop><d:getlastmodified/></d:prop><d:literal>${query.to!.toUtc().toIso8601String()}</d:literal></d:lt>',
+    ];
+    final scope = XmlText(
+      ['', 'files', account.userId].join('/'),
+    ).toXmlString();
+    final response = await _request(
+      'SEARCH',
+      serverEndpoint(account.server, ['remote.php', 'dav', '']),
+      account: account,
+      headers: {'Content-Type': 'application/xml; charset=utf-8'},
+      body:
+          '''
+        <d:searchrequest xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns" xmlns:nc="http://nextcloud.org/ns">
+          <d:basicsearch>
+            <d:select><d:prop>$_properties</d:prop></d:select>
+            <d:from><d:scope><d:href>$scope</d:href><d:depth>infinity</d:depth></d:scope></d:from>
+            <d:where><d:and>${clauses.join()}</d:and></d:where>
+            <d:orderby><d:order><d:prop><d:getlastmodified/></d:prop><d:descending/></d:order></d:orderby>
+            <d:limit><d:nresults>${query.limit}</d:nresults></d:limit>
+          </d:basicsearch>
+        </d:searchrequest>
+      ''',
+    );
+    _expect(response, {207});
+    return parseFiles(response.body, account).where((f) => f.isMedia).toList();
+  }
+
   Future<({List<CloudFile> files, int scanned})> searchPage(
     Account account, {
     bool favorites = false,

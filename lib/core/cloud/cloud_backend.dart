@@ -176,6 +176,32 @@ abstract interface class ResumableUploads {
   });
 }
 
+/// A search over the whole library on the server, by name and date.
+class CloudSearchQuery {
+  const CloudSearchQuery({
+    required this.text,
+    this.from,
+    this.to,
+    this.limit = 200,
+  });
+
+  /// Matched against file names, case-insensitively, anywhere in the library.
+  final String text;
+
+  /// Only files modified at or after [from], when set.
+  final DateTime? from;
+
+  /// Only files modified before [to], when set.
+  final DateTime? to;
+  final int limit;
+}
+
+/// Implemented by backends that can search the whole library. Callers check for
+/// it, so a backend without search still works.
+abstract interface class CloudSearch {
+  Future<List<CloudFile>> search(Account account, CloudSearchQuery query);
+}
+
 abstract interface class CloudBackend {
   void close();
 
