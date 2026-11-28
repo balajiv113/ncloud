@@ -73,6 +73,25 @@ void main() {
     },
   );
 
+  test('server delete permission decides whether a file can be deleted', () {
+    final files = NextcloudClient.parseFiles(
+      multistatus(
+        responseEntry(
+              href: '/nextcloud/remote.php/dav/files/alice/Photos/a.jpg',
+              name: 'a.jpg',
+              properties: '<oc:permissions>RGDNVW</oc:permissions>',
+            ) +
+            responseEntry(
+              href: '/nextcloud/remote.php/dav/files/alice/Photos/b.jpg',
+              name: 'b.jpg',
+              properties: '<oc:permissions>RNVW</oc:permissions>',
+            ),
+      ),
+      account,
+    );
+    expect(files.map((f) => f.canDelete), [true, false]);
+  });
+
   test('DAV file revisions are retained for conditional folder sync', () {
     final file = NextcloudClient.parseFiles(
       multistatus(
