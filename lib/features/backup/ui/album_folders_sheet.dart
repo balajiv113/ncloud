@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../platform/album_folders.dart';
 
@@ -64,9 +64,9 @@ class _AlbumFoldersSheetState extends State<AlbumFoldersSheet> {
                     ReorderableListView(
                       shrinkWrap: true,
                       physics: const NeverScrollableScrollPhysics(),
-                      onReorder: (from, to) => setState(() {
+                      onReorderItem: (from, to) => setState(() {
                         final moved = _chosen.removeAt(from);
-                        _chosen.insert(to > from ? to - 1 : to, moved);
+                        _chosen.insert(to, moved);
                       }),
                       children: [
                         for (final (index, album) in _chosen.indexed)

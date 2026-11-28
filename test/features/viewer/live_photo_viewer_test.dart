@@ -1,6 +1,6 @@
 import 'dart:typed_data';
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ncloud/features/timeline/media_grid_tile.dart';
 import 'package:ncloud/features/viewer/asset_viewer.dart';

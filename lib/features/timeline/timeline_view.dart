@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../../app/browse_target.dart';
 import '../../app/shell/library_scope.dart';

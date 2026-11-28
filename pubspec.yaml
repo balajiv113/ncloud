@@ -24,6 +24,7 @@ dependencies:
   workmanager: 0.10.10
   ncloud_folder_access:
     path: packages/ncloud_folder_access
+  material_ui: ^1.11.1
 
 dev_dependencies:
   flutter_test:

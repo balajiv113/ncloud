@@ -1,5 +1,5 @@
 import 'package:flutter/foundation.dart' show listEquals;
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 /// The header of an opened album or folder view: how many items it holds, a
 /// menu of folder actions and chips to narrow it to one sub-folder.

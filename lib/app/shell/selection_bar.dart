@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 /// Bulk actions for the selected files: favorite, move, copy, delete, done.
 class SelectionBar extends StatelessWidget {

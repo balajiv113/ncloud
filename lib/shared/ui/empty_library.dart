@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 /// What a view shows when it has nothing to list: a connection problem, more
 /// dates to scroll to, or an empty collection.
