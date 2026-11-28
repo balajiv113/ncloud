@@ -127,6 +127,25 @@ void main() {
     );
   });
 
+  test('memory covers prefer a photo over a video', () {
+    final now = DateTime(2024, 5, 2);
+    final video = CloudFile(
+      path: ['Photos', 'clip.mp4'],
+      name: 'clip.mp4',
+      isDirectory: false,
+      contentType: 'video/mp4',
+      taken: DateTime(2023, 5, 2),
+    );
+    final groups = memoryGroups([
+      video,
+      photo('one.jpg', taken: DateTime(2023, 5, 2)),
+    ], now: now);
+    expect(
+      [for (final f in groups['1 year ago']!) f.name],
+      ['one.jpg', 'clip.mp4'],
+    );
+  });
+
   group('tracker', () {
     final tracker = TimelineTracker()
       ..start = 100
