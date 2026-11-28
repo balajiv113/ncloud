@@ -1804,6 +1804,9 @@ class NextcloudClient implements CloudBackend, ResumableUploads {
           favorite: value('favorite', 'http://owncloud.org/ns') == '1',
           etag: value('getetag').isEmpty ? null : value('getetag'),
           sharing: sharing,
+          permissions: value('permissions', 'http://owncloud.org/ns').isEmpty
+              ? null
+              : value('permissions', 'http://owncloud.org/ns'),
         ),
       );
     }

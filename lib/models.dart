@@ -67,6 +67,7 @@ class CloudFile {
     this.captureDay,
     this.etag,
     this.sharing = Sharing.none,
+    this.permissions,
     this.liveId,
     this.onPhone,
   });
@@ -86,6 +87,14 @@ class CloudFile {
   final int? captureDay;
   final String? etag;
   final Sharing sharing;
+
+  /// The server's permission letters for this file (such as `D` delete, `N`
+  /// rename, `V` move); null until the server has said, such as for timeline
+  /// items that were not listed over WebDAV.
+  final String? permissions;
+  bool? get canDelete => permissions?.contains('D');
+  bool? get canRename => permissions?.contains('N');
+  bool? get canMove => permissions?.contains('V');
 
   /// Identifies the short video that goes with this photo, when it is a Live
   /// Photo (an iPhone Live Photo or an Android motion photo).
@@ -123,6 +132,7 @@ class CloudFile {
     'captureDay': captureDay,
     'etag': etag,
     'sharing': sharing.name,
+    'permissions': permissions,
     'liveId': liveId,
   };
 
@@ -144,6 +154,7 @@ class CloudFile {
     captureDay: json['captureDay'] as int?,
     etag: json['etag'] as String?,
     sharing: Sharing.values.byName(json['sharing'] as String? ?? 'none'),
+    permissions: json['permissions'] as String?,
     liveId: json['liveId'] as String?,
   );
 
@@ -174,6 +185,7 @@ class CloudFile {
     taken: taken,
     captureDay: captureDay,
     sharing: sharing,
+    permissions: permissions,
     liveId: liveId,
     etag: etag,
   );
@@ -191,6 +203,7 @@ class CloudFile {
     taken: taken,
     captureDay: captureDay,
     sharing: sharing,
+    permissions: permissions,
     liveId: liveId,
     etag: etag,
   );
@@ -208,6 +221,7 @@ class CloudFile {
     taken: taken,
     captureDay: captureDay,
     sharing: sharing,
+    permissions: permissions,
     liveId: liveId,
     etag: revision,
   );
@@ -230,6 +244,7 @@ class CloudFile {
     taken: date,
     captureDay: day,
     sharing: sharing,
+    permissions: permissions,
     liveId: liveId ?? this.liveId,
     etag: revision,
   );

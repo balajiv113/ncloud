@@ -65,13 +65,14 @@ Future<void> fileActions(
                 ('download', Icons.ios_share, 'Download original & share'),
               if (!file.isDirectory)
                 ('offline', Icons.download_outlined, 'Save offline'),
-              if (!file.readOnly) ('rename', Icons.edit_outlined, 'Rename'),
-              if (!file.readOnly)
+              if (!file.readOnly && file.canRename != false)
+                ('rename', Icons.edit_outlined, 'Rename'),
+              if (!file.readOnly && file.canMove != false)
                 ('move', Icons.drive_file_move_outlined, 'Move to folder'),
               if (!file.readOnly)
                 ('copy', Icons.copy_outlined, 'Copy to folder'),
               ('details', Icons.info_outline, 'Details'),
-              if (!file.readOnly)
+              if (!file.readOnly && file.canDelete != false)
                 ('delete', Icons.delete_outline, 'Delete from server'),
             ])
               ListTile(
@@ -86,6 +87,7 @@ Future<void> fileActions(
   );
   if (!context.mounted || action == null || c.busy) return;
   if (action == 'details' ||
+      action == 'delete' ||
       ((action == 'move' || action == 'copy') && file.isDirectory)) {
     try {
       file = await c.resolve(file);
@@ -140,6 +142,16 @@ Future<void> fileActions(
         await c.organize([file], action, destination: destination);
       }
     case 'delete':
+      if (file.canDelete == false) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Your server does not allow deleting this file.'),
+            ),
+          );
+        }
+        return;
+      }
       if (await confirmDelete(context, [file])) {
         await c.organize([file], 'delete');
       }

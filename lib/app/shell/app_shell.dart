@@ -836,6 +836,26 @@ class _AppShellState extends State<AppShell>
       if (destination == null) return;
     }
     if (!mounted) return;
+    if (operation == 'move' && files.any((f) => f.canMove == false)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Your server does not allow moving some of these files.',
+          ),
+        ),
+      );
+      return;
+    }
+    if (operation == 'delete' && files.any((f) => f.canDelete == false)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Your server does not allow deleting some of these files.',
+          ),
+        ),
+      );
+      return;
+    }
     if (operation == 'delete' && !await confirmDelete(context, files)) return;
     await c.organize(files, operation, destination: destination);
     if (mounted) setState(() => _view.selected.clear());

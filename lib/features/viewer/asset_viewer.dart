@@ -294,7 +294,9 @@ class _AssetViewerState extends State<AssetViewer> with WidgetsBindingObserver {
                               IconButton(
                                 tooltip: 'Delete',
                                 onPressed:
-                                    widget.controller.busy || _file.readOnly
+                                    widget.controller.busy ||
+                                        _file.readOnly ||
+                                        _file.canDelete == false
                                     ? null
                                     : () async {
                                         if (await confirmDelete(context, [
