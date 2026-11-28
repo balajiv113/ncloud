@@ -42,15 +42,19 @@ Future<void> showAddFiles(BuildContext context, AppController c) async {
   try {
     final account = c.account;
     final destination = [...c.directory];
-    final picked = await FilePicker.platform.pickFiles(allowMultiple: true);
-    if (picked == null) return;
-    for (final file in picked.files) {
+    final picked = await FilePicker.pickFiles();
+    if (picked.isEmpty) return;
+    for (final file in picked) {
       if (c.account != account || !listEquals(c.directory, destination)) {
         throw const FormatException(
           'Destination changed. Select your files again.',
         );
       }
-      await c.upload(file.name, file.xFile.openRead(), file.size);
+      final size = await file.length();
+      if (size == null) {
+        throw FormatException('Could not read ${file.name}.');
+      }
+      await c.upload(file.name, file.xFile.openRead(), size);
       if (c.error != null) break;
     }
   } catch (e) {

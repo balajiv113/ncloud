@@ -364,11 +364,9 @@ void main() {
         controller.target = SmartAlbumTarget(const ['Photos', 'Camera']);
         expect(controller.timelineItems.map((f) => f.name), ['a.jpg']);
         controller.target = SmartAlbumTarget(const ['Photos', 'camera']);
-        expect(
-          controller.timelineItems.map((f) => f.name),
-          ['a.jpg'],
-          reason: 'the name matches whatever its case',
-        );
+        expect(controller.timelineItems.map((f) => f.name), [
+          'a.jpg',
+        ], reason: 'the name matches whatever its case');
         controller.target = SmartAlbumTarget(const ['Photos', 'Trips']);
         expect(controller.timelineItems, isEmpty);
       },
