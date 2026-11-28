@@ -95,11 +95,10 @@ void main() {
         await Future<void>.delayed(const Duration(milliseconds: 10));
       }
       expect(etagRequests, 1);
-      expect(
-        c.smartAlbums.single.path,
-        ['Photos', 'Trip'],
-        reason: 'cached cards must appear before the etag response',
-      );
+      expect(c.smartAlbums.single.path, [
+        'Photos',
+        'Trip',
+      ], reason: 'cached cards must appear before the etag response');
       gate.complete();
       await opening;
       expect(c.catalogueError, isNull);
