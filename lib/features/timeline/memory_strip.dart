@@ -3,6 +3,7 @@ import 'package:material_ui/material_ui.dart';
 import '../../app/app_controller.dart';
 import '../../models.dart';
 import '../../shared/ui/media_tile.dart';
+import '../phone/phone_tile.dart';
 
 /// The horizontal strip of memories above the Timeline: photos from this day
 /// in earlier years and a few favorites.
@@ -41,10 +42,15 @@ class MemoryStrip extends StatelessWidget {
                       fit: StackFit.expand,
                       children: [
                         ExcludeSemantics(
-                          child: MediaTile(
-                            file: entry.value.first,
-                            controller: controller,
-                          ),
+                          child: entry.value.first.onPhone == null
+                              ? MediaTile(
+                                  file: entry.value.first,
+                                  controller: controller,
+                                )
+                              : PhoneTile(
+                                  file: entry.value.first,
+                                  thumbnails: controller.phone.thumbnails!,
+                                ),
                         ),
                         const DecoratedBox(
                           decoration: BoxDecoration(

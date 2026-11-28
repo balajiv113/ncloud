@@ -445,6 +445,7 @@ class AppController extends ChangeNotifier implements StatusSink {
     notifyListeners();
     if (connected) {
       setSyncForeground(true);
+      unawaited(refreshPhone(force: true));
       try {
         await cache?.readOfflineListing(_browser.offlineListingKey);
       } catch (e) {

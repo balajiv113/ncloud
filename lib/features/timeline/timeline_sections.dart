@@ -122,7 +122,15 @@ Map<String, List<CloudFile>> memoryGroups(
   }
   final favorites = files.where((f) => f.isMedia && f.favorite).toList();
   if (favorites.isNotEmpty) result['A few favorites'] = favorites;
-  return result;
+  // The first file of each group is the card's cover; a photo is preferred
+  // because a video may have no server preview to show.
+  return {
+    for (final entry in result.entries)
+      entry.key: [
+        ...entry.value.where((f) => !f.isVideo),
+        ...entry.value.where((f) => f.isVideo),
+      ],
+  };
 }
 
 /// Where the Timeline's sections and photo rows sit, recorded while it lays
